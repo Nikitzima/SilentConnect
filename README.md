@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/badge/License-MIT-64748b.svg?style=flat-square)](LICENSE)
 [![Protocols](https://img.shields.io/badge/Protocols-VLESS_%7C_Reality_%7C_XHTTP_%7C_AmneziaWG_%7C_Hysteria2-8b5cf6.svg?style=flat-square)](#protocol-and-subscription-support)
 
-**SilentConnect** is a high-availability, multi-protocol VPN subscription ecosystem and automation platform designed to withstand aggressive Deep Packet Inspection (DPI/TSPU), packet manipulation, and infrastructure outages. It seamlessly bridges Telegram bot sales automation, dynamic multi-format subscription generation, Xray/3X-UI panel provisioning, AmneziaWG obfuscated WireGuard mesh management, and multi-node active-passive disaster recovery with zero data loss.
+**SilentConnect** is a high-availability, multi-protocol VPN subscription ecosystem and automation platform designed to withstand aggressive Deep Packet Inspection (DPI/TSPU), packet manipulation, and infrastructure outages. It seamlessly bridges Telegram bot sales automation, dynamic multi-format subscription generation, Xray/3X-UI panel provisioning, AmneziaWG obfuscated WireGuard mesh management, and runbook-driven active-passive disaster recovery with 3-way SQLite state reconciliation.
 
 ---
 
@@ -26,7 +26,7 @@
 
 ## Architecture Overview
 
-SilentConnect operates on an active-passive, geo-distributed multi-node topology designed for high availability and instant failover:
+SilentConnect operates on an active-passive, geo-distributed multi-node topology designed for high availability and operator-controlled manual failover:
 
 ```text
                                   [ Users & Clients ]
@@ -107,7 +107,7 @@ SilentConnect operates on an active-passive, geo-distributed multi-node topology
 
 ## Disaster Recovery & Dual-Node Failover
 
-SilentConnect features an enterprise-grade Active-Passive disaster recovery architecture guaranteeing zero data loss and continuous data-plane availability during cloud infrastructure outages:
+SilentConnect features an operator-driven Active-Passive disaster recovery architecture designed for minimal RPO and manual runbook execution during cloud infrastructure outages:
 
 ```text
        ┌─────────────────────────────────────────────────────────────┐
@@ -158,12 +158,12 @@ To maintain strict data integrity and eliminate split-brain database corruption:
 ### 3-Way SQLite Conflict-Free Reconciliation (`scripts/failback_merge.py`)
 - **Natural Business Keys**: Reconciles profiles, orders, and users by `public_id`, `xui_email`, and `subId` rather than auto-increment primary keys.
 - **Foreign Key Remapping**: Automatically updates relational references across `orders`, `profiles`, `referrers`, and `promo_codes`.
-- **Expiry Preservation**: Merges subscription expirations via `MAX(primary.expires_at, secondary.expires_at)`, guaranteeing renewals made on standby are never lost.
+- **Expiry Preservation**: Merges subscription expirations via `MAX(primary.expires_at, secondary.expires_at)`, ensuring renewals made on standby are preserved.
 - **Traffic Counter Delta**: Aggregates byte transfer deltas from standby into primary metrics.
 
 ### Port 2053 & Firewall Security Architecture
 - **Public Restriction**: Port `2053/tcp` (3X-UI administrative panel) is strictly blocked from the public internet by UFW firewall rules on both NL and FI nodes (`ufw deny 2053/tcp`).
-- **Local-Only Access**: 3X-UI binds to `127.0.0.1:2053`. Administrative access is performed exclusively via secure SSH port forwarding:
+- **Administrative Access**: 3X-UI listens on port `2053` protected by UFW firewall drop rules. Administrative access is performed exclusively via secure SSH port forwarding:
   ```bash
   ssh -N -L 2053:127.0.0.1:2053 root@your-server-ip
   ```
