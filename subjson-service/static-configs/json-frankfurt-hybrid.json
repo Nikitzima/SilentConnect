@@ -1,0 +1,329 @@
+{
+  "log": {
+    "access": "none",
+    "dnsLog": false,
+    "error": "",
+    "loglevel": "warning"
+  },
+  "dns": {
+    "queryStrategy": "UseIPv4",
+    "servers": [
+      {
+        "address": "localhost",
+        "domains": [
+          "domain:example.com",
+          "domain:max.ru",
+          "domain:kernel.org"
+        ]
+      },
+      "https://dns.google/dns-query",
+      "8.8.8.8",
+      "localhost"
+    ]
+  },
+  "inbounds": [
+    {
+      "listen": "127.0.0.1",
+      "port": 10808,
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth",
+        "udp": true
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic",
+          "fakedns"
+        ],
+        "metadataOnly": false,
+        "routeOnly": false
+      },
+      "tag": "socks-in"
+    },
+    {
+      "listen": "127.0.0.1",
+      "port": 10809,
+      "protocol": "http",
+      "settings": {
+        "auth": "noauth",
+        "udp": true
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic",
+          "fakedns"
+        ],
+        "metadataOnly": false,
+        "routeOnly": false
+      },
+      "tag": "http-in"
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "203.0.113.1",
+            "port": 23385,
+            "users": [
+              {
+                "email": "Frankfurt2 AdmT+X TCP",
+                "encryption": "mlkem768x25519plus.native.0rtt.gOaWlZN5OYbBPfI7n6LZ4MXUpI7BtXKDCGYVFXAVwiY",
+                "id": "00000000-0000-0000-0000-000000000001",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "fingerprint": "chrome",
+          "password": "mock_reality_public_key_de_00000000000000000=",
+          "publicKey": "mock_reality_public_key_de_00000000000000000=",
+          "serverName": "www.kernel.org",
+          "shortId": "0123456789abcdef",
+          "spiderX": "/"
+        },
+        "tcpSettings": {
+          "acceptProxyProtocol": false,
+          "header": {
+            "type": "none"
+          }
+        }
+      },
+      "tag": "proxy-tcp"
+    },
+    {
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "203.0.113.1",
+            "port": 8443,
+            "users": [
+              {
+                "email": "Frankfurt2 AdmT+X XHTTP",
+                "encryption": "mlkem768x25519plus.native.0rtt.TbTytRQGLiFuMZMCApNGFoL6_LCX28Xu6hT37zmgVQ8",
+                "id": "00000000-0000-0000-0000-000000000002"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "reality",
+        "realitySettings": {
+          "fingerprint": "chrome",
+          "password": "mock_reality_public_key_de_xhttp_00000000000=",
+          "publicKey": "mock_reality_public_key_de_xhttp_00000000000=",
+          "serverName": "www.kernel.org",
+          "shortId": "0123",
+          "spiderX": "/"
+        },
+        "xhttpSettings": {
+          "path": "/xh-b3a7303882ab161d",
+          "host": "",
+          "headers": {},
+          "mode": "packet-up"
+        }
+      },
+      "tag": "proxy-xhttp"
+    },
+    {
+      "tag": "direct",
+      "protocol": "freedom",
+      "settings": {}
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole",
+      "settings": {}
+    }
+  ],
+  "remarks": "Frankfurt2 Hybrid TCP+XHTTP",
+  "meta": {
+    "serverDescription": "Frankfurt Hybrid Test",
+    "sub-expire": "1",
+    "sub-expire-button-link": "https://t.me/your_vpn_bot?start=open",
+    "sub-info-button-link": "https://t.me/your_vpn_bot?start=open",
+    "sub-info-button-text": "????????",
+    "sub-info-color": "blue",
+    "sub-info-text": "Frankfurt Hybrid TCP+XHTTP. ?????? ???????? ??????? ping ????? TCP ? XHTTP."
+  },
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "outboundTag": "block",
+        "protocol": [
+          "bittorrent"
+        ],
+        "type": "field"
+      },
+      {
+        "ip": [
+          "10.0.0.0/8",
+          "100.64.0.0/10",
+          "127.0.0.0/8",
+          "169.254.0.0/16",
+          "172.16.0.0/12",
+          "192.168.0.0/16",
+          "::1/128",
+          "fc00::/7",
+          "fe80::/10"
+        ],
+        "outboundTag": "direct",
+        "type": "field"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "1.1.1.1",
+          "1.0.0.1",
+          "8.8.8.8",
+          "8.8.4.4",
+          "9.9.9.9",
+          "149.112.112.112"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "domain": [
+          "domain:speedtest.net",
+          "domain:ooklaserver.net",
+          "domain:speed.cloudflare.com",
+          "keyword:speedtest",
+          "domain:canva.com",
+          "domain:instagram.com",
+          "domain:cdninstagram.com",
+          "domain:igcdn.com",
+          "domain:fbcdn.net",
+          "domain:spotify.com",
+          "domain:scdn.co",
+          "domain:spotifycdn.com",
+          "domain:tiktok.com",
+          "domain:tiktokcdn.com",
+          "domain:tiktokv.com",
+          "domain:byteoversea.com",
+          "domain:bytedance.com",
+          "domain:byteimg.com",
+          "domain:openai.com",
+          "domain:chatgpt.com",
+          "domain:oaistatic.com",
+          "domain:oaiusercontent.com",
+          "domain:gemini.google.com",
+          "domain:aistudio.google.com",
+          "domain:generativelanguage.googleapis.com"
+        ],
+        "type": "field",
+        "balancerTag": "auto-proxy"
+      },
+      {
+        "domain": [
+          "domain:steamcontent.com",
+          "domain:steamserver.net",
+          "domain:client-download.steampowered.com",
+          "domain:steamcdn-a.akamaihd.net"
+        ],
+        "outboundTag": "direct",
+        "type": "field"
+      },
+      {
+        "domain": [
+          "domain:dl.google.com",
+          "domain:gvt1.com",
+          "domain:gvt2.com",
+          "domain:appldnld.apple.com",
+          "domain:swcdn.apple.com",
+          "domain:updates-http.cdn-apple.com",
+          "domain:iosapps.itunes.apple.com",
+          "domain:osxapps.itunes.apple.com",
+          "domain:dbankcdn.com"
+        ],
+        "outboundTag": "direct",
+        "type": "field"
+      },
+      {
+        "domain": [
+          "domain:ru",
+          "domain:su",
+          "domain:xn--p1ai",
+          "domain:yandex.com",
+          "domain:yandex.net",
+          "domain:yastatic.net",
+          "domain:vk.com",
+          "domain:userapi.com",
+          "domain:mycdn.me",
+          "domain:2gis.com",
+          "domain:sberbank.com",
+          "domain:sberbank.ru",
+          "domain:sber.ru",
+          "domain:tbank.ru",
+          "domain:tinkoff.ru",
+          "domain:ozon.ru",
+          "domain:ozonusercontent.com",
+          "domain:wildberries.ru",
+          "domain:wb.ru",
+          "domain:wbstatic.net",
+          "domain:avito.ru",
+          "domain:avito.st",
+          "domain:gosuslugi.ru",
+          "domain:nalog.gov.ru",
+          "domain:mironline.ru",
+          "domain:mironline.ru",
+          "domain:gismeteo.ru",
+          "domain:gismeteo.net",
+          "domain:gismeteo.st",
+          "domain:boosty.to"
+        ],
+        "outboundTag": "direct",
+        "type": "field"
+      },
+      {
+        "ip": [],
+        "outboundTag": "direct",
+        "type": "field"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "0.0.0.0/0",
+          "::/0"
+        ],
+        "balancerTag": "auto-proxy"
+      }
+    ],
+    "balancers": [
+      {
+        "tag": "auto-proxy",
+        "selector": [
+          "proxy-"
+        ],
+        "fallbackTag": "proxy-tcp",
+        "strategy": {
+          "type": "leastPing"
+        }
+      }
+    ]
+  },
+  "observatory": {
+    "subjectSelector": [
+      "proxy-"
+    ],
+    "probeUrl": "https://www.google.com/generate_204",
+    "probeInterval": "1m",
+    "enableConcurrency": true
+  }
+}

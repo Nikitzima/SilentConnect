@@ -1,0 +1,166 @@
+{
+  "log": {
+    "loglevel": "warning",
+    "access": "none",
+    "error": "",
+    "dnsLog": false
+  },
+  "dns": {
+    "queryStrategy": "UseIPv4",
+    "servers": [
+      {
+        "address": "localhost",
+        "domains": [
+          "domain:example.com",
+          "domain:max.ru",
+          "domain:kernel.org"
+        ]
+      },
+      "https://dns.google/dns-query",
+      "8.8.8.8",
+      "localhost"
+    ]
+  },
+  "inbounds": [
+    {
+      "listen": "127.0.0.1",
+      "port": 10808,
+      "protocol": "socks",
+      "tag": "socks-in",
+      "settings": {
+        "auth": "noauth",
+        "udp": true
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic",
+          "fakedns"
+        ],
+        "metadataOnly": false,
+        "routeOnly": false
+      }
+    },
+    {
+      "listen": "127.0.0.1",
+      "port": 10809,
+      "protocol": "http",
+      "tag": "http-in",
+      "settings": {
+        "auth": "noauth",
+        "udp": true
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic",
+          "fakedns"
+        ],
+        "metadataOnly": false,
+        "routeOnly": false
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "proxy",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "edge.example.com",
+            "port": 28443,
+            "users": [
+              {
+                "id": "00000000-0000-0000-0000-000000000004",
+                "email": "NL max.ru XHTTP",
+                "flow": "",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "edge.example.com",
+          "pinnedPeerCertSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "alpn": [
+            "h3"
+          ]
+        },
+        "xhttpSettings": {
+          "path": "/xh-mx-d1f7c0429d6a",
+          "host": "",
+          "headers": {},
+          "mode": "packet-up"
+        }
+      }
+    },
+    {
+      "tag": "direct",
+      "protocol": "freedom",
+      "settings": {}
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole",
+      "settings": {}
+    }
+  ],
+  "remarks": "NL XHTTP HTTP3 (28443)",
+  "meta": {
+    "serverDescription": "NL XHTTP over HTTP/3 (QUIC)",
+    "sub-info-color": "blue",
+    "sub-info-text": "Test VLESS over XHTTP (HTTP/3 / QUIC) on UDP port 28443.",
+    "sub-info-button-text": "Support",
+    "sub-info-button-link": "https://t.me/your_vpn_bot?start=open",
+    "sub-expire": "1",
+    "sub-expire-button-link": "https://t.me/your_vpn_bot?start=open"
+  },
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "type": "field",
+        "protocol": [
+          "bittorrent"
+        ],
+        "outboundTag": "block"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "10.0.0.0/8",
+          "100.64.0.0/10",
+          "127.0.0.0/8",
+          "169.254.0.0/16",
+          "172.16.0.0/12",
+          "192.168.0.0/16",
+          "::1/128",
+          "fc00::/7",
+          "fe80::/10"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "1.1.1.1",
+          "1.0.0.1",
+          "8.8.8.8",
+          "8.8.4.4",
+          "9.9.9.9",
+          "149.112.112.112"
+        ],
+        "outboundTag": "direct"
+      }
+    ]
+  }
+}

@@ -1,0 +1,44 @@
+{
+	https_port 4430
+	http_port 80
+}
+
+# 1. Subscription & Proxy API Endpoints (SubJSON on :3088, XHTTP on :28080, WS on :10010)
+{$DOMAIN_SUB:sub.example.com}, {$DOMAIN_EDGE:edge.example.com}, {$DOMAIN_FI:fi.example.com}, {$FI_STANDBY_IP:198.51.100.1}.sslip.io, {$FI_STANDBY_IP:198.51.100.1}.nip.io {
+	@ws_test path /sc-ws-9c3d7f1e
+	handle @ws_test {
+		reverse_proxy 127.0.0.1:10010
+	}
+
+	@xhttp_tcp path /xh-mx-d1f7c0429d6a*
+	handle @xhttp_tcp {
+		reverse_proxy 127.0.0.1:28080 {
+			transport http {
+				versions h2c 2
+			}
+		}
+	}
+
+	handle_path /future-it-9e3d* {
+		root * /var/www/future-it
+		file_server
+	}
+
+	handle {
+		encode zstd gzip
+		reverse_proxy 127.0.0.1:3088
+	}
+}
+
+# 2. Main Brand & Web Checkout Endpoints (VPN Shop Web on :3090)
+{$DOMAIN_MAIN:example.com}, www.{$DOMAIN_MAIN:example.com}, app.{$FI_STANDBY_IP:198.51.100.1}.sslip.io {
+	handle_path /future-it-9e3d* {
+		root * /var/www/future-it
+		file_server
+	}
+
+	handle {
+		encode zstd gzip
+		reverse_proxy 127.0.0.1:3090
+	}
+}

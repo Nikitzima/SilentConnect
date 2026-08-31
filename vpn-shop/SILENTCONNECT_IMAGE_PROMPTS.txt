@@ -1,0 +1,58 @@
+SilentConnect image prompts for Nano Banana Pro
+Generated for Telegram bot assets.
+
+General concept:
+- SilentConnect should feel like a calm premium connectivity service, not a hacker/security product.
+- The visual metaphor is "quiet private route": clean nodes, one protected route line, stable signal, soft product UI surfaces.
+- Keep one recognizable brand motif across all images: two or three node points connected by a smooth S-shaped route line, with a small electric-cyan pulse/accent.
+- Use the same palette everywhere: deep graphite background, dark teal surfaces, clean white typography, small electric-cyan accents.
+- The images should look polished, trustworthy, and friendly for non-technical Telegram users.
+- Avoid hacker cliches, padlocks, shields, hooded people, Matrix code, flags, military visuals, animals, cheap cyberpunk, QR codes, and clutter.
+- Keep pricing and legal details out of the images. Prices and conditions should stay in bot captions/buttons.
+- Generate at the highest available resolution.
+
+1) Avatar / Telegram profile image
+
+Prompt:
+Create a square 1:1 logo avatar for a private internet access service named "SilentConnect".
+Style: modern premium SaaS, minimal, calm, trustworthy, privacy-focused.
+Visual concept: a distinctive abstract connection mark made from three clean signal nodes connected by a smooth S-shaped route line. The mark should suggest quiet private routing, stable access, and connection without using locks or shields.
+Palette: deep graphite background, dark teal main mark, clean white highlight, small electric-cyan pulse accent.
+Composition: centered symbol, strong silhouette, high contrast, readable at tiny Telegram avatar size, no border, no mockup, no heavy shadows, no tiny decorative details.
+Text: no text at all.
+Avoid: lock icons, shields, hooded hackers, animals, flags, neon cyberpunk clutter, complex diagrams.
+
+2) Welcome / pricing hero for the bot
+
+Prompt:
+Create a vertical 4:5 Telegram welcome artwork for a service named "SilentConnect".
+Purpose: first-screen image for a Telegram bot storefront, calm premium feel, trustworthy and friendly for non-technical users.
+Scene: a clean abstract private network map with soft routing lines, quiet node points, and one recognizable S-shaped route motif with a small electric-cyan pulse. It should feel like a polished product control surface, not a hacker dashboard.
+Composition: premium Telegram storefront hero. Put the title and subtitle in the upper-middle area with enough breathing room. Keep the lower area visually calm so the Telegram caption/buttons can continue the offer.
+Palette: deep graphite, dark teal, clean white typography, subtle electric-cyan accents, restrained contrast.
+Text to render exactly:
+SilentConnect
+Приватный доступ к открытому интернету
+Typography: the title must be large, sharp, centered, and perfectly spelled. The subtitle must be smaller but still readable on a phone. Use clean modern sans-serif typography, no decorative fonts.
+No prices inside the image. No legal text.
+Style: polished product artwork, premium, stable, privacy-first, calm, friendly.
+Avoid: lock icons, shields, hooded hackers, scary security imagery, overloaded diagrams, tiny unreadable text, fake app screenshots, QR codes.
+
+3) Quickstart / how to connect card
+
+Prompt:
+Create a vertical 4:5 Telegram quickstart illustration for "SilentConnect".
+Purpose: onboarding image that explains setup in three simple visual steps.
+Layout: three clean steps in a premium product-card composition. Each step should have a large simple icon and one short Russian label.
+Use the same brand motif and palette as the avatar and welcome image: deep graphite, dark teal, clean white, small electric-cyan accents, smooth S-shaped route/pulse details.
+Text to render exactly:
+1. Выберите доступ
+2. Импортируйте ссылку
+3. Включите подключение
+Make all Russian text large, sharp, correctly spelled, and readable on a phone screen.
+Icons: simple abstract icon for choosing access, link/import icon, power/connect icon. Icons should be line-based, clean, and consistent.
+Composition: uncluttered, premium product UI feel, generous spacing, clear hierarchy, no app screenshots, no device mockups unless very minimal and abstract.
+Avoid: tiny text, legal disclaimers, QR codes, flags, lock icons, shields, hacker/cyberpunk visuals, clutter.
+
+Optional stricter variant for quickstart if the text layout feels crowded:
+Create the same vertical 4:5 quickstart card with three large icon rows and the same exact Russian labels, but reduce background detail and make the typography larger. Keep the SilentConnect palette and premium minimal style.

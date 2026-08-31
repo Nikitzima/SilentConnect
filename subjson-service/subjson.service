@@ -1,0 +1,16 @@
+[Unit]
+Description=Sub JSON Service
+After=network.target x-ui.service
+Requires=x-ui.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/subjson-service
+EnvironmentFile=/root/subjson-service/subjson.env
+ExecStart=/usr/bin/python3 /root/subjson-service/app.py
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

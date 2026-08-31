@@ -1,0 +1,203 @@
+{
+  "log": {
+    "loglevel": "warning",
+    "access": "none",
+    "error": "",
+    "dnsLog": false
+  },
+  "dns": {
+    "queryStrategy": "UseIPv4",
+    "servers": [
+      {
+        "address": "localhost",
+        "domains": [
+          "domain:example.com",
+          "domain:max.ru",
+          "domain:kernel.org"
+        ]
+      },
+      "https://dns.google/dns-query",
+      "8.8.8.8",
+      "localhost"
+    ]
+  },
+  "inbounds": [
+    {
+      "listen": "127.0.0.1",
+      "port": 10808,
+      "protocol": "socks",
+      "tag": "socks-in",
+      "settings": {
+        "auth": "noauth",
+        "udp": true
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic",
+          "fakedns"
+        ],
+        "metadataOnly": false,
+        "routeOnly": false
+      }
+    },
+    {
+      "listen": "127.0.0.1",
+      "port": 10809,
+      "protocol": "http",
+      "tag": "http-in",
+      "settings": {
+        "auth": "noauth",
+        "udp": true
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic",
+          "fakedns"
+        ],
+        "metadataOnly": false,
+        "routeOnly": false
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "proxy",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "sub.example.com",
+            "port": 443,
+            "users": [
+              {
+                "id": "00000000-0000-0000-0000-000000000005",
+                "email": "NL WS 443",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "sub.example.com",
+          "fingerprint": "chrome",
+          "alpn": [
+            "http/1.1"
+          ]
+        },
+        "wsSettings": {
+          "path": "/sc-ws-9c3d7f1e",
+          "headers": {
+            "Host": "sub.example.com"
+          }
+        }
+      }
+    },
+    {
+      "tag": "direct",
+      "protocol": "freedom",
+      "settings": {}
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole",
+      "settings": {}
+    }
+  ],
+  "remarks": "NL WS 443",
+  "meta": {
+    "serverDescription": "NL WS 443 test",
+    "sub-info-color": "blue",
+    "sub-info-text": "WebSocket over real HTTPS 443 test. Compare home internet vs 4G.",
+    "sub-info-button-text": "Support",
+    "sub-info-button-link": "https://t.me/your_vpn_bot?start=open",
+    "sub-expire": "1",
+    "sub-expire-button-link": "https://t.me/your_vpn_bot?start=open"
+  },
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "type": "field",
+        "protocol": [
+          "bittorrent"
+        ],
+        "outboundTag": "block"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "10.0.0.0/8",
+          "100.64.0.0/10",
+          "127.0.0.0/8",
+          "169.254.0.0/16",
+          "172.16.0.0/12",
+          "192.168.0.0/16",
+          "::1/128",
+          "fc00::/7",
+          "fe80::/10"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "1.1.1.1",
+          "1.0.0.1",
+          "8.8.8.8",
+          "8.8.4.4",
+          "9.9.9.9",
+          "149.112.112.112"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "domain:speedtest.net",
+          "domain:ooklaserver.net",
+          "domain:speed.cloudflare.com",
+          "keyword:speedtest",
+          "domain:canva.com",
+          "domain:instagram.com",
+          "domain:cdninstagram.com",
+          "domain:igcdn.com",
+          "domain:fbcdn.net",
+          "domain:spotify.com",
+          "domain:scdn.co",
+          "domain:spotifycdn.com",
+          "domain:tiktok.com",
+          "domain:tiktokv.com",
+          "domain:openai.com",
+          "domain:chatgpt.com",
+          "domain:oaistatic.com",
+          "domain:oaiusercontent.com"
+        ],
+        "outboundTag": "proxy"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "domain:ru",
+          "domain:su",
+          "domain:xn--p1ai"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "ip": [],
+        "outboundTag": "direct"
+      }
+    ]
+  }
+}

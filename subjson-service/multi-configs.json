@@ -1,0 +1,243 @@
+{
+  "0bxfgyuo946lj3id": [
+    {
+      "log": {
+        "loglevel": "warning"
+      },
+      "dns": {
+        "disableCache": false,
+        "disableFallback": false,
+        "disableFallbackIfMatch": false,
+        "hosts": {
+          "cloudflare-dns.com": [
+            "1.1.1.1"
+          ],
+          "dns.google": [
+            "8.8.8.8",
+            "8.8.4.4"
+          ]
+        },
+        "queryStrategy": "UseIPv4",
+        "servers": [
+          "https://dns.google/dns-query",
+          "https://cloudflare-dns.com/dns-query"
+        ]
+      },
+      "inbounds": [
+        {
+          "listen": "127.0.0.1",
+          "port": 10808,
+          "protocol": "socks",
+          "settings": {
+            "auth": "noauth",
+            "udp": true
+          },
+          "sniffing": {
+            "destOverride": [
+              "http",
+              "tls",
+              "quic",
+              "fakedns"
+            ],
+            "enabled": true,
+            "routeOnly": false
+          },
+          "tag": "socks"
+        },
+        {
+          "listen": "127.0.0.1",
+          "port": 10809,
+          "protocol": "http",
+          "settings": {
+            "allowTransparent": false
+          },
+          "sniffing": {
+            "destOverride": [
+              "http",
+              "tls",
+              "quic"
+            ],
+            "enabled": true,
+            "routeOnly": false
+          },
+          "tag": "http"
+        }
+      ],
+      "outbounds": [
+        {
+          "protocol": "vless",
+          "settings": {
+            "vnext": [
+              {
+                "address": "ws.example.com",
+                "port": 8880,
+                "users": [
+                  {
+                    "encryption": "mlkem768x25519plus.xorpub.0rtt.mock_encryption_key_000000000000000000000000=",
+                    "flow": "",
+                    "id": "00000000-0000-0000-0000-000000000006"
+                  }
+                ]
+              }
+            ]
+          },
+          "streamSettings": {
+            "network": "ws",
+            "security": "none",
+            "wsSettings": {
+              "headers": {
+                "Host": "example.com"
+              },
+              "heartbeatPeriod": 2,
+              "path": "/api/chat/example_path?ed=2560"
+            }
+          },
+          "tag": "proxy"
+        },
+        {
+          "protocol": "freedom",
+          "tag": "direct"
+        },
+        {
+          "protocol": "blackhole",
+          "tag": "block"
+        }
+      ],
+      "remarks": "🌀 Дополнительный",
+      "meta": {
+        "serverDescription": "Дополнительный · WS NL"
+      },
+      "routing": {
+        "domainMatcher": "hybrid",
+        "domainStrategy": "IPIfNonMatch",
+        "rules": [
+          {
+            "outboundTag": "direct",
+            "protocol": [
+              "bittorrent"
+            ]
+          },
+          {
+            "domain": [
+              "railnation-game.ru",
+              "railnation.ru"
+            ],
+            "outboundTag": "proxy"
+          },
+          {
+            "outboundTag": "proxy",
+            "port": "2302"
+          },
+          {
+            "ip": [
+              "10.0.0.0/8",
+              "100.64.0.0/10",
+              "127.0.0.0/8",
+              "169.254.0.0/16",
+              "172.16.0.0/12",
+              "192.168.0.0/16",
+              "::1/128",
+              "fc00::/7",
+              "fe80::/10"
+            ],
+            "outboundTag": "direct"
+          },
+          {
+            "domain": [],
+            "outboundTag": "direct"
+          },
+          {
+            "domain": [
+              "ip-api.com",
+              "ip.sb",
+              "ipify.org",
+              "api.ipify.org",
+              "ipinfo.io",
+              "ipinfo.com",
+              "ipapi.co",
+              "ipapi.com",
+              "ipapi.is",
+              "ipstack.com",
+              "ipdata.co",
+              "ipregistry.co",
+              "ipbase.com",
+              "ipquery.io",
+              "api.ipquery.io",
+              "iplocate.io",
+              "ipfinder.io",
+              "ipwho.is",
+              "ipwhois.io",
+              "ipinfodb.com",
+              "ipgeolocation.io",
+              "ipgeolocationapi.com",
+              "ip2location.com",
+              "ip2whois.com",
+              "db-ip.com",
+              "maxmind.com",
+              "bigdatacloud.com",
+              "apiip.net",
+              "geojs.io",
+              "geoplugin.com",
+              "geoplugin.net",
+              "iplocation.net",
+              "ip2country.info",
+              "country.is",
+              "ipvigilante.com",
+              "ifconfig.me",
+              "ident.me",
+              "api.ident.me",
+              "tnedi.me",
+              "icanhazip.com",
+              "api.ip.sb",
+              "api.techniknews.net",
+              "geo.ipify.org",
+              "whatismyipaddress.com",
+              "whatismyip.com",
+              "ipleak.net",
+              "browserleaks.com",
+              "dnsleaktest.com",
+              "whoer.net",
+              "checkip.amazonaws.com",
+              "ifconfig.co",
+              "myip.com",
+              "ipchicken.com",
+              "whatismyip.org",
+              "ip-adress.com",
+              "iplocation.com",
+              "ip-tracker.org",
+              "ip-lookup.net",
+              "iptrackeronline.com",
+              "ipvoid.com",
+              "ipfingerprints.com",
+              "tools.keycdn.com",
+              "stat.ripe.net",
+              "bgpview.io",
+              "ipapi.xyz",
+              "ipdata.com",
+              "ipregistry.com",
+              "ipwhois.app",
+              "freegeoip.app",
+              "freegeoip.net",
+              "ipgeoloc.com",
+              "iplocation.io",
+              "ip2c.org",
+              "ipinfo.app",
+              "ipapi.site",
+              "ipcheck.host",
+              "iplogger.org",
+              "grabify.link",
+              "ip-tracker.net",
+              "ipqualityscore.com",
+              "proxycheck.io",
+              "vpnapi.io",
+              "iphub.info",
+              "getipintel.net",
+              "scamalytics.com"
+            ],
+            "outboundTag": "direct"
+          }
+        ]
+      }
+    }
+  ]
+}
