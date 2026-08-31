@@ -1,0 +1,16 @@
+[Unit]
+Description=VPN Shop Bot - SilentConnect staging
+After=network-online.target x-ui.service subjson.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/vpn-shop
+EnvironmentFile=/root/vpn-shop/.env
+ExecStart=/usr/bin/python3 -m vpn_shop --env-file .env.silentconnect run-bot
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

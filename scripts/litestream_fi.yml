@@ -1,0 +1,9 @@
+dbs:
+  - path: /etc/x-ui/x-ui.db
+    replicas:
+      - type: file
+        path: /var/lib/litestream/x-ui-db.replica
+  - path: /root/vpn-shop/data-silentconnect/vpn_shop.db
+    replicas:
+      - type: file
+        path: /var/lib/litestream/vpn-shop-db.replica

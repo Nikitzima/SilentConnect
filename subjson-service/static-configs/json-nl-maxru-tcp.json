@@ -1,0 +1,263 @@
+{
+  "log": {
+    "loglevel": "warning",
+    "access": "none",
+    "error": "",
+    "dnsLog": false
+  },
+  "dns": {
+    "queryStrategy": "UseIPv4",
+    "servers": [
+      {
+        "address": "localhost",
+        "domains": [
+          "domain:example.com",
+          "domain:max.ru",
+          "domain:kernel.org"
+        ]
+      },
+      "https://dns.google/dns-query",
+      "8.8.8.8",
+      "localhost"
+    ]
+  },
+  "inbounds": [
+    {
+      "listen": "127.0.0.1",
+      "port": 10808,
+      "protocol": "socks",
+      "tag": "socks-in",
+      "settings": {
+        "auth": "noauth",
+        "udp": true
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic",
+          "fakedns"
+        ],
+        "metadataOnly": false,
+        "routeOnly": false
+      }
+    },
+    {
+      "listen": "127.0.0.1",
+      "port": 10809,
+      "protocol": "http",
+      "tag": "http-in",
+      "settings": {
+        "auth": "noauth",
+        "udp": true
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic",
+          "fakedns"
+        ],
+        "metadataOnly": false,
+        "routeOnly": false
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "proxy",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "edge.example.com",
+            "port": 24443,
+            "users": [
+              {
+                "id": "00000000-0000-0000-0000-000000000003",
+                "email": "NL max.ru TCP",
+                "flow": "xtls-rprx-vision",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "vk.com",
+          "fingerprint": "chrome",
+          "shortId": "0123456789abcdef",
+          "spiderX": "/",
+          "publicKey": "mock_reality_public_key_nl_0000000000000000000=",
+          "password": "mock_reality_public_key_nl_0000000000000000000="
+        },
+        "tcpSettings": {
+          "acceptProxyProtocol": false,
+          "header": {
+            "type": "none"
+          }
+        }
+      }
+    },
+    {
+      "tag": "direct",
+      "protocol": "freedom",
+      "settings": {}
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole",
+      "settings": {}
+    }
+  ],
+  "remarks": "NL max.ru TCP",
+  "meta": {
+    "serverDescription": "NL max.ru test",
+    "sub-info-color": "blue",
+    "sub-info-text": "max.ru REALITY test. Compare home internet vs 4G.",
+    "sub-info-button-text": "Support",
+    "sub-info-button-link": "https://t.me/your_vpn_bot?start=open",
+    "sub-expire": "1",
+    "sub-expire-button-link": "https://t.me/your_vpn_bot?start=open"
+  },
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "type": "field",
+        "protocol": [
+          "bittorrent"
+        ],
+        "outboundTag": "block"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "10.0.0.0/8",
+          "100.64.0.0/10",
+          "127.0.0.0/8",
+          "169.254.0.0/16",
+          "172.16.0.0/12",
+          "192.168.0.0/16",
+          "::1/128",
+          "fc00::/7",
+          "fe80::/10"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "1.1.1.1",
+          "1.0.0.1",
+          "8.8.8.8",
+          "8.8.4.4",
+          "9.9.9.9",
+          "149.112.112.112"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "domain:speedtest.net",
+          "domain:ooklaserver.net",
+          "domain:speed.cloudflare.com",
+          "keyword:speedtest",
+          "domain:canva.com",
+          "domain:instagram.com",
+          "domain:cdninstagram.com",
+          "domain:igcdn.com",
+          "domain:fbcdn.net",
+          "domain:spotify.com",
+          "domain:scdn.co",
+          "domain:spotifycdn.com",
+          "domain:tiktok.com",
+          "domain:tiktokcdn.com",
+          "domain:tiktokv.com",
+          "domain:byteoversea.com",
+          "domain:bytedance.com",
+          "domain:byteimg.com",
+          "domain:openai.com",
+          "domain:chatgpt.com",
+          "domain:oaistatic.com",
+          "domain:oaiusercontent.com",
+          "domain:gemini.google.com",
+          "domain:aistudio.google.com",
+          "domain:generativelanguage.googleapis.com"
+        ],
+        "outboundTag": "proxy"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "domain:steamcontent.com",
+          "domain:steamserver.net",
+          "domain:client-download.steampowered.com",
+          "domain:steamcdn-a.akamaihd.net"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "domain:dl.google.com",
+          "domain:gvt1.com",
+          "domain:gvt2.com",
+          "domain:appldnld.apple.com",
+          "domain:swcdn.apple.com",
+          "domain:updates-http.cdn-apple.com",
+          "domain:iosapps.itunes.apple.com",
+          "domain:osxapps.itunes.apple.com",
+          "domain:dbankcdn.com"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "domain:ru",
+          "domain:su",
+          "domain:xn--p1ai",
+          "domain:yandex.com",
+          "domain:yandex.net",
+          "domain:yastatic.net",
+          "domain:vk.com",
+          "domain:userapi.com",
+          "domain:mycdn.me",
+          "domain:2gis.com",
+          "domain:sberbank.com",
+          "domain:sberbank.ru",
+          "domain:sber.ru",
+          "domain:tbank.ru",
+          "domain:tinkoff.ru",
+          "domain:ozon.ru",
+          "domain:ozonusercontent.com",
+          "domain:wildberries.ru",
+          "domain:wb.ru",
+          "domain:wbstatic.net",
+          "domain:avito.ru",
+          "domain:avito.st",
+          "domain:gosuslugi.ru",
+          "domain:nalog.gov.ru",
+          "domain:mironline.ru",
+          "domain:gismeteo.ru",
+          "domain:gismeteo.net",
+          "domain:gismeteo.st",
+          "domain:boosty.to"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "ip": [],
+        "outboundTag": "direct"
+      }
+    ]
+  }
+}

@@ -1,0 +1,119 @@
+# =============================================================================
+# SilentConnect GitHub Export - Clean Repository .gitignore
+# =============================================================================
+
+# Environment configuration & credentials
+.env*
+!.env.example
+!.env.silentconnect.example
+!subjson.env.example
+*.local.env
+*.prod.env
+*.dev.env
+subjson.env
+
+# Logs & runtime outputs
+*.log
+*.log*
+logs/
+*.out
+*.out*
+
+# SQLite Databases, WAL, SHM and dumps
+*.db
+*.db*
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite*
+*.sqlite3
+*.dump
+*.dump*
+бэкапы_баз_данных/
+data/
+data-silentconnect/
+
+# Backups, archives and compressed dumps
+*.bak
+*.bak*
+*.bak_*
+*.old
+*.old*
+*.orig
+*.orig*
+*.tar
+*.tar.*
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.rar
+*.gz
+*.bz2
+*.xz
+
+# Certificates, private keys and keystores
+*.pem
+*.pem*
+*.key
+*.key*
+*.crt
+*.crt*
+*.cer
+*.cer*
+*.pfx
+*.p12
+*.csr
+
+# Executables, binary tools and compiled libraries
+*.exe
+*.dll
+*.so
+*.dylib
+*.bin
+*.iso
+v2rayN/
+разное_не_проверено/
+sing-box
+mihomo
+xray
+
+# Python bytecode, caches and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+venv/
+.venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# Metrics, visual screenshots & outage simulation runtime artifacts
+outage_metrics.json
+screenshots/
+*.svg.tmp
+
+# Agent metadata and working directories
+.agents/
+.gemini/
+
+# OS, IDE and Editor metadata
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
