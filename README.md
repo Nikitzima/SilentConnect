@@ -151,9 +151,9 @@ SilentConnect features an operator-driven Active-Passive disaster recovery archi
 ```
 
 ### Standby Posture & SQLite Isolation
-To maintain strict data integrity and eliminate split-brain database corruption:
-- **Zero Standby Writes**: `vpn-shop-web.service` and `vpn-shop-silentconnect.service` remain stopped and disabled on the standby node during normal operations.
-- **Restore-Only Posture**: The background Litestream replication daemon is **strictly not running** on the standby node. Standby uses a restore-only configuration (`/etc/litestream.yml`) targeting the incoming SFTP replica path.
+To maintain strict data integrity and prevent database write drift:
+- **Control Plane Standby Isolation**: `vpn-shop-web.service` and `vpn-shop-silentconnect.service` remain stopped and disabled on the standby node during normal operations. Standby database writes are operationally prevented by DNS routing and quiesce runbooks, while SubJSON serves read-only subscription configs to connected VPN clients.
+- **Restore-Only Posture**: The background Litestream replication daemon is **strictly not running** on the standby node. Standby uses a restore-only configuration (`/etc/litestream.yml`) targeting the incoming SFTP replica path populated continuously by the Primary node.
 - **Data Plane Continuity**: Inbound proxy engines (`xray-maxru`, `xray-ws443`, `x-ui`) and AmneziaWG obfuscated WireGuard mesh containers (`amnezia-awg2`) remain continuously active on both nodes, ensuring client connectivity is never interrupted.
 
 ### 3-Way SQLite Conflict-Free Reconciliation (`scripts/failback_merge.py`)
@@ -303,17 +303,23 @@ systemctl restart caddy
 ```
 
 ### Step 4: Install & Enable Systemd Services
+
+> [!NOTE]
+> On the **Primary Master (NL)** node, enable both bot and web services. On the **Standby (FI)** node in normal operation, `vpn-shop-silentconnect.service` and `vpn-shop-web.service` remain **disabled** until manual promotion.
+
 ```bash
-# 1. Install SubJSON Service
+# 1. Install SubJSON Service (both NL and FI)
 cp subjson-service/subjson.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now subjson.service
 
-# 2. Install VPN Shop Bot & Web Services
+# 2. Install VPN Shop Bot & Web Services (Primary Master NL only)
 cp vpn-shop/vpn-shop-silentconnect.service.example /etc/systemd/system/vpn-shop-silentconnect.service
 cp vpn-shop/vpn-shop-web.service.example /etc/systemd/system/vpn-shop-web.service
 systemctl daemon-reload
+# Enable and start on Primary Master (NL):
 systemctl enable --now vpn-shop-silentconnect.service vpn-shop-web.service
+# On Standby (FI), keep these services stopped & disabled in normal posture
 ```
 
 ---
