@@ -1,6 +1,7 @@
 # SilentConnect: High-Availability Multi-Protocol VPN & Subscription Platform
 
-[![Security Audit](https://img.shields.io/badge/Security_Audit-Zero_Leaks_Passed-10b981.svg?style=flat-square)](#automated-security--zero-leak-verification)
+[![Secret Scan](https://img.shields.io/badge/Secret_Scan-Clean-10b981.svg?style=flat-square)](#automated-secret-scanner--test-verification)
+[![Tests](https://img.shields.io/badge/Tests-180+_Passing-10b981.svg?style=flat-square)](#automated-secret-scanner--test-verification)
 [![Python Version](https://img.shields.io/badge/Python-3.11+-3b82f6.svg?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-64748b.svg?style=flat-square)](LICENSE)
 [![Protocols](https://img.shields.io/badge/Protocols-VLESS_%7C_Reality_%7C_XHTTP_%7C_AmneziaWG_%7C_Hysteria2-8b5cf6.svg?style=flat-square)](#protocol-and-subscription-support)
@@ -317,9 +318,9 @@ systemctl enable --now vpn-shop-silentconnect.service vpn-shop-web.service
 
 ---
 
-## Automated Security & Zero-Leak Verification
+## Automated Secret Scanner & Test Verification
 
-SilentConnect includes an automated security audit scanner script (`scripts/security_audit_scanner.py`) to guarantee zero residual credentials, private keys, production IPs, or binary database dumps exist before distribution.
+SilentConnect includes an automated secret scanner script (`scripts/security_audit_scanner.py`) to verify that zero residual credentials, private keys, production IPs, or binary database dumps exist before distribution.
 
 ### Running Security & Test Verification
 ```bash
