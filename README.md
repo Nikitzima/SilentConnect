@@ -107,33 +107,67 @@ SilentConnect operates on an active-passive, geo-distributed multi-node topology
 
 ## Disaster Recovery & Dual-Node Failover
 
-SilentConnect features an enterprise disaster recovery architecture guaranteeing zero data loss during cloud infrastructure outages:
+SilentConnect features an enterprise-grade Active-Passive disaster recovery architecture guaranteeing zero data loss and continuous data-plane availability during cloud infrastructure outages:
 
 ```text
-        [ Outage on Primary Master (NL) ]
-                       │
-          (1) Promote Standby: ./promote_fi.sh
-              • Restores latest Litestream SQLite snapshot
-              • Enables local bot, web, and subjson daemons
-              • Switches Cloudflare DNS A records to Standby IP
-                       │
-        [ Standby Node Serves Traffic & Orders ]
-                       │
-        [ Primary Master Restored Online ]
-                       │
-          (2) Demote & Reconcile: ./demote_fi.sh
-              • Acquires Quiesce Lock on Standby (freezes writes)
-              • Syncs Standby SQLite DBs to Primary staging
-              • Executes 3-Way Merge Engine (failback_merge.py)
-              • Switches Cloudflare DNS back to Master IP
-              • Releases Quiesce Lock & re-enables background sync
+       ┌─────────────────────────────────────────────────────────────┐
+       │                   PRIMARY MASTER NODE (NL)                  │
+       │  • Active Control Plane: vpn-shop-silentconnect, web (3090) │
+       │  • Active Data Plane: xray-maxru, xray-ws443, amnezia-awg2   │
+       │  • Sole Database Writer: vpn_shop.db & x-ui.db              │
+       │  • Continuous WAL Streaming: Litestream -> FI SFTP Replica  │
+       └──────────────────────────────┬──────────────────────────────┘
+                                      │ Continuous WAL Replica
+                                      ▼
+       ┌─────────────────────────────────────────────────────────────┐
+       │                   STANDBY PASSIVE NODE (FI)                 │
+       │  • Passive Standby Posture: web & bot STOPPED & DISABLED    │
+       │  • Restore-Only Configuration: Litestream daemon NOT running │
+       │  • Active Data Plane: xray-maxru, xray-ws443, amnezia-awg2   │
+       │  • Incoming SFTP Replica Store: /var/lib/litestream/        │
+       └──────────────────────────────┬──────────────────────────────┘
+                                      │
+         [ Outage on Primary Master (NL) / Disaster Declared ]
+                                      │
+         (1) Manual Promotion Runbook: /usr/local/bin/promote_fi.sh
+             • Acquires exclusive execution lock (flock)
+             • Executes Litestream restore for vpn_shop.db & x-ui.db
+             • Validates SQLite integrity via PRAGMA integrity_check
+             • Starts & enables local bot and web services on Standby
+             • Updates Cloudflare DNS A records to Standby IP (DNS-Only ⚪)
+                                      │
+                   [ Standby Node Serves Traffic & Orders ]
+                                      │
+                    [ Primary Master Restored Online ]
+                                      │
+         (2) Reconcile & Demotion Runbook: /usr/local/bin/demote_fi.sh
+             • Acquires Quiesce Lock on Standby (freezes local writes)
+             • Synchronizes Standby SQLite DBs to Primary staging
+             • Executes 3-Way Merge Engine (failback_merge.py)
+             • Switches Cloudflare DNS back to Master IP (DNS-Only ⚪)
+             • Disables standby web/bot services to return to Passive Standby
+             • Re-enables primary Litestream streaming
 ```
+
+### Standby Posture & SQLite Isolation
+To maintain strict data integrity and eliminate split-brain database corruption:
+- **Zero Standby Writes**: `vpn-shop-web.service` and `vpn-shop-silentconnect.service` remain stopped and disabled on the standby node during normal operations.
+- **Restore-Only Posture**: The background Litestream replication daemon is **strictly not running** on the standby node. Standby uses a restore-only configuration (`/etc/litestream.yml`) targeting the incoming SFTP replica path.
+- **Data Plane Continuity**: Inbound proxy engines (`xray-maxru`, `xray-ws443`, `x-ui`) and AmneziaWG obfuscated WireGuard mesh containers (`amnezia-awg2`) remain continuously active on both nodes, ensuring client connectivity is never interrupted.
 
 ### 3-Way SQLite Conflict-Free Reconciliation (`scripts/failback_merge.py`)
 - **Natural Business Keys**: Reconciles profiles, orders, and users by `public_id`, `xui_email`, and `subId` rather than auto-increment primary keys.
 - **Foreign Key Remapping**: Automatically updates relational references across `orders`, `profiles`, `referrers`, and `promo_codes`.
 - **Expiry Preservation**: Merges subscription expirations via `MAX(primary.expires_at, secondary.expires_at)`, guaranteeing renewals made on standby are never lost.
 - **Traffic Counter Delta**: Aggregates byte transfer deltas from standby into primary metrics.
+
+### Port 2053 & Firewall Security Architecture
+- **Public Restriction**: Port `2053/tcp` (3X-UI administrative panel) is strictly blocked from the public internet by UFW firewall rules on both NL and FI nodes (`ufw deny 2053/tcp`).
+- **Local-Only Access**: 3X-UI binds to `127.0.0.1:2053`. Administrative access is performed exclusively via secure SSH port forwarding:
+  ```bash
+  ssh -N -L 2053:127.0.0.1:2053 root@your-server-ip
+  ```
+- **Brute-Force Rate Limiting**: Port `22/tcp` (SSH) is hardened with UFW rate limiting (`ufw limit 22/tcp`), dropping aggressive connection bursts.
 
 ---
 
