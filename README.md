@@ -1,4 +1,4 @@
-# SilentConnect: Enterprise Multi-Protocol VPN & Subscription Platform
+# SilentConnect: High-Availability Multi-Protocol VPN & Subscription Platform
 
 [![Security Audit](https://img.shields.io/badge/Security_Audit-Zero_Leaks_Passed-10b981.svg?style=flat-square)](#automated-security--zero-leak-verification)
 [![Python Version](https://img.shields.io/badge/Python-3.11+-3b82f6.svg?style=flat-square)](https://www.python.org/)
