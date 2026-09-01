@@ -3904,101 +3904,129 @@ class ShopBot:
         if order.get("status") == "delivered" and order.get("provisioned_profile_id"):
             result = self._recover_subscription_for_order(order)
         elif order.get("kind") == "renewal":
-            meta = order.get("meta_json") or {}
-            profile_public_id = str(meta.get("renewal_profile_public_id") or "")
-            if not profile_public_id:
-                raise RuntimeError(f"Renewal order {order['public_id']} has no target profile")
-            raw_device_limit = meta.get("device_limit", self.settings.default_device_limit)
-            device_limit = int(self.settings.default_device_limit if raw_device_limit is None else raw_device_limit)
-            if str(order.get("transport") or "") == "hybrid" or meta.get("hybrid"):
-                xhttp_profile_public_id = str(
-                    meta.get("renewal_xhttp_profile_public_id")
-                    or meta.get("xhttp_profile_public_id")
-                    or ""
-                )
-                if not xhttp_profile_public_id:
-                    raise RuntimeError(f"Hybrid renewal order {order['public_id']} has no xhttp target profile")
-                tcp_result = self.provisioner.renew_profile(
-                    profile_public_id,
-                    int(order["duration_days"]),
-                    device_limit=device_limit,
-                )
-                xhttp_result = self.provisioner.renew_profile(
-                    xhttp_profile_public_id,
-                    int(order["duration_days"]),
-                    device_limit=device_limit,
-                )
-                result = {
-                    "profile": tcp_result["profile"],
-                    "xhttp_profile": xhttp_result["profile"],
-                    "subscription_url": self._hybrid_subscription_url(
-                        str(tcp_result["sub_id"]),
-                        str(xhttp_result["sub_id"]),
-                    ),
-                    "sub_id": f"{tcp_result['sub_id']}~{xhttp_result['sub_id']}",
-                    "expires_at": min(int(tcp_result["expires_at"]), int(xhttp_result["expires_at"])),
-                }
-                meta = dict(meta)
-                meta.update(
-                    {
-                        "hybrid": True,
-                        "tcp_profile_public_id": tcp_result["profile"]["public_id"],
-                        "xhttp_profile_public_id": xhttp_result["profile"]["public_id"],
-                        "tcp_sub_id": tcp_result["sub_id"],
-                        "xhttp_sub_id": xhttp_result["sub_id"],
+            promo_id = order.get("promo_id")
+            promo_reserved = False
+            if promo_id:
+                consumed = self.store.consume_promo_code(int(promo_id))
+                if not consumed:
+                    raise RuntimeError(f"Promo code for order {order['public_id']} is no longer available or exhausted")
+                promo_reserved = True
+            try:
+                meta = order.get("meta_json") or {}
+                profile_public_id = str(meta.get("renewal_profile_public_id") or "")
+                if not profile_public_id:
+                    raise RuntimeError(f"Renewal order {order['public_id']} has no target profile")
+                raw_device_limit = meta.get("device_limit", self.settings.default_device_limit)
+                device_limit = int(self.settings.default_device_limit if raw_device_limit is None else raw_device_limit)
+                if str(order.get("transport") or "") == "hybrid" or meta.get("hybrid"):
+                    xhttp_profile_public_id = str(
+                        meta.get("renewal_xhttp_profile_public_id")
+                        or meta.get("xhttp_profile_public_id")
+                        or ""
+                    )
+                    if not xhttp_profile_public_id:
+                        raise RuntimeError(f"Hybrid renewal order {order['public_id']} has no xhttp target profile")
+                    tcp_result = self.provisioner.renew_profile(
+                        profile_public_id,
+                        int(order["duration_days"]),
+                        device_limit=device_limit,
+                    )
+                    xhttp_result = self.provisioner.renew_profile(
+                        xhttp_profile_public_id,
+                        int(order["duration_days"]),
+                        device_limit=device_limit,
+                    )
+                    result = {
+                        "profile": tcp_result["profile"],
+                        "xhttp_profile": xhttp_result["profile"],
+                        "subscription_url": self._hybrid_subscription_url(
+                            str(tcp_result["sub_id"]),
+                            str(xhttp_result["sub_id"]),
+                        ),
+                        "sub_id": f"{tcp_result['sub_id']}~{xhttp_result['sub_id']}",
+                        "expires_at": min(int(tcp_result["expires_at"]), int(xhttp_result["expires_at"])),
                     }
+                    meta = dict(meta)
+                    meta.update(
+                        {
+                            "hybrid": True,
+                            "tcp_profile_public_id": tcp_result["profile"]["public_id"],
+                            "xhttp_profile_public_id": xhttp_result["profile"]["public_id"],
+                            "tcp_sub_id": tcp_result["sub_id"],
+                            "xhttp_sub_id": xhttp_result["sub_id"],
+                        }
+                    )
+                    self.store.update_order_meta(order["public_id"], meta)
+                else:
+                    result = self.provisioner.renew_profile(
+                        profile_public_id,
+                        int(order["duration_days"]),
+                        device_limit=device_limit,
+                    )
+                self.store.link_order_profile(order["public_id"], result["profile"]["public_id"])
+                self.store.update_order_status(order["public_id"], "delivered", closed=True)
+                self.store.record_admin_action(
+                    action_type="complete_renewal",
+                    target_type="order",
+                    target_public_id=order["public_id"],
+                    actor=actor,
+                    meta={
+                        "transport": order["transport"],
+                        "profile_public_id": result["profile"]["public_id"],
+                        "xhttp_profile_public_id": (result.get("xhttp_profile") or {}).get("public_id"),
+                        "expires_at": result["expires_at"],
+                    },
                 )
-                self.store.update_order_meta(order["public_id"], meta)
-            else:
-                result = self.provisioner.renew_profile(
-                    profile_public_id,
-                    int(order["duration_days"]),
-                    device_limit=device_limit,
-                )
-            self.store.link_order_profile(order["public_id"], result["profile"]["public_id"])
-            self.store.update_order_status(order["public_id"], "delivered", closed=True)
-            self.store.record_admin_action(
-                action_type="complete_renewal",
-                target_type="order",
-                target_public_id=order["public_id"],
-                actor=actor,
-                meta={
-                    "transport": order["transport"],
-                    "profile_public_id": result["profile"]["public_id"],
-                    "xhttp_profile_public_id": (result.get("xhttp_profile") or {}).get("public_id"),
-                    "expires_at": result["expires_at"],
-                },
-            )
-            completed_now = True
-            refreshed = self.store.get_order(order["public_id"])
-            if refreshed:
-                order = refreshed
-            if delivery_prefix == "Оплата подтверждена. Ваша ссылка:":
-                delivery_prefix = (
-                    "Оплата подтверждена. Лимит подписки обновлён, ссылка прежняя:"
-                    if meta.get("upgrade_only")
-                    else "Оплата подтверждена. Подписка продлена, ссылка прежняя:"
-                )
+                completed_now = True
+                refreshed = self.store.get_order(order["public_id"])
+                if refreshed:
+                    order = refreshed
+                if delivery_prefix == "Оплата подтверждена. Ваша ссылка:":
+                    delivery_prefix = (
+                        "Оплата подтверждена. Лимит подписки обновлён, ссылка прежняя:"
+                        if meta.get("upgrade_only")
+                        else "Оплата подтверждена. Подписка продлена, ссылка прежняя:"
+                    )
+            except Exception:
+                if promo_reserved and promo_id:
+                    self.store.restore_promo_code(int(promo_id))
+                raise
         else:
-            result = self.provisioner.create_profile_for_order(order)
-            self.store.update_order_status(order["public_id"], "delivered", closed=True)
-            self.store.record_admin_action(
-                action_type="complete_order",
-                target_type="order",
-                target_public_id=order["public_id"],
-                actor=actor,
-                meta={"transport": order["transport"], "profile_public_id": result["profile"]["public_id"]},
-            )
-            completed_now = True
-            refreshed = self.store.get_order(order["public_id"])
-            if refreshed:
-                order = refreshed
-            if not result.get("subscription_url"):
-                result = self._recover_subscription_for_order(order)
+            promo_id = order.get("promo_id")
+            invite_id = order.get("invite_id")
+            promo_reserved = False
+            invite_reserved = False
+
+            if promo_id:
+                consumed = self.store.consume_promo_code(int(promo_id))
+                if not consumed:
+                    raise RuntimeError(f"Promo code for order {order['public_id']} is no longer available or exhausted")
+                promo_reserved = True
+
+            try:
+                result = self.provisioner.create_profile_for_order(order)
+                self.store.update_order_status(order["public_id"], "delivered", closed=True)
+                self.store.record_admin_action(
+                    action_type="complete_order",
+                    target_type="order",
+                    target_public_id=order["public_id"],
+                    actor=actor,
+                    meta={"transport": order["transport"], "profile_public_id": result["profile"]["public_id"]},
+                )
+                completed_now = True
+                refreshed = self.store.get_order(order["public_id"])
+                if refreshed:
+                    order = refreshed
+                if not result.get("subscription_url"):
+                    result = self._recover_subscription_for_order(order)
+            except Exception:
+                if promo_reserved and promo_id:
+                    self.store.restore_promo_code(int(promo_id))
+                if invite_reserved and invite_id:
+                    self.store.restore_invite(int(invite_id))
+                raise
 
         if completed_now:
-            if order.get("promo_id"):
-                self.store.consume_promo_code(int(order["promo_id"]))
             try:
                 ledger = self.store.create_referral_ledger_for_order(order)
                 if ledger:

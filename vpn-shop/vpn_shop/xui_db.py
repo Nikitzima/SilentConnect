@@ -14,7 +14,7 @@ class XuiDatabase:
     def __init__(self, path: Path):
         self.path = Path(path)
         self._cache_lock = threading.Lock()
-        self._cached_mtime: float | None = None
+        self._cached_mtime: tuple[float, float, int] | None = None
         self._by_email: dict[str, dict[str, Any]] = {}
         self._by_sub_id: dict[str, dict[str, Any]] = {}
         self._inbounds_cached: list[dict[str, Any]] = []
@@ -26,11 +26,22 @@ class XuiDatabase:
             self._by_sub_id.clear()
             self._inbounds_cached.clear()
 
-    def _get_mtime(self) -> float | None:
+    def _get_mtime(self) -> tuple[float, float, int] | None:
         try:
-            return os.path.getmtime(self.path)
+            db_stat = os.stat(self.path)
+            db_mtime = db_stat.st_mtime
         except OSError:
             return None
+        wal_path = Path(f"{self.path}-wal")
+        wal_mtime = 0.0
+        wal_size = 0
+        try:
+            wal_stat = os.stat(wal_path)
+            wal_mtime = wal_stat.st_mtime
+            wal_size = wal_stat.st_size
+        except OSError:
+            pass
+        return (db_mtime, wal_mtime, wal_size)
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:

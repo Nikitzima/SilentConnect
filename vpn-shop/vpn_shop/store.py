@@ -413,6 +413,20 @@ class Store:
     def mark_invite_used(self, invite_id: int) -> dict[str, Any] | None:
         return self.consume_invite(invite_id)
 
+    def restore_invite(self, invite_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE invite_tokens
+                SET used_count = MAX(0, used_count - 1)
+                WHERE id = ?
+                RETURNING *
+                """,
+                (int(invite_id),),
+            )
+            row = cursor.fetchone()
+            return self._row_to_dict(row)
+
     def create_promo_code(
         self,
         *,
@@ -557,6 +571,20 @@ class Store:
 
     def mark_promo_used(self, promo_id: int) -> dict[str, Any] | None:
         return self.consume_promo_code(promo_id)
+
+    def restore_promo_code(self, promo_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE promo_codes
+                SET used_count = MAX(0, used_count - 1)
+                WHERE id = ?
+                RETURNING *
+                """,
+                (int(promo_id),),
+            )
+            row = cursor.fetchone()
+            return self._row_to_dict(row)
 
     def create_order(
         self,
