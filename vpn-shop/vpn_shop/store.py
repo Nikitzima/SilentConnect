@@ -363,29 +363,54 @@ class Store:
         return code, dict(row)
 
     def find_valid_invite(self, code: str) -> dict[str, Any] | None:
+        now = now_ts()
         with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT * FROM invite_tokens
-                WHERE code_hash = ? AND enabled = 1
+                WHERE code_hash = ?
+                  AND enabled = 1
+                  AND used_count < max_uses
+                  AND (expires_at IS NULL OR expires_at > ?)
                 """,
-                (hash_secret(code),),
+                (hash_secret(code), now),
             ).fetchone()
-        invite = self._row_to_dict(row)
-        if not invite:
-            return None
-        if invite["expires_at"] and invite["expires_at"] < now_ts():
-            return None
-        if invite["used_count"] >= invite["max_uses"]:
-            return None
-        return invite
+        return self._row_to_dict(row)
 
-    def mark_invite_used(self, invite_id: int) -> None:
+    def consume_invite(self, code_or_id: str | int) -> dict[str, Any] | None:
+        now = now_ts()
         with self._connect() as conn:
-            conn.execute(
-                "UPDATE invite_tokens SET used_count = used_count + 1 WHERE id = ?",
-                (invite_id,),
-            )
+            if isinstance(code_or_id, int) or (isinstance(code_or_id, str) and code_or_id.isdigit()):
+                cursor = conn.execute(
+                    """
+                    UPDATE invite_tokens
+                    SET used_count = used_count + 1
+                    WHERE id = ?
+                      AND enabled = 1
+                      AND used_count < max_uses
+                      AND (expires_at IS NULL OR expires_at > ?)
+                    RETURNING *
+                    """,
+                    (int(code_or_id), now),
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    UPDATE invite_tokens
+                    SET used_count = used_count + 1
+                    WHERE code_hash = ?
+                      AND enabled = 1
+                      AND used_count < max_uses
+                      AND (expires_at IS NULL OR expires_at > ?)
+                    RETURNING *
+                    """,
+                    (hash_secret(str(code_or_id)), now),
+                )
+            row = cursor.fetchone()
+            return self._row_to_dict(row)
+
+    def mark_invite_used(self, invite_id: int) -> dict[str, Any] | None:
+        return self.consume_invite(invite_id)
 
     def create_promo_code(
         self,
@@ -452,20 +477,34 @@ class Store:
         return int(promo.get("used_count") or 0) < int(promo.get("max_uses") or 0)
 
     def get_valid_promo_by_id(self, promo_id: int) -> dict[str, Any] | None:
-        promo = self.get_promo_code(promo_id)
-        return promo if self.is_promo_valid(promo) else None
-
-    def find_valid_promo(self, code: str) -> dict[str, Any] | None:
+        now = now_ts()
         with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT * FROM promo_codes
-                WHERE code_hash = ? AND enabled = 1
+                WHERE id = ?
+                  AND enabled = 1
+                  AND used_count < max_uses
+                  AND (expires_at IS NULL OR expires_at > ?)
                 """,
-                (hash_secret(code),),
+                (int(promo_id), now),
             ).fetchone()
-        promo = self._row_to_dict(row)
-        return promo if self.is_promo_valid(promo) else None
+        return self._row_to_dict(row)
+
+    def find_valid_promo(self, code: str) -> dict[str, Any] | None:
+        now = now_ts()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM promo_codes
+                WHERE code_hash = ?
+                  AND enabled = 1
+                  AND used_count < max_uses
+                  AND (expires_at IS NULL OR expires_at > ?)
+                """,
+                (hash_secret(code), now),
+            ).fetchone()
+        return self._row_to_dict(row)
 
     def get_open_order_for_promo(self, promo_id: int) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -483,16 +522,40 @@ class Store:
             ).fetchone()
         return self._row_to_dict(row)
 
-    def mark_promo_used(self, promo_id: int) -> None:
+    def consume_promo_code(self, code_or_id: str | int) -> dict[str, Any] | None:
+        now = now_ts()
         with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE promo_codes
-                SET used_count = used_count + 1, last_used_at = ?
-                WHERE id = ?
-                """,
-                (now_ts(), promo_id),
-            )
+            if isinstance(code_or_id, int) or (isinstance(code_or_id, str) and code_or_id.isdigit()):
+                cursor = conn.execute(
+                    """
+                    UPDATE promo_codes
+                    SET used_count = used_count + 1, last_used_at = ?
+                    WHERE id = ?
+                      AND enabled = 1
+                      AND used_count < max_uses
+                      AND (expires_at IS NULL OR expires_at > ?)
+                    RETURNING *
+                    """,
+                    (now, int(code_or_id), now),
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    UPDATE promo_codes
+                    SET used_count = used_count + 1, last_used_at = ?
+                    WHERE code_hash = ?
+                      AND enabled = 1
+                      AND used_count < max_uses
+                      AND (expires_at IS NULL OR expires_at > ?)
+                    RETURNING *
+                    """,
+                    (now, hash_secret(str(code_or_id)), now),
+                )
+            row = cursor.fetchone()
+            return self._row_to_dict(row)
+
+    def mark_promo_used(self, promo_id: int) -> dict[str, Any] | None:
+        return self.consume_promo_code(promo_id)
 
     def create_order(
         self,

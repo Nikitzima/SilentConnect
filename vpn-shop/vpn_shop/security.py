@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import os
 import secrets
 import string
 import time
@@ -8,6 +10,8 @@ import time
 
 ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 ALPHABET_LOWER = string.ascii_lowercase + string.digits
+
+SERVER_PEPPER = os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")
 
 
 def now_ts() -> int:
@@ -23,7 +27,8 @@ def to_xui_ms(timestamp_s: int) -> int:
 
 
 def hash_secret(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+    effective_pepper = os.environ.get("SERVER_PEPPER", "").encode("utf-8") or SERVER_PEPPER
+    return hmac.new(effective_pepper, value.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def random_code(prefix: str, groups: tuple[int, ...] = (4, 4, 4)) -> str:
@@ -34,9 +39,14 @@ def random_code(prefix: str, groups: tuple[int, ...] = (4, 4, 4)) -> str:
 
 
 def masked_code(code: str) -> str:
-    if len(code) <= 8:
-        return code
-    return f"{code[:4]}...{code[-4:]}"
+    if not code:
+        return ""
+    if "-" in code:
+        prefix = code.split("-", 1)[0]
+        return f"{prefix}-..."
+    if len(code) <= 4:
+        return f"{code[:1]}..."
+    return f"{code[:3]}..."
 
 
 def public_id(prefix: str, size: int = 10) -> str:

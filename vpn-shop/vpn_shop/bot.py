@@ -2820,7 +2820,11 @@ class ShopBot:
                 meta={"source": "promo", "device_limit": device_limit},
             )
             if invite_id:
-                self.store.mark_invite_used(invite_id)
+                consumed = self.store.consume_invite(invite_id)
+                if not consumed and self.settings.invite_required:
+                    self.telegram.send_message(chat_id, "Приглашение уже недействительно или использовано.")
+                    self.show_public_menu(chat_id)
+                    return
 
             current_context.pop("pending_promo", None)
             current_context.pop("pending_promo_id", None)
@@ -2915,7 +2919,11 @@ class ShopBot:
                 meta=meta,
             )
             if invite_id:
-                self.store.mark_invite_used(invite_id)
+                consumed = self.store.consume_invite(invite_id)
+                if not consumed and self.settings.invite_required:
+                    self.telegram.send_message(chat_id, "Приглашение уже использовано или недействительно.")
+                    self.show_public_menu(chat_id)
+                    return
 
             context.pop("discount_promo", None)
             context.pop("discount_promo_id", None)
@@ -3951,7 +3959,7 @@ class ShopBot:
 
         if completed_now:
             if order.get("promo_id"):
-                self.store.mark_promo_used(int(order["promo_id"]))
+                self.store.consume_promo_code(int(order["promo_id"]))
             try:
                 ledger = self.store.create_referral_ledger_for_order(order)
                 if ledger:

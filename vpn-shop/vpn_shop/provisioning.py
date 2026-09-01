@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import sqlite3
 import time
 import uuid
 from typing import Any
@@ -10,6 +12,8 @@ from .security import days_from_now, normalize_username, now_ts, random_alias, r
 from .store import Store
 from .xui_api import XuiApiClient
 from .xui_db import XuiDatabase
+
+LOGGER = logging.getLogger(__name__)
 
 
 TEST_PROFILE_NOTES = "admin_test_24h_auto_delete"
@@ -138,18 +142,19 @@ class Provisioner:
             }
 
         try:
-            db_conn = sqlite3.connect(self.settings.xui_db_path.as_posix(), timeout=5.0)
-            db_row = db_conn.execute("SELECT settings FROM inbounds WHERE id = ?", (inbound_id,)).fetchone()
-            if db_row and db_row[0]:
-                db_st = json.loads(db_row[0])
-                existing_clients = db_st.setdefault("clients", [])
-                if not any(c.get("email") == alias for c in existing_clients):
-                    existing_clients.append(found["client"])
-                    db_conn.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(db_st, ensure_ascii=False), inbound_id))
-                    db_conn.commit()
-            db_conn.close()
-        except Exception:
-            pass
+            with sqlite3.connect(self.settings.xui_db_path.as_posix(), timeout=5.0) as db_conn:
+                db_row = db_conn.execute("SELECT settings FROM inbounds WHERE id = ?", (inbound_id,)).fetchone()
+                if db_row and db_row[0]:
+                    try:
+                        db_st = json.loads(db_row[0])
+                    except json.JSONDecodeError:
+                        db_st = {}
+                    existing_clients = db_st.setdefault("clients", [])
+                    if not any(c.get("email") == alias for c in existing_clients):
+                        existing_clients.append(found["client"])
+                        db_conn.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(db_st, ensure_ascii=False), inbound_id))
+        except sqlite3.Error as exc:
+            LOGGER.error("Direct SQLite fallback failed for inbound %s: %s", inbound_id, exc)
 
         sub_id = found["client"].get("subId") or client.get("subId")
         if not sub_id:
@@ -220,19 +225,18 @@ class Provisioner:
                 alias=f"{alias_prefix}-xhttp",
                 device_limit=device_limit,
             )
-        except Exception:
+        except Exception as exc:
+            LOGGER.warning("Hybrid order provisioning failed, rolling back tcp profile: %s", exc)
             if tcp_result:
                 profile = tcp_result.get("profile") or {}
-                delete_keys = [str(tcp_result.get("xui_email") or "")]
-                client_id = str(profile.get("xui_client_id") or "")
-                if client_id:
-                    delete_keys.append(client_id)
-                for client_key in [key for key in delete_keys if key]:
+                inbound_id = int(profile.get("xui_inbound_id") or self.settings.xui_tcp_inbound_id)
+                delete_keys = [str(profile.get("xui_client_id") or ""), str(tcp_result.get("xui_email") or "")]
+                for client_key in [k for k in delete_keys if k]:
                     try:
-                        self.xui_api.delete_client(int(profile["xui_inbound_id"]), client_key)
+                        self.xui_api.delete_client(inbound_id, client_key)
                         break
-                    except Exception:
-                        pass
+                    except Exception as del_exc:
+                        LOGGER.warning("Failed to delete client %s on inbound %s during rollback: %s", client_key, inbound_id, del_exc)
                 if profile.get("public_id"):
                     self.store.mark_profile_deleted(str(profile["public_id"]))
             raise
@@ -288,19 +292,18 @@ class Provisioner:
                 alias=f"{alias_prefix}-xhttp",
                 notes=TEST_PROFILE_NOTES,
             )
-        except Exception:
+        except Exception as exc:
+            LOGGER.warning("Hybrid test provisioning failed, rolling back tcp profile: %s", exc)
             if tcp_result:
                 profile = tcp_result.get("profile") or {}
-                delete_keys = [str(tcp_result.get("xui_email") or "")]
-                client_id = str(profile.get("xui_client_id") or "")
-                if client_id:
-                    delete_keys.append(client_id)
-                for client_key in [key for key in delete_keys if key]:
+                inbound_id = int(profile.get("xui_inbound_id") or self.settings.xui_tcp_inbound_id)
+                delete_keys = [str(profile.get("xui_client_id") or ""), str(tcp_result.get("xui_email") or "")]
+                for client_key in [k for k in delete_keys if k]:
                     try:
-                        self.xui_api.delete_client(int(profile["xui_inbound_id"]), client_key)
+                        self.xui_api.delete_client(inbound_id, client_key)
                         break
-                    except Exception:
-                        pass
+                    except Exception as del_exc:
+                        LOGGER.warning("Failed to delete client %s on inbound %s during rollback: %s", client_key, inbound_id, del_exc)
                 if profile.get("public_id"):
                     self.store.mark_profile_deleted(str(profile["public_id"]))
             raise
