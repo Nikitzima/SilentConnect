@@ -1,15 +1,36 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import copy
 import json
-import sqlite3
+import os
 from pathlib import Path
+import sqlite3
+import threading
 from typing import Any, Iterator
 
 
 class XuiDatabase:
     def __init__(self, path: Path):
         self.path = Path(path)
+        self._cache_lock = threading.Lock()
+        self._cached_mtime: float | None = None
+        self._by_email: dict[str, dict[str, Any]] = {}
+        self._by_sub_id: dict[str, dict[str, Any]] = {}
+        self._inbounds_cached: list[dict[str, Any]] = []
+
+    def invalidate_cache(self) -> None:
+        with self._cache_lock:
+            self._cached_mtime = None
+            self._by_email.clear()
+            self._by_sub_id.clear()
+            self._inbounds_cached.clear()
+
+    def _get_mtime(self) -> float | None:
+        try:
+            return os.path.getmtime(self.path)
+        except OSError:
+            return None
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -31,55 +52,137 @@ class XuiDatabase:
             raise ValueError("Unexpected x-ui JSON structure")
         return parsed
 
-    def find_client_by_email(self, email: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT id, remark, protocol, port, settings, stream_settings, sniffing
-                FROM inbounds
-                ORDER BY id
-                """
-            ).fetchall()
-        for row in rows:
-            settings = self._parse_settings(row["settings"])
-            for client in settings.get("clients") or []:
-                if client.get("email") == email:
-                    return {
+    def _ensure_cache(self) -> None:
+        current_mtime = self._get_mtime()
+        if current_mtime is None:
+            self.invalidate_cache()
+            return
+
+        with self._cache_lock:
+            if self._cached_mtime is not None and self._cached_mtime == current_mtime:
+                return
+
+            try:
+                with self._connect() as conn:
+                    rows = conn.execute(
+                        """
+                        SELECT id, remark, protocol, port, settings, stream_settings, sniffing
+                        FROM inbounds
+                        ORDER BY id
+                        """
+                    ).fetchall()
+            except sqlite3.Error:
+                return
+
+            new_by_email: dict[str, dict[str, Any]] = {}
+            new_by_sub_id: dict[str, dict[str, Any]] = {}
+            new_inbounds: list[dict[str, Any]] = []
+
+            for row in rows:
+                settings = self._parse_settings(row["settings"])
+                stream_settings = self._parse_settings(row["stream_settings"])
+                sniffing = self._parse_settings(row["sniffing"])
+                row_dict = {
+                    "id": row["id"],
+                    "remark": row["remark"],
+                    "protocol": row["protocol"],
+                    "port": row["port"],
+                    "settings": settings,
+                    "stream_settings": stream_settings,
+                    "sniffing": sniffing,
+                }
+                new_inbounds.append(row_dict)
+
+                for client in settings.get("clients") or []:
+                    rec = {
                         "inbound_id": row["id"],
                         "remark": row["remark"],
                         "protocol": row["protocol"],
                         "port": row["port"],
                         "client": client,
                         "settings": settings,
-                        "stream_settings": self._parse_settings(row["stream_settings"]),
-                        "sniffing": self._parse_settings(row["sniffing"]),
+                        "stream_settings": stream_settings,
+                        "sniffing": sniffing,
                     }
-        return None
+                    email = client.get("email")
+                    if email and str(email) not in new_by_email:
+                        new_by_email[str(email)] = rec
+                    sub_id = client.get("subId")
+                    if sub_id and str(sub_id) not in new_by_sub_id:
+                        new_by_sub_id[str(sub_id)] = rec
+
+            self._by_email = new_by_email
+            self._by_sub_id = new_by_sub_id
+            self._inbounds_cached = new_inbounds
+            self._cached_mtime = current_mtime
+
+    def find_client_by_email(self, email: str) -> dict[str, Any] | None:
+        self._ensure_cache()
+        with self._cache_lock:
+            rec = self._by_email.get(str(email))
+            if rec is not None:
+                return copy.deepcopy(rec)
+            if self._cached_mtime is None:
+                try:
+                    with self._connect() as conn:
+                        rows = conn.execute(
+                            """
+                            SELECT id, remark, protocol, port, settings, stream_settings, sniffing
+                            FROM inbounds
+                            ORDER BY id
+                            """
+                        ).fetchall()
+                    for row in rows:
+                        settings = self._parse_settings(row["settings"])
+                        for client in settings.get("clients") or []:
+                            if client.get("email") == email:
+                                return {
+                                    "inbound_id": row["id"],
+                                    "remark": row["remark"],
+                                    "protocol": row["protocol"],
+                                    "port": row["port"],
+                                    "client": client,
+                                    "settings": settings,
+                                    "stream_settings": self._parse_settings(row["stream_settings"]),
+                                    "sniffing": self._parse_settings(row["sniffing"]),
+                                }
+                except sqlite3.Error:
+                    return None
+            return None
 
     def find_client_by_sub_id(self, sub_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT id, remark, protocol, port, settings, stream_settings, sniffing
-                FROM inbounds
-                ORDER BY id
-                """
-            ).fetchall()
-        for row in rows:
-            settings = self._parse_settings(row["settings"])
-            for client in settings.get("clients") or []:
-                if client.get("subId") == sub_id:
-                    return {
-                        "inbound_id": row["id"],
-                        "remark": row["remark"],
-                        "protocol": row["protocol"],
-                        "port": row["port"],
-                        "client": client,
-                        "settings": settings,
-                        "stream_settings": self._parse_settings(row["stream_settings"]),
-                        "sniffing": self._parse_settings(row["sniffing"]),
-                    }
-        return None
+        self._ensure_cache()
+        with self._cache_lock:
+            rec = self._by_sub_id.get(str(sub_id))
+            if rec is not None:
+                return copy.deepcopy(rec)
+            if self._cached_mtime is None:
+                try:
+                    with self._connect() as conn:
+                        rows = conn.execute(
+                            """
+                            SELECT id, remark, protocol, port, settings, stream_settings, sniffing
+                            FROM inbounds
+                            ORDER BY id
+                            """
+                        ).fetchall()
+                    for row in rows:
+                        settings = self._parse_settings(row["settings"])
+                        for client in settings.get("clients") or []:
+                            if client.get("subId") == sub_id:
+                                return {
+                                    "inbound_id": row["id"],
+                                    "remark": row["remark"],
+                                    "protocol": row["protocol"],
+                                    "port": row["port"],
+                                    "client": client,
+                                    "settings": settings,
+                                    "stream_settings": self._parse_settings(row["stream_settings"]),
+                                    "sniffing": self._parse_settings(row["sniffing"]),
+                                }
+                except sqlite3.Error:
+                    return None
+            return None
 
     def get_client_traffic(self, email: str) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -143,6 +246,7 @@ class XuiDatabase:
                 (inbound_id, int(enable), email, new_expiry_ms),
             )
             conn.commit()
+            self.invalidate_cache()
             return True
         finally:
             conn.close()
