@@ -45,10 +45,22 @@ def err(msg: str) -> None:
 
 
 def make_backup(db_path: str) -> str:
-    """Create timestamped backup before modifying database."""
+    """Create timestamped backup before modifying database using SQLite online backup API."""
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = f"{db_path}.bak_{ts}"
-    shutil.copy2(db_path, backup_path)
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    try:
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+        except sqlite3.Error:
+            pass
+        bak_conn = sqlite3.connect(backup_path, timeout=30.0)
+        try:
+            conn.backup(bak_conn)
+        finally:
+            bak_conn.close()
+    finally:
+        conn.close()
     log(f"Created backup: {backup_path}")
     return backup_path
 

@@ -11,7 +11,26 @@ import time
 ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 ALPHABET_LOWER = string.ascii_lowercase + string.digits
 
-SERVER_PEPPER = os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")
+DEFAULT_SERVER_PEPPER = "silentconnect-pepper-secret-v1"
+SERVER_PEPPER = os.environ.get("SERVER_PEPPER", DEFAULT_SERVER_PEPPER).encode("utf-8")
+
+
+def validate_production_secrets() -> None:
+    is_prod = (
+        os.environ.get("ENV", "").strip().lower() == "production"
+        or os.environ.get("PRODUCTION", "").strip() in ("1", "true", "yes")
+    )
+    if is_prod:
+        raw_pepper = os.environ.get("SERVER_PEPPER", "").strip()
+        if not raw_pepper or raw_pepper == DEFAULT_SERVER_PEPPER:
+            raise RuntimeError(
+                "Production environment detected (ENV=production / PRODUCTION=1), "
+                "but default or empty SERVER_PEPPER is configured. "
+                "A secure, unique SERVER_PEPPER must be configured in production."
+            )
+
+
+validate_production_secrets()
 
 
 def now_ts() -> int:

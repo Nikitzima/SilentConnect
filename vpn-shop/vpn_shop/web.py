@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import html
@@ -8,6 +9,7 @@ import logging
 from pathlib import Path
 import re
 import secrets
+import threading
 import time
 from typing import Any
 from urllib.parse import parse_qs, quote, urlencode, urlsplit, urlunsplit
@@ -25,6 +27,7 @@ from .telegram_api import TelegramBotClient, TelegramApiError
 LOGGER = logging.getLogger("vpn-shop-web")
 PAYMENT_REPORT_REPEAT_SECONDS = 10 * 60
 TEMP_NETWORK_NOTICE = ""
+WEB_RATE_LIMIT_MAX_ENTRIES = 10000
 
 
 def money(value: int | str | None) -> str:
@@ -56,14 +59,13 @@ def verify_cf_turnstile(secret_key: str, response_token: str, client_ip: str = "
     if not secret_key:
         LOGGER.warning("CF_TURNSTILE_SECRET_KEY is not configured - Turnstile verification disabled")
         return True
-    if not response_token:
-        # Graceful degradation: allow checkout if Turnstile is blocked or failed to load
-        LOGGER.warning("Turnstile token is empty - allowing graceful fallback checkout")
-        return True
+    if not str(response_token or "").strip():
+        LOGGER.warning("Turnstile token is empty while secret key is configured - rejecting request (fail-closed)")
+        return False
     try:
         post_data = urlencode({
             "secret": secret_key,
-            "response": response_token,
+            "response": response_token.strip(),
             "remoteip": client_ip,
         }).encode("utf-8")
         req = urllib.request.Request(
@@ -255,17 +257,42 @@ class WebCheckout:
     def maybe_auto_deliver_free_web_order(self, order: dict[str, Any]) -> dict[str, Any]:
         if int(order.get("final_price_rub") or 0) > 0:
             return order
-        result = self.provisioner.create_profile_for_order(order)
-        self.store.update_order_status(str(order["public_id"]), "delivered", closed=True)
-        if order.get("promo_id"):
-            self.store.consume_promo_code(int(order["promo_id"]))
-        self.store.record_admin_action(
-            action_type="web_auto_free_order",
-            target_type="order",
-            target_public_id=str(order["public_id"]),
-            actor="web",
-            meta={"transport": order["transport"], "profile_public_id": result["profile"]["public_id"]},
-        )
+
+        promo_id = order.get("promo_id")
+        invite_id = order.get("invite_id")
+        promo_reserved = False
+        invite_reserved = False
+
+        if promo_id:
+            consumed = self.store.consume_promo_code(int(promo_id))
+            if not consumed:
+                raise ValueError("Промокод больше недоступен или исчерпан.")
+            promo_reserved = True
+
+        if invite_id:
+            consumed = self.store.consume_invite(int(invite_id))
+            if not consumed:
+                if promo_reserved:
+                    self.store.restore_promo_code(int(promo_id))
+                raise ValueError("Инвайт-код больше недоступен или исчерпан.")
+            invite_reserved = True
+
+        try:
+            result = self.provisioner.create_profile_for_order(order)
+            self.store.update_order_status(str(order["public_id"]), "delivered", closed=True)
+            self.store.record_admin_action(
+                action_type="web_auto_free_order",
+                target_type="order",
+                target_public_id=str(order["public_id"]),
+                actor="web",
+                meta={"transport": order["transport"], "profile_public_id": result["profile"]["public_id"]},
+            )
+        except Exception:
+            if promo_reserved and promo_id:
+                self.store.restore_promo_code(int(promo_id))
+            if invite_reserved and invite_id:
+                self.store.restore_invite(int(invite_id))
+            raise
         delivered = self.store.get_order(str(order["public_id"])) or order
         customer_email = str(delivered.get("customer_email") or (delivered.get("meta_json") or {}).get("customer_email") or "").strip()
         if customer_email:
@@ -598,8 +625,9 @@ class WebCheckout:
         </script>
         """
 
-    _cabinet_rate_limits: dict[str, float] = {}
-    _promo_check_limits: dict[str, list[float]] = {}
+    _rate_limit_lock = threading.Lock()
+    _cabinet_rate_limits: OrderedDict[str, float] = OrderedDict()
+    _promo_check_limits: OrderedDict[str, list[float]] = OrderedDict()
 
     def request_cabinet_access_link(self, headers: Any, email: str, turnstile_token: str = "") -> dict[str, Any]:
         clean_email = (email or "").strip().lower()
@@ -617,19 +645,24 @@ class WebCheckout:
         now = time.time()
         rate_key = f"{clean_email}:{client_ip}"
         
-        last_sent = self._cabinet_rate_limits.get(rate_key, 0)
-        if now - last_sent < 120:
-            wait_sec = int(120 - (now - last_sent))
-            return {
-                "ok": False,
-                "message": f"Вы недавно уже запрашивали доступ. Пожалуйста, проверьте почту или подождите {wait_sec} сек.",
-            }
+        with self._rate_limit_lock:
+            last_sent = self._cabinet_rate_limits.get(rate_key, 0.0)
+            if now - last_sent < 120:
+                wait_sec = int(120 - (now - last_sent))
+                return {
+                    "ok": False,
+                    "message": f"Вы недавно уже запрашивали доступ. Пожалуйста, проверьте почту или подождите {wait_sec} сек.",
+                }
 
         profiles = self.store.get_active_profiles_by_customer_email(clean_email)
         if not profiles:
             return {"ok": False, "message": "Активных подписок на этот Email не найдено. Проверьте адрес или оформите новую подписку."}
 
-        self._cabinet_rate_limits[rate_key] = now
+        with self._rate_limit_lock:
+            self._cabinet_rate_limits[rate_key] = now
+            self._cabinet_rate_limits.move_to_end(rate_key)
+            while len(self._cabinet_rate_limits) > WEB_RATE_LIMIT_MAX_ENTRIES:
+                self._cabinet_rate_limits.popitem(last=False)
 
         profiles_data = []
         for p in profiles:
@@ -678,22 +711,27 @@ class WebCheckout:
         # Softened rate limit: 12 attempts per 3 minutes (180s) instead of 5 attempts per 1 hour (3600s)
         window_sec = 180
         max_attempts = 12
-        history = [t for t in self._promo_check_limits.get(rate_key, []) if now - t < window_sec]
-        if len(history) >= max_attempts:
-            wait_sec = int(window_sec - (now - min(history)))
-            if wait_sec <= 0:
-                wait_sec = 30
-            return {
-                "ok": False,
-                "message": f"Слишком много попыток проверки промокодов. Пожалуйста, подождите {wait_sec} сек.",
-            }
-        history.append(now)
-        self._promo_check_limits[rate_key] = history
+        with self._rate_limit_lock:
+            history = [t for t in self._promo_check_limits.get(rate_key, []) if now - t < window_sec]
+            if len(history) >= max_attempts:
+                wait_sec = int(window_sec - (now - min(history)))
+                if wait_sec <= 0:
+                    wait_sec = 30
+                return {
+                    "ok": False,
+                    "message": f"Слишком много попыток проверки промокодов. Пожалуйста, подождите {wait_sec} сек.",
+                }
+            history.append(now)
+            self._promo_check_limits[rate_key] = history
+            self._promo_check_limits.move_to_end(rate_key)
+            while len(self._promo_check_limits) > WEB_RATE_LIMIT_MAX_ENTRIES:
+                self._promo_check_limits.popitem(last=False)
 
         try:
             promo = self.load_valid_promo(clean_code)
             # Successful promo check clears failed rate-limit attempts for this IP
-            self._promo_check_limits.pop(rate_key, None)
+            with self._rate_limit_lock:
+                self._promo_check_limits.pop(rate_key, None)
             promo_type = self.promo_type(promo)
             if promo_type == "discount":
                 pct = int(promo.get("discount_percent") or 0)

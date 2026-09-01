@@ -74,6 +74,33 @@ def get_env(name: str, default: str | None = None) -> str:
 LISTEN_HOST = get_env("LISTEN_HOST", "0.0.0.0")
 LISTEN_PORT = int(get_env("LISTEN_PORT", "3088"))
 SECRET_SEGMENT = get_env("SECRET_SEGMENT", "my-secret-sub").strip("/")  # PLACEHOLDER
+
+DEFAULT_SECRET_SEGMENTS = {"my-secret-sub", "secret-sub", ""}
+
+
+def validate_production_secrets() -> None:
+    is_prod = (
+        os.environ.get("ENV", "").strip().lower() == "production"
+        or os.environ.get("PRODUCTION", "").strip() in ("1", "true", "yes")
+    )
+    if is_prod:
+        segment = os.environ.get("SECRET_SEGMENT", "").strip("/").strip()
+        if not segment or segment in DEFAULT_SECRET_SEGMENTS:
+            raise RuntimeError(
+                "Production environment detected (ENV=production / PRODUCTION=1), "
+                "but default or empty SECRET_SEGMENT is configured. "
+                "A secure SECRET_SEGMENT must be set in production."
+            )
+        pepper = os.environ.get("SERVER_PEPPER", "").strip()
+        if pepper == "silentconnect-pepper-secret-v1":
+            raise RuntimeError(
+                "Production environment detected (ENV=production / PRODUCTION=1), "
+                "but default placeholder SERVER_PEPPER is configured. "
+                "A secure SERVER_PEPPER must be set in production."
+            )
+
+
+validate_production_secrets()
 PUBLIC_HOST = os.environ.get("PUBLIC_HOST", "").strip()
 PUBLIC_SUBSCRIPTION_ORIGIN = os.environ.get("PUBLIC_SUBSCRIPTION_ORIGIN", "").strip().rstrip("/")
 FALLBACK_SUBSCRIPTION_ORIGIN = os.environ.get("FALLBACK_SUBSCRIPTION_ORIGIN", "").strip().rstrip("/")
@@ -226,7 +253,7 @@ def parse_json_blob(raw: str | None) -> dict[str, Any]:
 
 
 _inbounds_cache_lock = threading.Lock()
-_inbounds_cache_mtime: float | None = None
+_inbounds_cache_mtime: tuple[float, float, int] | None = None
 _cached_raw_rows: list[sqlite3.Row] = []
 _cached_inbounds_parsed: list[tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]]]] = []
 _cached_clients_index: dict[str, tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]] = {}
@@ -241,11 +268,22 @@ def invalidate_inbounds_cache() -> None:
         _cached_clients_index = {}
 
 
-def _get_xui_db_mtime() -> float | None:
+def _get_xui_db_mtime() -> tuple[float, float, int] | None:
     try:
-        return os.path.getmtime(XUI_DB_PATH)
+        db_stat = os.stat(XUI_DB_PATH)
+        db_mtime = db_stat.st_mtime
     except OSError:
         return None
+    wal_path = f"{XUI_DB_PATH}-wal"
+    wal_mtime = 0.0
+    wal_size = 0
+    try:
+        wal_stat = os.stat(wal_path)
+        wal_mtime = wal_stat.st_mtime
+        wal_size = wal_stat.st_size
+    except OSError:
+        pass
+    return (db_mtime, wal_mtime, wal_size)
 
 
 def _ensure_inbounds_cache() -> None:
@@ -945,7 +983,7 @@ def _find_subscription_impl(subscription_id: str) -> tuple[sqlite3.Row, dict[str
         conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = sqlite3.Row
         try:
-            prof = conn.execute("SELECT xui_email FROM profiles WHERE public_id = ? OR id = ?", (target, target)).fetchone()
+            prof = conn.execute("SELECT xui_email FROM profiles WHERE public_id = ?", (target,)).fetchone()
         finally:
             conn.close()
         if prof and prof["xui_email"]:
