@@ -7,15 +7,9 @@ QUIESCE_ACTIVE = False
 QUIESCE_LEASE_UNTIL = 0.0
 
 def is_quiesced():
-    global QUIESCE_ACTIVE, QUIESCE_LEASE_UNTIL
+    global QUIESCE_ACTIVE
     with QUIESCE_LOCK:
-        if not QUIESCE_ACTIVE:
-            return False
-        if time.time() > QUIESCE_LEASE_UNTIL:
-            QUIESCE_ACTIVE = False
-            QUIESCE_LEASE_UNTIL = 0.0
-            return False
-        return True
+        return bool(QUIESCE_ACTIVE)
 
 import base64
 import copy
@@ -26,17 +20,44 @@ import ipaddress
 import json
 import logging
 import os
+from pathlib import Path
 import re
 import secrets
 import socket
 import sqlite3
+import sys
 import time
 import urllib.parse
 import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from typing import Any
+
+# Centralized pricing logic
+_vpn_shop_path = str(Path(__file__).resolve().parent.parent / "vpn-shop")
+if _vpn_shop_path not in sys.path:
+    sys.path.insert(0, _vpn_shop_path)
+
+try:
+    from vpn_shop.catalog import calculate_renewal_price, quote_price
+except ImportError:
+    def quote_price(device_limit: int = 3, duration_days: int = 30, settings: Any = None) -> int:
+        prices = {3: 100, 6: 150, 9: 200}
+        monthly = prices.get(device_limit, 100)
+        months = max(duration_days // 30, 1)
+        discount = 0
+        if duration_days >= 360:
+            discount = 30
+        elif duration_days >= 180:
+            discount = 20
+        elif duration_days >= 90:
+            discount = 10
+        raw = (monthly * months * (100 - discount)) // 100
+        if raw <= 0:
+            return 0
+        return max(((raw + 5) // 10) * 10 - 1, 9)
+
+    calculate_renewal_price = quote_price
 
 
 LOGGER = logging.getLogger("subjson-service")
@@ -192,7 +213,8 @@ TRANSPORT_SETTING_KEYS = (
 
 def read_inbounds() -> list[sqlite3.Row]:
     db_uri = Path(XUI_DB_PATH).as_posix()
-    conn = sqlite3.connect(f"file:{db_uri}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{db_uri}?mode=ro", uri=True, timeout=30.0)
+    conn.execute("PRAGMA busy_timeout = 30000;")
     conn.row_factory = sqlite3.Row
     try:
         return conn.execute(
@@ -246,155 +268,143 @@ def create_inline_renewal_order(
     email = str(found_client["client"].get("email") or "")
 
     # 2. Find profile & order in vpn_shop.db
-    conn_shop = sqlite3.connect(db_path)
+    conn_shop = sqlite3.connect(db_path, timeout=30.0)
+    conn_shop.execute("PRAGMA busy_timeout = 30000;")
     conn_shop.row_factory = sqlite3.Row
+    try:
+        prof = conn_shop.execute("SELECT * FROM profiles WHERE xui_email = ?", (email,)).fetchone()
+        if not prof:
+            pub_id = "prf_" + secrets.token_hex(6)
+            now = int(time.time())
+            expiry_ms = int(found_client["client"].get("expiryTime") or 0)
+            expires_at = expiry_ms // 1000 if expiry_ms > 0 else (now + 30 * 86400)
+            client_id = str(found_client["client"].get("id") or email)
+            mode = "family" if not email.startswith("anon-") else "anonymous"
+            conn_shop.execute(
+                """
+                INSERT INTO profiles(
+                    public_id, xui_inbound_id, transport, profile_mode, family_label,
+                    xui_email, xui_client_id, status, created_at, expires_at,
+                    last_renewed_at, deleted_at, notes
+                )
+                VALUES(?, ?, 'tcp', ?, NULL, ?, ?, 'active', ?, ?, ?, NULL, 'auto_sync_from_xui')
+                """,
+                (pub_id, int(found_client["inbound_id"]), mode, email, client_id, now, expires_at, now)
+            )
+            conn_shop.commit()
+            prof = conn_shop.execute("SELECT * FROM profiles WHERE xui_email = ?", (email,)).fetchone()
 
-    prof = conn_shop.execute("SELECT * FROM profiles WHERE xui_email = ?", (email,)).fetchone()
-    if not prof:
-        pub_id = "prf_" + secrets.token_hex(6)
+        if not prof or prof["status"] == "deleted":
+            raise ValueError("Профиль подписки не найден или удалён.")
+
+        notes = str(prof["notes"] or "").lower()
+        if notes in {"public_trial_7d_auto_delete", "admin_test_24h_auto_delete", "admin_personal_long_lived"} or "trial" in notes or "test" in notes or "auto_delete" in notes:
+            raise ValueError("Пробную подписку (7 дней) нельзя продлить. Пожалуйста, оформите новую подписку на главной странице.")
+
+        prof_dict = dict(prof)
+
+        order_row = conn_shop.execute(
+            "SELECT * FROM orders WHERE provisioned_profile_id = ? ORDER BY id DESC LIMIT 1",
+            (prof_dict["id"],)
+        ).fetchone()
+
+        source_meta = json.loads(order_row["meta_json"]) if order_row and order_row["meta_json"] else {}
+        if device_limit not in {3, 6, 9}:
+            device_limit = 3
+        if duration_days not in {30, 90, 180, 360}:
+            duration_days = 360
+
+        transport = str(prof_dict.get("transport") or "tcp")
+
+        # Centralized catalog pricing based on device limit & duration
+        final_price = quote_price(device_limit, duration_days)
+        months = max(duration_days // 30, 1)
+        device_base_prices = {3: 100, 6: 150, 9: 200}
+        base_price = device_base_prices.get(device_limit, 100) * months
+
+        # Promo discount check
+        discount_percent = 0
+        promo_id = None
+        if promo_code:
+            code_hash = hashlib.sha256(promo_code.strip().lower().encode("utf-8")).hexdigest()
+            p_row = conn_shop.execute("SELECT * FROM promo_codes WHERE code_hash = ? AND enabled = 1", (code_hash,)).fetchone()
+            if p_row:
+                discount_percent = int(p_row["discount_percent"] or 0)
+                promo_id = p_row["id"]
+                if discount_percent > 0:
+                    final_price = max(final_price * (100 - discount_percent) // 100, 0)
+
         now = int(time.time())
-        expiry_ms = int(found_client["client"].get("expiryTime") or 0)
-        expires_at = expiry_ms // 1000 if expiry_ms > 0 else (now + 30 * 86400)
-        client_id = str(found_client["client"].get("id") or email)
-        mode = "family" if not email.startswith("anon-") else "anonymous"
+        final_email = customer_email.strip() or str((order_row["customer_email"] if order_row else "") or "")
+
+        # Cancel any existing open waiting_payment orders for this profile first
+        conn_shop.execute(
+            "UPDATE orders SET status = 'cancelled', updated_at = ?, closed_at = ? WHERE provisioned_profile_id = ? AND status = 'waiting_payment'",
+            (now, now, prof_dict["id"])
+        )
+        conn_shop.commit()
+
+        token = secrets.token_hex(12)
+        order_pub_id = "ord_" + secrets.token_hex(6)
+        meta = {
+            "source": f"inline_renewal_{sub_id}",
+            "device_limit": device_limit,
+            "web": True,
+            "web_token": token,
+            "customer_email": final_email,
+            "renewal_profile_public_id": str(prof_dict["public_id"]),
+            "sub_id": sub_id,
+            "email_reminders": email_reminders,
+        }
+        status = "waiting_payment" if final_price > 0 else "auto_provision"
         conn_shop.execute(
             """
-            INSERT INTO profiles(
-                public_id, xui_inbound_id, transport, profile_mode, family_label,
-                xui_email, xui_client_id, status, created_at, expires_at,
-                last_renewed_at, deleted_at, notes
+            INSERT INTO orders(
+                public_id, kind, status, transport, duration_days, profile_mode, family_label,
+                base_price_rub, final_price_rub, promo_id, invite_id, customer_chat_id,
+                manager_chat_id, manager_message_id, privacy_ack, loss_policy_ack,
+                terms_version, provisioned_profile_id, customer_email, created_at, updated_at, closed_at, meta_json
             )
-            VALUES(?, ?, 'tcp', ?, NULL, ?, ?, 'active', ?, ?, ?, NULL, 'auto_sync_from_xui')
+            VALUES(?, 'renewal', ?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL, NULL, NULL, 1, 1, '2026-04-20', ?, ?, ?, ?, NULL, ?)
             """,
-            (pub_id, int(found_client["inbound_id"]), mode, email, client_id, now, expires_at, now)
+            (
+                order_pub_id, status, transport, duration_days, str(prof_dict.get("profile_mode") or "anonymous"),
+                base_price, final_price, promo_id, prof_dict["id"], final_email, now, now, json.dumps(meta)
+            )
         )
         conn_shop.commit()
-        prof = conn_shop.execute("SELECT * FROM profiles WHERE xui_email = ?", (email,)).fetchone()
 
-    if not prof or prof["status"] == "deleted":
+        # If free: renew immediately in x-ui & store
+        if final_price == 0:
+            cur_expiry_ms = int(found_client["client"].get("expiryTime") or 0)
+            cur_expiry_s = cur_expiry_ms // 1000 if cur_expiry_ms > 0 else 0
+            base_exp = max(now, int(prof_dict.get("expires_at") or 0), cur_expiry_s)
+            new_exp_s = base_exp + duration_days * 86400
+            new_exp_ms = new_exp_s * 1000
+
+            # Update xui db
+            xui_rw = sqlite3.connect(XUI_DB_PATH, timeout=30.0)
+            xui_rw.execute("PRAGMA busy_timeout = 30000;")
+            try:
+                inb = xui_rw.execute("SELECT settings FROM inbounds WHERE id = ?", (found_client["inbound_id"],)).fetchone()
+                if inb and inb[0]:
+                    st = json.loads(inb[0])
+                    for cl in st.get("clients") or []:
+                        if str(cl.get("subId") or "") == sub_id:
+                            cl["expiryTime"] = new_exp_ms
+                            cl["enable"] = True
+                            break
+                    xui_rw.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(st), found_client["inbound_id"]))
+                    xui_rw.commit()
+            finally:
+                xui_rw.close()
+
+            # Update profiles & orders in shop db
+            conn_shop.execute("UPDATE profiles SET expires_at = ?, last_renewed_at = ? WHERE id = ?", (new_exp_s, now, prof_dict["id"]))
+            conn_shop.execute("UPDATE orders SET status = 'delivered', closed_at = ? WHERE public_id = ?", (now, order_pub_id))
+            conn_shop.commit()
+    finally:
         conn_shop.close()
-        raise ValueError("Профиль подписки не найден или удалён.")
-
-    notes = str(prof["notes"] or "").lower()
-    if notes in {"public_trial_7d_auto_delete", "admin_test_24h_auto_delete", "admin_personal_long_lived"} or "trial" in notes or "test" in notes or "auto_delete" in notes:
-        conn_shop.close()
-        raise ValueError("Пробную подписку (7 дней) нельзя продлить. Пожалуйста, оформите новую подписку на главной странице.")
-
-    prof_dict = dict(prof)
-
-    order_row = conn_shop.execute(
-        "SELECT * FROM orders WHERE provisioned_profile_id = ? ORDER BY id DESC LIMIT 1",
-        (prof_dict["id"],)
-    ).fetchone()
-
-    source_meta = json.loads(order_row["meta_json"]) if order_row and order_row["meta_json"] else {}
-    if device_limit not in {3, 6, 9}:
-        device_limit = 3
-    if duration_days not in {30, 90, 180, 360}:
-        duration_days = 360
-
-    transport = str(prof_dict.get("transport") or "tcp")
-
-    # Catalog pricing based on device limit & duration
-    device_base_prices = {3: 149, 6: 249, 9: 349}
-    monthly_price = device_base_prices.get(device_limit, 149)
-    months = max(duration_days // 30, 1)
-    base_price = monthly_price * months
-
-    discount = 0
-    if duration_days == 90:
-        discount = 10
-    elif duration_days == 180:
-        discount = 20
-    elif duration_days == 360:
-        discount = 30
-
-    raw_price = (monthly_price * months * (100 - discount)) // 100
-    if raw_price <= 0:
-        final_price = 0
-    else:
-        final_price = max(((raw_price + 5) // 10) * 10 - 1, 9)
-
-    # Promo discount check
-    discount_percent = 0
-    promo_id = None
-    if promo_code:
-        code_hash = hashlib.sha256(promo_code.strip().lower().encode("utf-8")).hexdigest()
-        p_row = conn_shop.execute("SELECT * FROM promo_codes WHERE code_hash = ? AND enabled = 1", (code_hash,)).fetchone()
-        if p_row:
-            discount_percent = int(p_row["discount_percent"] or 0)
-            promo_id = p_row["id"]
-            if discount_percent > 0:
-                final_price = max(final_price * (100 - discount_percent) // 100, 0)
-
-    now = int(time.time())
-    final_email = customer_email.strip() or str((order_row["customer_email"] if order_row else "") or "")
-
-    # Cancel any existing open waiting_payment orders for this profile first
-    conn_shop.execute(
-        "UPDATE orders SET status = 'cancelled', updated_at = ?, closed_at = ? WHERE provisioned_profile_id = ? AND status = 'waiting_payment'",
-        (now, now, prof_dict["id"])
-    )
-    conn_shop.commit()
-
-    token = secrets.token_hex(12)
-    order_pub_id = "ord_" + secrets.token_hex(6)
-    meta = {
-        "source": f"inline_renewal_{sub_id}",
-        "device_limit": device_limit,
-        "web": True,
-        "web_token": token,
-        "customer_email": final_email,
-        "renewal_profile_public_id": str(prof_dict["public_id"]),
-        "sub_id": sub_id,
-        "email_reminders": email_reminders,
-    }
-    status = "waiting_payment" if final_price > 0 else "auto_provision"
-    conn_shop.execute(
-        """
-        INSERT INTO orders(
-            public_id, kind, status, transport, duration_days, profile_mode, family_label,
-            base_price_rub, final_price_rub, promo_id, invite_id, customer_chat_id,
-            manager_chat_id, manager_message_id, privacy_ack, loss_policy_ack,
-            terms_version, provisioned_profile_id, customer_email, created_at, updated_at, closed_at, meta_json
-        )
-        VALUES(?, 'renewal', ?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL, NULL, NULL, 1, 1, '2026-04-20', ?, ?, ?, ?, NULL, ?)
-        """,
-        (
-            order_pub_id, status, transport, duration_days, str(prof_dict.get("profile_mode") or "anonymous"),
-            base_price, final_price, promo_id, prof_dict["id"], final_email, now, now, json.dumps(meta)
-        )
-    )
-    conn_shop.commit()
-
-    # If free: renew immediately in x-ui & store
-    if final_price == 0:
-        cur_expiry_ms = int(found_client["client"].get("expiryTime") or 0)
-        cur_expiry_s = cur_expiry_ms // 1000 if cur_expiry_ms > 0 else 0
-        base_exp = max(now, int(prof_dict.get("expires_at") or 0), cur_expiry_s)
-        new_exp_s = base_exp + duration_days * 86400
-        new_exp_ms = new_exp_s * 1000
-
-        # Update xui db
-        xui_rw = sqlite3.connect(XUI_DB_PATH)
-        inb = xui_rw.execute("SELECT settings FROM inbounds WHERE id = ?", (found_client["inbound_id"],)).fetchone()
-        if inb and inb[0]:
-            st = json.loads(inb[0])
-            for cl in st.get("clients") or []:
-                if str(cl.get("subId") or "") == sub_id:
-                    cl["expiryTime"] = new_exp_ms
-                    cl["enable"] = True
-                    break
-            xui_rw.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(st), found_client["inbound_id"]))
-            xui_rw.commit()
-        xui_rw.close()
-
-        # Update profiles & orders in shop db
-        conn_shop.execute("UPDATE profiles SET expires_at = ?, last_renewed_at = ? WHERE id = ?", (new_exp_s, now, prof_dict["id"]))
-        conn_shop.execute("UPDATE orders SET status = 'delivered', closed_at = ? WHERE public_id = ?", (now, order_pub_id))
-        conn_shop.commit()
-
-    conn_shop.close()
 
     return {
         "public_id": order_pub_id,
@@ -487,30 +497,29 @@ def check_pending_payment_card(sub_id: str) -> str:
     if not Path(db_path).exists():
         return ""
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, timeout=30.0)
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = sqlite3.Row
-        target_sub = sub_id.strip().split("~")[0]
-        row, _, _, _, client = find_subscription(target_sub)
-        email = str(client.get("email") or "")
-        prof = conn.execute("SELECT * FROM profiles WHERE xui_email = ?", (email,)).fetchone()
-        if prof:
-            order = conn.execute(
-                "SELECT * FROM orders WHERE provisioned_profile_id = ? ORDER BY id DESC LIMIT 1",
-                (prof["id"],)
-            ).fetchone()
-            if order:
-                now = int(time.time())
-                updated_at = order["updated_at"] or order["created_at"] or 0
-                if order["status"] in ("paid", "delivered") and (now - updated_at > 86400 * 5):
-                    conn.close()
-                    return ""
-                if order["status"] in ("canceled", "cancelled") and (now - updated_at > 86400 * 3):
-                    conn.close()
-                    return ""
-                card = render_payment_notice_html(order)
-                conn.close()
-                return card
-        conn.close()
+        try:
+            target_sub = sub_id.strip().split("~")[0]
+            row, _, _, _, client = find_subscription(target_sub)
+            email = str(client.get("email") or "")
+            prof = conn.execute("SELECT * FROM profiles WHERE xui_email = ?", (email,)).fetchone()
+            if prof:
+                order = conn.execute(
+                    "SELECT * FROM orders WHERE provisioned_profile_id = ? ORDER BY id DESC LIMIT 1",
+                    (prof["id"],)
+                ).fetchone()
+                if order:
+                    now = int(time.time())
+                    updated_at = order["updated_at"] or order["created_at"] or 0
+                    if order["status"] in ("paid", "delivered") and (now - updated_at > 86400 * 5):
+                        return ""
+                    if order["status"] in ("canceled", "cancelled") and (now - updated_at > 86400 * 3):
+                        return ""
+                    return render_payment_notice_html(order)
+        finally:
+            conn.close()
     except Exception as e:
         LOGGER.debug("Error in check_pending_payment_card: %s", e)
     return ""
@@ -522,110 +531,112 @@ def handle_inline_order_paid(order_public_id: str) -> bool:
     if not Path(db_path).exists():
         return False
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn.execute("PRAGMA busy_timeout = 30000;")
     conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (order_public_id,)).fetchone()
-    if not row:
-        conn.close()
-        return False
+    try:
+        row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (order_public_id,)).fetchone()
+        if not row:
+            return False
 
-    meta = json.loads(row["meta_json"]) if row["meta_json"] else {}
-    meta["web_paid_reported_at"] = int(time.time())
-    now = int(time.time())
-    conn.execute("UPDATE orders SET meta_json = ?, updated_at = ? WHERE public_id = ?", (json.dumps(meta), now, order_public_id))
-    conn.commit()
+        meta = json.loads(row["meta_json"]) if row["meta_json"] else {}
+        meta["web_paid_reported_at"] = int(time.time())
+        now = int(time.time())
+        conn.execute("UPDATE orders SET meta_json = ?, updated_at = ? WHERE public_id = ?", (json.dumps(meta), now, order_public_id))
+        conn.commit()
 
-    # Record admin action
-    conn.execute(
-        """
-        INSERT INTO admin_actions(action_type, target_type, target_public_id, actor, created_at, meta_json)
-        VALUES('web_payment_reported_by_customer', 'order', ?, 'subjson_web', ?, ?)
-        """,
-        (order_public_id, now, json.dumps({"sub_id": meta.get("sub_id")}))
-    )
-    conn.commit()
+        # Record admin action
+        conn.execute(
+            """
+            INSERT INTO admin_actions(action_type, target_type, target_public_id, actor, created_at, meta_json)
+            VALUES('web_payment_reported_by_customer', 'order', ?, 'subjson_web', ?, ?)
+            """,
+            (order_public_id, now, json.dumps({"sub_id": meta.get("sub_id")}))
+        )
+        conn.commit()
 
-    # Notify Telegram admins using active SilentConnect bot token (.env.silentconnect)
-    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    if not bot_token:
-        for env_file in ["/root/vpn-shop/.env.silentconnect", "/root/vpn-shop/.env"]:
-            env_path = Path(env_file)
-            if env_path.exists():
-                for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-                    if line.startswith("TELEGRAM_BOT_TOKEN="):
-                        val = line.split("=", 1)[1].strip()
-                        if val:
-                            bot_token = val
-                            break
-            if bot_token:
-                break
+        # Notify Telegram admins using active SilentConnect bot token (.env.silentconnect)
+        bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+        if not bot_token:
+            for env_file in ["/root/vpn-shop/.env.silentconnect", "/root/vpn-shop/.env"]:
+                env_path = Path(env_file)
+                if env_path.exists():
+                    for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                        if line.startswith("TELEGRAM_BOT_TOKEN="):
+                            val = line.split("=", 1)[1].strip()
+                            if val:
+                                bot_token = val
+                                break
+                if bot_token:
+                    break
 
-    if bot_token:
-        admin_chats = []
-        try:
-            admin_rows = conn.execute("SELECT DISTINCT chat_id FROM chat_sessions WHERE scope = 'admin'").fetchall()
-            admin_chats = [str(r["chat_id"]) for r in admin_rows if r["chat_id"]]
-        except Exception:
-            pass
-
-        if not admin_chats:
+        if bot_token:
+            admin_chats = []
             try:
-                admin_rows = conn.execute("SELECT DISTINCT actor FROM admin_actions WHERE actor LIKE 'tg:%' ORDER BY id DESC LIMIT 10").fetchall()
-                for r in admin_rows:
-                    actor = str(r["actor"] or "")
-                    if actor.startswith("tg:"):
-                        cid = actor.split(":", 1)[1].strip()
-                        if cid and cid not in admin_chats:
-                            admin_chats.append(cid)
+                admin_rows = conn.execute("SELECT DISTINCT chat_id FROM chat_sessions WHERE scope = 'admin'").fetchall()
+                admin_chats = [str(r["chat_id"]) for r in admin_rows if r["chat_id"]]
             except Exception:
                 pass
 
-        env_admin_ids = os.environ.get("ADMIN_TG_IDS", "958026436").strip()
-        if env_admin_ids:
-            for cid in env_admin_ids.split(","):
-                cid = cid.strip()
-                if cid and cid not in admin_chats:
-                    admin_chats.append(cid)
-
-        if admin_chats:
-            row_dict = dict(row)
-            customer_email = str(row_dict.get("customer_email") or meta.get("customer_email") or "").strip()
-            email_info = f"\n📧 Email: `{customer_email}`" if customer_email else ""
-            msg_text = (
-                f"💳 **Покупатель с сайта сообщил об оплате**\n\n"
-                f"Заказ: `{order_public_id}`\n"
-                f"Тип: Продление подписки\n"
-                f"Срок: {row_dict.get('duration_days', 30)} дн.{email_info}\n"
-                f"Сумма: {row_dict.get('final_price_rub', 0)} RUB\n\n"
-                f"Проверьте зачисление по СБП и подтвердите оплату."
-            )
-            markup = {
-                "inline_keyboard": [
-                    [
-                        {"text": "✅ Подтвердить оплату", "callback_data": f"admin:confirm:{order_public_id}"},
-                        {"text": "❌ Отменить", "callback_data": f"admin:cancel:{order_public_id}"},
-                    ]
-                ]
-            }
-            for chat_id in admin_chats:
+            if not admin_chats:
                 try:
-                    payload = json.dumps({
-                        "chat_id": chat_id,
-                        "text": msg_text,
-                        "parse_mode": "Markdown",
-                        "reply_markup": markup,
-                    }).encode("utf-8")
-                    req = urllib.request.Request(
-                        f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                        data=payload,
-                        headers={"Content-Type": "application/json"}
-                    )
-                    urllib.request.urlopen(req, timeout=5)
+                    admin_rows = conn.execute("SELECT DISTINCT actor FROM admin_actions WHERE actor LIKE 'tg:%' ORDER BY id DESC LIMIT 10").fetchall()
+                    for r in admin_rows:
+                        actor = str(r["actor"] or "")
+                        if actor.startswith("tg:"):
+                            cid = actor.split(":", 1)[1].strip()
+                            if cid and cid not in admin_chats:
+                                admin_chats.append(cid)
                 except Exception:
                     pass
 
-    conn.close()
-    return True
+            env_admin_ids = os.environ.get("ADMIN_TG_IDS", "958026436").strip()
+            if env_admin_ids:
+                for cid in env_admin_ids.split(","):
+                    cid = cid.strip()
+                    if cid and cid not in admin_chats:
+                        admin_chats.append(cid)
+
+            if admin_chats:
+                row_dict = dict(row)
+                customer_email = str(row_dict.get("customer_email") or meta.get("customer_email") or "").strip()
+                email_info = f"\n📧 Email: `{customer_email}`" if customer_email else ""
+                msg_text = (
+                    f"💳 **Покупатель с сайта сообщил об оплате**\n\n"
+                    f"Заказ: `{order_public_id}`\n"
+                    f"Тип: Продление подписки\n"
+                    f"Срок: {row_dict.get('duration_days', 30)} дн.{email_info}\n"
+                    f"Сумма: {row_dict.get('final_price_rub', 0)} RUB\n\n"
+                    f"Проверьте зачисление по СБП и подтвердите оплату."
+                )
+                markup = {
+                    "inline_keyboard": [
+                        [
+                            {"text": "✅ Подтвердить оплату", "callback_data": f"admin:confirm:{order_public_id}"},
+                            {"text": "❌ Отменить", "callback_data": f"admin:cancel:{order_public_id}"},
+                        ]
+                    ]
+                }
+                for chat_id in admin_chats:
+                    try:
+                        payload = json.dumps({
+                            "chat_id": chat_id,
+                            "text": msg_text,
+                            "parse_mode": "Markdown",
+                            "reply_markup": markup,
+                        }).encode("utf-8")
+                        req = urllib.request.Request(
+                            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                            data=payload,
+                            headers={"Content-Type": "application/json"}
+                        )
+                        urllib.request.urlopen(req, timeout=5)
+                    except Exception:
+                        pass
+
+        return True
+    finally:
+        conn.close()
 
 
 def handle_inline_order_cancel(order_public_id: str) -> str:
@@ -633,38 +644,41 @@ def handle_inline_order_cancel(order_public_id: str) -> str:
     if not Path(db_path).exists():
         return ""
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn.execute("PRAGMA busy_timeout = 30000;")
     conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (order_public_id,)).fetchone()
-    sub_id = ""
-    profile_id = None
-    if row:
-        profile_id = row["provisioned_profile_id"]
-        if row["meta_json"]:
-            try:
-                meta = json.loads(row["meta_json"])
-                sub_id = str(meta.get("sub_id") or "")
-            except Exception:
-                pass
+    try:
+        row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (order_public_id,)).fetchone()
+        sub_id = ""
+        profile_id = None
+        if row:
+            profile_id = row["provisioned_profile_id"]
+            if row["meta_json"]:
+                try:
+                    meta = json.loads(row["meta_json"])
+                    sub_id = str(meta.get("sub_id") or "")
+                except Exception:
+                    pass
 
-    now = int(time.time())
-    if profile_id:
+        now = int(time.time())
+        if profile_id:
+            conn.execute(
+                "UPDATE orders SET status = 'cancelled', updated_at = ?, closed_at = ? WHERE status = 'waiting_payment' AND provisioned_profile_id = ?",
+                (now, now, profile_id)
+            )
+        if sub_id:
+            conn.execute(
+                "UPDATE orders SET status = 'cancelled', updated_at = ?, closed_at = ? WHERE status = 'waiting_payment' AND json_extract(meta_json, '$.sub_id') = ?",
+                (now, now, sub_id)
+            )
         conn.execute(
-            "UPDATE orders SET status = 'cancelled', updated_at = ?, closed_at = ? WHERE status = 'waiting_payment' AND provisioned_profile_id = ?",
-            (now, now, profile_id)
+            "UPDATE orders SET status = 'cancelled', updated_at = ?, closed_at = ? WHERE public_id = ?",
+            (now, now, order_public_id)
         )
-    if sub_id:
-        conn.execute(
-            "UPDATE orders SET status = 'cancelled', updated_at = ?, closed_at = ? WHERE status = 'waiting_payment' AND json_extract(meta_json, '$.sub_id') = ?",
-            (now, now, sub_id)
-        )
-    conn.execute(
-        "UPDATE orders SET status = 'cancelled', updated_at = ?, closed_at = ? WHERE public_id = ?",
-        (now, now, order_public_id)
-    )
-    conn.commit()
-    conn.close()
-    return sub_id
+        conn.commit()
+        return sub_id
+    finally:
+        conn.close()
 
 
 def resolve_public_host(headers) -> str:
@@ -850,10 +864,13 @@ def _find_subscription_impl(subscription_id: str) -> tuple[sqlite3.Row, dict[str
 
     try:
         store_path = find_store_db_path()
-        conn = sqlite3.connect(store_path)
+        conn = sqlite3.connect(store_path, timeout=30.0)
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = sqlite3.Row
-        prof = conn.execute("SELECT xui_email FROM profiles WHERE public_id = ? OR id = ?", (target, target)).fetchone()
-        conn.close()
+        try:
+            prof = conn.execute("SELECT xui_email FROM profiles WHERE public_id = ? OR id = ?", (target, target)).fetchone()
+        finally:
+            conn.close()
         if prof and prof["xui_email"]:
             xemail = str(prof["xui_email"]).strip()
             for row in inbounds:
@@ -3675,7 +3692,8 @@ def client_traffic(email: str) -> dict[str, Any]:
         return {}
     db_uri = Path(XUI_DB_PATH).as_posix()
     try:
-        conn = sqlite3.connect(f"file:{db_uri}?mode=ro", uri=True)
+        conn = sqlite3.connect(f"file:{db_uri}?mode=ro", uri=True, timeout=30.0)
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = sqlite3.Row
         try:
             row = conn.execute(
@@ -5518,6 +5536,12 @@ def build_sosproxy_client_config(subscription_id: str, public_host: str) -> list
 
 class RequestHandler(BaseHTTPRequestHandler):
     server_version = "subjson-service/3.0"
+    timeout = 15.0
+
+    def setup(self) -> None:
+        if hasattr(self.request, "settimeout"):
+            self.request.settimeout(15.0)
+        super().setup()
 
     def do_GET(self) -> None:
         self._handle_request(include_body=True)
@@ -5576,7 +5600,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 }, include_body)
                 return
             elif action in ("lease", "heartbeat"):
-                if QUIESCE_ACTIVE and time.time() <= QUIESCE_LEASE_UNTIL:
+                if QUIESCE_ACTIVE:
                     QUIESCE_LEASE_UNTIL = time.time() + 30.0
                     self._send_json(HTTPStatus.OK, {
                         "status": "QUIESCED_ACK",
@@ -5584,8 +5608,6 @@ class RequestHandler(BaseHTTPRequestHandler):
                         "expires_in": 30.0
                     }, include_body)
                 else:
-                    QUIESCE_ACTIVE = False
-                    QUIESCE_LEASE_UNTIL = 0.0
                     self._send_json(HTTPStatus.BAD_REQUEST, {
                         "status": "NOT_QUIESCED",
                         "error": "not_quiesced"
@@ -5710,10 +5732,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                 order_row = None
                 if Path(db_path).exists():
                     try:
-                        conn = sqlite3.connect(db_path)
+                        conn = sqlite3.connect(db_path, timeout=30.0)
+                        conn.execute("PRAGMA busy_timeout = 30000;")
                         conn.row_factory = sqlite3.Row
-                        order_row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (order_public_id,)).fetchone()
-                        conn.close()
+                        try:
+                            order_row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (order_public_id,)).fetchone()
+                        finally:
+                            conn.close()
                     except Exception:
                         pass
 
@@ -6132,37 +6157,39 @@ class RequestHandler(BaseHTTPRequestHandler):
                 db_path = find_store_db_path()
                 if Path(db_path).exists():
                     try:
-                        conn = sqlite3.connect(db_path)
+                        conn = sqlite3.connect(db_path, timeout=30.0)
+                        conn.execute("PRAGMA busy_timeout = 30000;")
                         conn.row_factory = sqlite3.Row
-                        if path[1] == "order-status-sub":
-                            target_sub = lookup_val.strip().split("~")[0]
-                            row, _, _, _, client = find_subscription(target_sub)
-                            email = str(client.get("email") or "")
-                            prof = conn.execute("SELECT * FROM profiles WHERE xui_email = ?", (email,)).fetchone()
-                            if prof:
-                                order_row = conn.execute("SELECT * FROM orders WHERE provisioned_profile_id = ? ORDER BY id DESC LIMIT 1", (prof["id"],)).fetchone()
+                        try:
+                            if path[1] == "order-status-sub":
+                                target_sub = lookup_val.strip().split("~")[0]
+                                row, _, _, _, client = find_subscription(target_sub)
+                                email = str(client.get("email") or "")
+                                prof = conn.execute("SELECT * FROM profiles WHERE xui_email = ?", (email,)).fetchone()
+                                if prof:
+                                    order_row = conn.execute("SELECT * FROM orders WHERE provisioned_profile_id = ? ORDER BY id DESC LIMIT 1", (prof["id"],)).fetchone()
+                                else:
+                                    order_row = None
                             else:
-                                order_row = None
-                        else:
-                            order_row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (lookup_val,)).fetchone()
+                                order_row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (lookup_val,)).fetchone()
 
-                        if order_row:
-                            meta = json.loads(order_row["meta_json"]) if order_row["meta_json"] else {}
-                            customer_email = str(order_row["customer_email"] or meta.get("customer_email") or "").strip()
-                            data = {
-                                "ok": True,
-                                "public_id": order_row["public_id"],
-                                "status": order_row["status"],
-                                "duration_days": int(order_row["duration_days"] or 30),
-                                "device_limit": int(meta.get("device_limit") or 3),
-                                "customer_email": customer_email,
-                                "final_price_rub": int(order_row["final_price_rub"] or 0),
-                                "web_paid_reported_at": meta.get("web_paid_reported_at", 0),
-                            }
+                            if order_row:
+                                meta = json.loads(order_row["meta_json"]) if order_row["meta_json"] else {}
+                                customer_email = str(order_row["customer_email"] or meta.get("customer_email") or "").strip()
+                                data = {
+                                    "ok": True,
+                                    "public_id": order_row["public_id"],
+                                    "status": order_row["status"],
+                                    "duration_days": int(order_row["duration_days"] or 30),
+                                    "device_limit": int(meta.get("device_limit") or 3),
+                                    "customer_email": customer_email,
+                                    "final_price_rub": int(order_row["final_price_rub"] or 0),
+                                    "web_paid_reported_at": meta.get("web_paid_reported_at", 0),
+                                }
+                                self._send_json(HTTPStatus.OK, data, include_body)
+                                return
+                        finally:
                             conn.close()
-                            self._send_json(HTTPStatus.OK, data, include_body)
-                            return
-                        conn.close()
                     except Exception as e:
                         LOGGER.warning("Error fetching order status: %s", e)
                 self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"}, include_body)

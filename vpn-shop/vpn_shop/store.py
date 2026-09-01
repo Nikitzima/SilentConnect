@@ -241,7 +241,8 @@ class Store:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.database_path)
+        conn = sqlite3.connect(self.database_path, timeout=30.0)
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = sqlite3.Row
         try:
             yield conn

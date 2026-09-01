@@ -1,20 +1,26 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 class XuiDatabase:
     def __init__(self, path: Path):
         self.path = Path(path)
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         db_uri = self.path.as_posix()
-        conn = sqlite3.connect(f"file:{db_uri}?mode=ro", uri=True)
+        conn = sqlite3.connect(f"file:{db_uri}?mode=ro", uri=True, timeout=30.0)
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     @staticmethod
     def _parse_settings(raw: str | None) -> dict[str, Any]:
@@ -105,7 +111,8 @@ class XuiDatabase:
         # updated ONLY inbounds.settings. subjson trusts client_traffics
         # (enable/expiry_time) when deciding whether a subscription is active,
         # so renewed clients were still served an "expired" stub.
-        conn = sqlite3.connect(self.path)
+        conn = sqlite3.connect(self.path, timeout=30.0)
+        conn.execute("PRAGMA busy_timeout = 30000;")
         try:
             row = conn.execute("SELECT settings FROM inbounds WHERE id = ?", (inbound_id,)).fetchone()
             if not row or not row[0]:

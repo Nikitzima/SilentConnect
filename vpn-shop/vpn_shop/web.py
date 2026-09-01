@@ -1896,6 +1896,12 @@ class WebCheckout:
 class RequestHandler(BaseHTTPRequestHandler):
     server_version = "SilentConnectWeb/1.0"
     checkout: WebCheckout
+    timeout = 15.0
+
+    def setup(self) -> None:
+        if hasattr(self.request, "settimeout"):
+            self.request.settimeout(15.0)
+        super().setup()
 
     def log_message(self, fmt: str, *args: Any) -> None:
         return

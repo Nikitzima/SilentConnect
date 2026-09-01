@@ -410,11 +410,18 @@ class TestQuiesceLockAndSecurity(unittest.TestCase):
         self.assertEqual(data.get("error"), "quiesce_merge_in_progress")
 
     def test_quiesce_lease_expiration(self):
-        """Verify Quiesce automatically expires when lease timestamp is exceeded."""
+        """Verify Quiesce during maintenance persists without accidental expiry until explicit release."""
         with app.QUIESCE_LOCK:
             app.QUIESCE_ACTIVE = True
-            app.QUIESCE_LEASE_UNTIL = time.time() - 1.0  # Expired 1 second ago
+            app.QUIESCE_LEASE_UNTIL = time.time() - 1.0  # Expired timestamp during long operation
 
+        # Quiesce remains active to protect state until explicit release
+        self.assertTrue(app.is_quiesced())
+
+        # Explicit release clears quiesced state
+        headers = {"X-Internal-Secret": self.token}
+        status, _, body = self.harness.request("GET", f"/{self.secret}/internal-quiesce/release", headers=headers)
+        self.assertEqual(status, 200)
         self.assertFalse(app.is_quiesced())
 
 
