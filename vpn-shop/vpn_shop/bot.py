@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import os
 import shutil
 import socket
 import re
 import subprocess
+import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit, urlunsplit
 
-from . import awg_manager
+from . import awg_manager
+
 from .catalog import Offer, build_offers
 from .config import Settings
 from .mailer import send_subscription_email_async
@@ -78,6 +81,10 @@ class ShopBot:
         self.provisioner = Provisioner(settings, store)
         self.offers = build_offers(settings)
         self._last_test_profile_cleanup_at = 0
+        self._periodic_task_lock = threading.Lock()
+        self._background_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="bot_bg_worker"
+        )
 
     def invite_link(self, invite_code: str) -> str:
         username = (self.settings.telegram_bot_username or "").strip()
@@ -2331,11 +2338,7 @@ class ShopBot:
                 except TelegramApiError:
                     LOGGER.exception("Failed to send %s reminder for profile %s", reminder_kind, profile.get("public_id"))
 
-    def run_periodic_tasks(self) -> None:
-        now = now_ts()
-        if now - self._last_test_profile_cleanup_at < TEST_PROFILE_CLEANUP_INTERVAL:
-            return
-        self._last_test_profile_cleanup_at = now
+    def _execute_periodic_tasks(self) -> None:
         try:
             self.cleanup_expired_test_profiles()
         except Exception:
@@ -2349,21 +2352,56 @@ class ShopBot:
         except Exception:
             LOGGER.exception("Periodic subscription reminder failed")
 
+    def run_periodic_tasks(self, async_dispatch: bool = False) -> None:
+        now = now_ts()
+        if now - self._last_test_profile_cleanup_at < TEST_PROFILE_CLEANUP_INTERVAL:
+            return
+        if not self._periodic_task_lock.acquire(blocking=False):
+            return
+        self._last_test_profile_cleanup_at = now
+
+        def _runner() -> None:
+            try:
+                self._execute_periodic_tasks()
+            finally:
+                self._periodic_task_lock.release()
+
+        if async_dispatch:
+            try:
+                self._background_executor.submit(_runner)
+            except Exception:
+                _runner()
+        else:
+            _runner()
+
+    def shutdown(self) -> None:
+        """Cleanly shutdown background executor threads."""
+        try:
+            self._background_executor.shutdown(wait=False)
+        except Exception:
+            pass
+
     def run_forever(self) -> None:
         offset = None
+        consecutive_errors = 0
         while True:
             try:
-                self.run_periodic_tasks()
+                self.run_periodic_tasks(async_dispatch=True)
                 updates = self.telegram.get_updates(offset=offset, timeout=30)
+                consecutive_errors = 0
                 for update in updates:
                     offset = update["update_id"] + 1
                     self.handle_update(update)
             except TelegramApiError:
-                LOGGER.exception("Telegram polling error")
-                time.sleep(3)
+                consecutive_errors += 1
+                backoff = min(1.0 * (2 ** (consecutive_errors - 1)), 30.0)
+                LOGGER.exception("Telegram polling error (backoff %.1fs, streak %d)", backoff, consecutive_errors)
+                time.sleep(backoff)
             except Exception:
-                LOGGER.exception("Unhandled bot loop error")
-                time.sleep(3)
+                consecutive_errors += 1
+                backoff = min(1.0 * (2 ** (consecutive_errors - 1)), 30.0)
+                LOGGER.exception("Unhandled bot loop error (backoff %.1fs, streak %d)", backoff, consecutive_errors)
+                time.sleep(backoff)
 
     def handle_update(self, update: dict[str, Any]) -> None:
         if "callback_query" in update:
@@ -3321,7 +3359,8 @@ class ShopBot:
                     [("Публичная ссылка", "admin:public_link", "primary")],
                     [("\u041c\u043e\u0439 \u0430\u0434\u043c\u0438\u043d-\u043a\u043e\u043d\u0444\u0438\u0433", "admin:create_personal_config")],
                     [("\u0422\u0435\u0441\u0442\u043e\u0432\u044b\u0439 \u043a\u043e\u043d\u0444\u0438\u0433 24\u0447", "admin:create_test_config")],
-                    [("Универсальный тест TCP+XHTTP", "admin:create_hybrid_test_config", "primary")],
+                    [("Универсальный тест TCP+XHTTP", "admin:create_hybrid_test_config", "primary")],
+
                     [("Поделиться warp", "admin:share_warp", "primary")],
                 ]
             ),

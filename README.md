@@ -73,14 +73,16 @@ SilentConnect operates on an active-passive, geo-distributed multi-node topology
 ### 1. `vpn_shop.bot` (Telegram Bot Automation Engine)
 - **Path**: `vpn-shop/vpn_shop/bot.py`
 - **Description**: Zero-heavy-framework, high-reliability Telegram Bot daemon implementing deterministic state machines (FSM) for public onboarding, tariff selection, trial activations, promotional discounts, and payment confirmation workflows.
-- **Key Modules**:
+- **Key Modules & Enhancements**:
   - `ShopBot`: FSM controller managing session contexts, action guards, and interactive menus.
-  - `Provisioner` (`provisioning.py`): Abstraction layer interfacing with 3X-UI REST API and SQLite databases.
+  - `Provisioner` (`provisioning.py`): Abstraction layer interfacing with 3X-UI REST API and SQLite databases with cached O(1) lookups.
   - `Catalog` (`catalog.py`): Multi-tier tariff matrix (3, 6, 9 concurrent devices across 1, 3, 6, 12 months).
+  - **Background Worker Isolation**: Heavy periodic maintenance (profile expiry purges, monthly referral audits, expiration notification dispatch) runs asynchronously on dedicated thread workers, keeping the Telegram update polling loop strictly non-blocking with bounded exponential backoff (`min(1.0 * 2^(err-1), 30.0)`).
+  - **Transactional Mail Queue**: Async transactional email dispatch via bounded worker pool (`mailer.py`).
 
 ### 2. `vpn_shop.web` (Storefront & Self-Service Cabinet)
 - **Path**: `vpn-shop/vpn_shop/web.py`
-- **Description**: Lightweight async web server running on port `3090` behind Caddy.
+- **Description**: Lightweight async web server running on port `3090` behind Caddy reverse proxy.
 - **Features**:
   - Dark-mode responsive UI for desktop and mobile browsers.
   - Real-time SBP QR payment checkout with client-side status polling.
@@ -89,12 +91,13 @@ SilentConnect operates on an active-passive, geo-distributed multi-node topology
 
 ### 3. `subjson-service` (Dynamic Subscription & Profile Delivery Engine)
 - **Path**: `subjson-service/app.py`
-- **Description**: High-throughput FastAPI engine running on port `3088` serving optimized client subscription formats and web setup wizards.
-- **Features**:
+- **Description**: High-throughput Python HTTP service (`ThreadingHTTPServer`) running on port `3088` behind Caddy reverse proxy serving optimized client subscription formats and web setup wizards.
+- **Features & Enhancements**:
+  - **In-Memory Client Index Cache**: High-performance in-memory index with automatic SQLite file `mtime` invalidation, delivering O(1) subscription lookups without disk scans or repeated JSON parsing.
+  - **Bounded LRU Rate Limiter**: High-speed LRU sliding-window rate limiter (`RATE_LIMIT_RPM=1200`, `RATE_LIMIT_MAX_ENTRIES=10000`) backed by `collections.OrderedDict`, eliminating memory bloat under distributed port scans and removing periodic GC overhead.
   - Route handlers: `/singbox/{sub_id}`, `/clash/{sub_id}`, `/happ/{sub_id}`, `/v2ray/{sub_id}`.
   - Web Onboarding Wizard: `/{SECRET_SEGMENT}/import/{sub_id}` with OS platform auto-detection and 1-click app import buttons.
   - Standby Quiesce Locking: Authorizes `/internal-quiesce/*` requests during node maintenance to prevent split-brain database writes.
-  - Token-Bucket Rate Limiter (`RATE_LIMIT_RPM=1200`).
 
 ### 4. `awg_manager` & `awg_reconcile` (AmneziaWG Multi-Node Mesh)
 - **Path**: `vpn-shop/vpn_shop/awg_manager.py` & `vpn-shop/awg_reconcile.py`

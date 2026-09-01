@@ -6,12 +6,13 @@ QUIESCE_LOCK = threading.Lock()
 QUIESCE_ACTIVE = False
 QUIESCE_LEASE_UNTIL = 0.0
 
-def is_quiesced():
+def is_quiesced() -> bool:
     global QUIESCE_ACTIVE
     with QUIESCE_LOCK:
         return bool(QUIESCE_ACTIVE)
 
 import base64
+import collections
 import copy
 import hashlib
 import hmac
@@ -112,39 +113,41 @@ WS443_PUBLIC_PORT = int(os.environ.get("WS443_PUBLIC_PORT", "443"))
 WS443_PATH = os.environ.get("WS443_PATH", "/sc-ws-9c3d7f1e").strip() or "/sc-ws-9c3d7f1e"
 INTERNAL_SECRET = os.environ.get("INTERNAL_SECRET", "").strip()  # PLACEHOLDER
 
-# Rate limiting for subscription endpoints (FIX 2026-08-23, audit #10).
+# Rate limiting for subscription endpoints (FIX 2026-08-23, audit #10; upgraded to bounded LRU in Phase P2).
 RATE_LIMIT_ENABLED = os.environ.get("RATE_LIMIT_ENABLED", "1").strip() == "1"
 RATE_LIMIT_RPM = int(os.environ.get("RATE_LIMIT_RPM", "1200"))
+RATE_LIMIT_MAX_ENTRIES = int(os.environ.get("RATE_LIMIT_MAX_ENTRIES", "10000"))
 _rate_lock = threading.Lock()
-_rate_map = {}
-_rate_last_gc = [0.0]
+_rate_map: collections.OrderedDict[str, list[float]] = collections.OrderedDict()
 
 
 def _rate_gc(now: float) -> None:
-    if now - _rate_last_gc[0] < 60:
-        return
-    cutoff = now - 120
-    for ip in list(_rate_map.keys()):
-        fresh = [t for t in _rate_map[ip] if t > cutoff]
-        if fresh:
-            _rate_map[ip] = fresh
-        else:
-            _rate_map.pop(ip, None)
-    _rate_last_gc[0] = now
+    # Retained for interface compatibility; LRU bounds enforce max capacity automatically
+    pass
 
 
 def check_rate_limit(ip: str) -> bool:
     if not RATE_LIMIT_ENABLED or RATE_LIMIT_RPM <= 0:
         return True
     now = time.time()
+    cutoff = now - 60.0
     with _rate_lock:
-        _rate_gc(now)
-        fresh = [t for t in _rate_map.get(ip, []) if t > now - 60]
+        if ip in _rate_map:
+            _rate_map.move_to_end(ip)
+            fresh = [t for t in _rate_map[ip] if t > cutoff]
+        else:
+            fresh = []
+
         if len(fresh) >= RATE_LIMIT_RPM:
             _rate_map[ip] = fresh
             return False
+
         fresh.append(now)
         _rate_map[ip] = fresh
+
+        while len(_rate_map) > RATE_LIMIT_MAX_ENTRIES:
+            _rate_map.popitem(last=False)
+
         return True
   # FIX 2026-08-22: was hardcoded, see AUDIT_REPORT
 
@@ -211,7 +214,101 @@ TRANSPORT_SETTING_KEYS = (
 )
 
 
+def parse_json_blob(raw: str | None) -> dict[str, Any]:
+    if not raw:
+        return {}
+    parsed = json.loads(raw)
+    if parsed is None:
+        return {}
+    if not isinstance(parsed, dict):
+        raise ValueError("Expected JSON object in x-ui.db")
+    return parsed
+
+
+_inbounds_cache_lock = threading.Lock()
+_inbounds_cache_mtime: float | None = None
+_cached_raw_rows: list[sqlite3.Row] = []
+_cached_inbounds_parsed: list[tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]]]] = []
+_cached_clients_index: dict[str, tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]] = {}
+
+
+def invalidate_inbounds_cache() -> None:
+    global _inbounds_cache_mtime, _cached_raw_rows, _cached_inbounds_parsed, _cached_clients_index
+    with _inbounds_cache_lock:
+        _inbounds_cache_mtime = None
+        _cached_raw_rows = []
+        _cached_inbounds_parsed = []
+        _cached_clients_index = {}
+
+
+def _get_xui_db_mtime() -> float | None:
+    try:
+        return os.path.getmtime(XUI_DB_PATH)
+    except OSError:
+        return None
+
+
+def _ensure_inbounds_cache() -> None:
+    global _inbounds_cache_mtime, _cached_raw_rows, _cached_inbounds_parsed, _cached_clients_index
+    current_mtime = _get_xui_db_mtime()
+    if current_mtime is None:
+        invalidate_inbounds_cache()
+        return
+
+    with _inbounds_cache_lock:
+        if _inbounds_cache_mtime is not None and _inbounds_cache_mtime == current_mtime:
+            return
+
+        db_uri = Path(XUI_DB_PATH).as_posix()
+        try:
+            conn = sqlite3.connect(f"file:{db_uri}?mode=ro", uri=True, timeout=30.0)
+            conn.execute("PRAGMA busy_timeout = 30000;")
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT id, remark, protocol, port, settings, stream_settings, sniffing
+                    FROM inbounds
+                    ORDER BY id
+                    """
+                ).fetchall()
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            return
+
+        new_parsed: list[tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]]]] = []
+        new_index: dict[str, tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]] = {}
+
+        for row in rows:
+            settings = parse_json_blob(row["settings"])
+            stream_settings = parse_json_blob(row["stream_settings"])
+            sniffing = parse_json_blob(row["sniffing"])
+            clients = settings.get("clients") or []
+            new_parsed.append((row, settings, stream_settings, sniffing, clients))
+            for client in clients:
+                c_sub = str(client.get("subId") or "").strip()
+                c_email = str(client.get("email") or "").strip()
+                c_id = str(client.get("id") or "").strip()
+                match_tuple = (row, settings, stream_settings, sniffing, client)
+                if c_sub and c_sub not in new_index:
+                    new_index[c_sub] = match_tuple
+                if c_email and c_email not in new_index:
+                    new_index[c_email] = match_tuple
+                if c_id and c_id not in new_index:
+                    new_index[c_id] = match_tuple
+
+        _cached_raw_rows = rows
+        _cached_inbounds_parsed = new_parsed
+        _cached_clients_index = new_index
+        _inbounds_cache_mtime = current_mtime
+
+
 def read_inbounds() -> list[sqlite3.Row]:
+    _ensure_inbounds_cache()
+    with _inbounds_cache_lock:
+        if _cached_raw_rows:
+            return list(_cached_raw_rows)
     db_uri = Path(XUI_DB_PATH).as_posix()
     conn = sqlite3.connect(f"file:{db_uri}?mode=ro", uri=True, timeout=30.0)
     conn.execute("PRAGMA busy_timeout = 30000;")
@@ -398,6 +495,7 @@ def create_inline_renewal_order(
                     xui_rw.commit()
             finally:
                 xui_rw.close()
+                invalidate_inbounds_cache()
 
             # Update profiles & orders in shop db
             conn_shop.execute("UPDATE profiles SET expires_at = ?, last_renewed_at = ? WHERE id = ?", (new_exp_s, now, prof_dict["id"]))
@@ -731,18 +829,6 @@ def public_connection_page_url(headers, subscription_route: str, subscription_id
     return f"{setup_url}?{urllib.parse.urlencode({'url': subscription_url})}"
 
 
-def parse_json_blob(raw: str | None) -> dict[str, Any]:
-    if not raw:
-        return {}
-
-    parsed = json.loads(raw)
-    if parsed is None:
-        return {}
-    if not isinstance(parsed, dict):
-        raise ValueError("Expected JSON object in x-ui.db")
-    return parsed
-
-
 def first_non_empty(values: list[Any] | tuple[Any, ...] | None) -> Any:
     for value in values or []:
         if value not in (None, ""):
@@ -846,21 +932,12 @@ def find_subscription(subscription_id: str) -> tuple[sqlite3.Row, dict[str, Any]
     return _find_subscription_impl(subscription_id)
 
 def _find_subscription_impl(subscription_id: str) -> tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
-
-
-
     target = subscription_id.strip()
-    inbounds = read_inbounds()
-    for row in inbounds:
-        settings = parse_json_blob(row["settings"])
-        stream_settings = parse_json_blob(row["stream_settings"])
-        sniffing = parse_json_blob(row["sniffing"])
-        for client in settings.get("clients") or []:
-            c_sub = str(client.get("subId") or "").strip()
-            c_email = str(client.get("email") or "").strip()
-            c_id = str(client.get("id") or "").strip()
-            if target in (c_sub, c_email, c_id):
-                return row, settings, stream_settings, sniffing, client
+    _ensure_inbounds_cache()
+    with _inbounds_cache_lock:
+        if target in _cached_clients_index:
+            row, settings, stream_settings, sniffing, client = _cached_clients_index[target]
+            return row, copy.deepcopy(settings), copy.deepcopy(stream_settings), copy.deepcopy(sniffing), copy.deepcopy(client)
 
     try:
         store_path = find_store_db_path()
@@ -873,13 +950,10 @@ def _find_subscription_impl(subscription_id: str) -> tuple[sqlite3.Row, dict[str
             conn.close()
         if prof and prof["xui_email"]:
             xemail = str(prof["xui_email"]).strip()
-            for row in inbounds:
-                settings = parse_json_blob(row["settings"])
-                stream_settings = parse_json_blob(row["stream_settings"])
-                sniffing = parse_json_blob(row["sniffing"])
-                for client in settings.get("clients") or []:
-                    if str(client.get("email") or "").strip() == xemail:
-                        return row, settings, stream_settings, sniffing, client
+            with _inbounds_cache_lock:
+                if xemail in _cached_clients_index:
+                    row, settings, stream_settings, sniffing, client = _cached_clients_index[xemail]
+                    return row, copy.deepcopy(settings), copy.deepcopy(stream_settings), copy.deepcopy(sniffing), copy.deepcopy(client)
     except Exception:
         pass
 
@@ -888,18 +962,16 @@ def _find_subscription_impl(subscription_id: str) -> tuple[sqlite3.Row, dict[str
 
 def find_subscription_by_network(subscription_id: str, network: str = "tcp") -> tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     target = subscription_id.strip()
-    inbounds = read_inbounds()
-    for row in inbounds:
-        settings = parse_json_blob(row["settings"])
-        stream_settings = parse_json_blob(row["stream_settings"])
-        sniffing = parse_json_blob(row["sniffing"])
-        for client in settings.get("clients") or []:
-            c_sub = str(client.get("subId") or "").strip()
-            c_email = str(client.get("email") or "").strip()
-            c_id = str(client.get("id") or "").strip()
-            if target in (c_sub, c_email, c_id):
-                if stream_settings.get("network", "tcp") == network:
-                    return row, settings, stream_settings, sniffing, client
+    _ensure_inbounds_cache()
+    with _inbounds_cache_lock:
+        for row, settings, stream_settings, sniffing, clients in _cached_inbounds_parsed:
+            for client in clients:
+                c_sub = str(client.get("subId") or "").strip()
+                c_email = str(client.get("email") or "").strip()
+                c_id = str(client.get("id") or "").strip()
+                if target in (c_sub, c_email, c_id):
+                    if stream_settings.get("network", "tcp") == network:
+                        return row, copy.deepcopy(settings), copy.deepcopy(stream_settings), copy.deepcopy(sniffing), copy.deepcopy(client)
     try:
         return find_subscription(subscription_id)
     except KeyError:
