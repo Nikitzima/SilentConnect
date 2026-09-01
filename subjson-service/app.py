@@ -20,6 +20,7 @@ def is_quiesced():
 import base64
 import copy
 import hashlib
+import hmac
 import html
 import ipaddress
 import json
@@ -5559,7 +5560,7 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _handle_internal_quiesce(self, action: str, include_body: bool = True) -> None:
         secret_header = self.headers.get("X-Internal-Secret", "")
         effective_secret = os.environ.get("INTERNAL_SECRET", "").strip() or INTERNAL_SECRET
-        if not effective_secret or secret_header != effective_secret:
+        if not effective_secret or not hmac.compare_digest(secret_header.encode("utf-8"), effective_secret.encode("utf-8")):
             self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "status": "FORBIDDEN"}, include_body)
             return
         global QUIESCE_ACTIVE, QUIESCE_LEASE_UNTIL
@@ -5835,7 +5836,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if path[1] == "internal-fragment":
                     secret_header = self.headers.get("X-Internal-Secret", "")
                     effective_secret = os.environ.get("INTERNAL_SECRET", "").strip() or INTERNAL_SECRET
-                    if not effective_secret or secret_header != effective_secret:
+                    if not effective_secret or not hmac.compare_digest(secret_header.encode("utf-8"), effective_secret.encode("utf-8")):
                         self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"}, include_body)
                         return
                     sub_id = path[2]

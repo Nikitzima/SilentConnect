@@ -258,7 +258,7 @@ class WebCheckout:
         result = self.provisioner.create_profile_for_order(order)
         self.store.update_order_status(str(order["public_id"]), "delivered", closed=True)
         if order.get("promo_id"):
-            self.store.mark_promo_used(int(order["promo_id"]))
+            self.store.consume_promo_code(int(order["promo_id"]))
         self.store.record_admin_action(
             action_type="web_auto_free_order",
             target_type="order",
