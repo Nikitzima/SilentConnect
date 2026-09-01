@@ -9,13 +9,6 @@
 
 set -eo pipefail
 
-NL_IP="${NL_IP:-${NL_MASTER_IP:-192.0.2.1}}"
-FI_IP="${FI_IP:-${FI_STANDBY_IP:-198.51.100.1}}"
-DOMAIN_MAIN="${DOMAIN_MAIN:-example.com}"
-DOMAIN_SUB="${DOMAIN_SUB:-sub.${DOMAIN_MAIN}}"
-DOMAIN_EDGE="${DOMAIN_EDGE:-edge.${DOMAIN_MAIN}}"
-DOMAINS=("${DOMAIN_MAIN}" "${DOMAIN_SUB}" "${DOMAIN_EDGE}")
-
 # Load environment configuration if available
 if [ -f "/etc/cf-failover-dns.env" ]; then
     # shellcheck source=/dev/null
@@ -32,6 +25,13 @@ if [ -z "${CF_API_TOKEN:-}" ] && [ -f "/root/vpn-shop/.env" ]; then
         CF_API_TOKEN="$CF_API_TOKEN_ENV"
     fi
 fi
+
+NL_IP="${NL_IP:-${NL_MASTER_IP:-193.233.210.189}}"
+FI_IP="${FI_IP:-${FI_STANDBY_IP:-95.217.178.48}}"
+DOMAIN_MAIN="${DOMAIN_MAIN:-silentconnect.net}"
+DOMAIN_SUB="${DOMAIN_SUB:-sub.${DOMAIN_MAIN}}"
+DOMAIN_EDGE="${DOMAIN_EDGE:-edge.${DOMAIN_MAIN}}"
+DOMAINS=("${DOMAIN_MAIN}" "${DOMAIN_SUB}" "${DOMAIN_EDGE}")
 
 CF_API_TOKEN="${CF_API_TOKEN:-${CLOUDFLARE_API_TOKEN:-}}"
 CF_ZONE_ID="${CF_ZONE_ID:-${CLOUDFLARE_ZONE_ID:-}}"
