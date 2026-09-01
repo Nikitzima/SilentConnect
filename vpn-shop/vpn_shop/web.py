@@ -57,7 +57,9 @@ def verify_cf_turnstile(secret_key: str, response_token: str, client_ip: str = "
         LOGGER.warning("CF_TURNSTILE_SECRET_KEY is not configured - Turnstile verification disabled")
         return True
     if not response_token:
-        return False
+        # Graceful degradation: allow checkout if Turnstile is blocked or failed to load
+        LOGGER.warning("Turnstile token is empty - allowing graceful fallback checkout")
+        return True
     try:
         post_data = urlencode({
             "secret": secret_key,
