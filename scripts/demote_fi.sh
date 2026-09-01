@@ -14,12 +14,16 @@
 # 9. Dispatches Telegram administrative notification.
 # ==============================================================================
 
-set -eo pipefail
+# Load environment configuration if available
+if [ -f "/etc/cf-failover-dns.env" ]; then
+    # shellcheck source=/dev/null
+    source "/etc/cf-failover-dns.env"
+fi
 
 LOCK_FILE="/var/run/demote_fi.lock"
 STATE_FILE="/var/run/cluster_state"
-NL_IP="${NL_IP:-${NL_MASTER_IP:-192.0.2.1}}"
-FI_IP="${FI_IP:-${FI_STANDBY_IP:-198.51.100.1}}"
+NL_IP="${NL_IP:-${NL_MASTER_IP:-193.233.210.189}}"
+FI_IP="${FI_IP:-${FI_STANDBY_IP:-95.217.178.48}}"
 
 # Acquire non-blocking lock
 exec 200>"$LOCK_FILE"
@@ -58,13 +62,13 @@ if [ -f "$SUBJSON_ENV" ]; then
 fi
 
 # Step 1: Debounce check (Confirm NL is stable)
-log "Step 1: Checking NL node stability (30s debounce)..."
-for i in {1..6}; do
-    if ! ssh -o BatchMode=yes -o ConnectTimeout=5 root@${NL_IP} "uptime" >/dev/null 2>&1; then
-        err "NL is not stably accessible via SSH (check $i/6 failed). Aborting failback."
+log "Step 1: Checking NL node stability (debounce)..."
+for i in {1..3}; do
+    if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@${NL_IP} "uptime" >/dev/null 2>&1; then
+        err "NL is not stably accessible via SSH (check $i/3 failed). Aborting failback."
         exit 1
     fi
-    sleep 5
+    sleep 2
 done
 log "NL node is stable and reachable."
 
@@ -99,21 +103,21 @@ systemctl stop vpn-shop-silentconnect.service vpn-shop-web.service 2>/dev/null |
 
 # Step 4: Transfer FI DBs and Baselines to NL and execute failback_merge.py
 log "Step 4: Executing 3-Way Data Merge on NL..."
-ssh -o BatchMode=yes -o ConnectTimeout=10 root@${NL_IP} "mkdir -p /tmp/fi_merge"
+ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@${NL_IP} "mkdir -p /tmp/fi_merge"
 
 # Copy FI databases to NL merge staging
-scp -o BatchMode=yes /etc/x-ui/x-ui.db root@${NL_IP}:/tmp/fi_merge/fi_xui.db
-scp -o BatchMode=yes /root/vpn-shop/data-silentconnect/vpn_shop.db root@${NL_IP}:/tmp/fi_merge/fi_vpn.db
+scp -o BatchMode=yes -o StrictHostKeyChecking=no /etc/x-ui/x-ui.db root@${NL_IP}:/tmp/fi_merge/fi_xui.db
+scp -o BatchMode=yes -o StrictHostKeyChecking=no /root/vpn-shop/data-silentconnect/vpn_shop.db root@${NL_IP}:/tmp/fi_merge/fi_vpn.db
 
 if [ -f "/var/lib/litestream/baseline_xui.db" ]; then
-    scp -o BatchMode=yes /var/lib/litestream/baseline_xui.db root@${NL_IP}:/tmp/fi_merge/baseline_xui.db
+    scp -o BatchMode=yes -o StrictHostKeyChecking=no /var/lib/litestream/baseline_xui.db root@${NL_IP}:/tmp/fi_merge/baseline_xui.db
 fi
 if [ -f "/var/lib/litestream/baseline_vpn_shop.db" ]; then
-    scp -o BatchMode=yes /var/lib/litestream/baseline_vpn_shop.db root@${NL_IP}:/tmp/fi_merge/baseline_vpn_shop.db
+    scp -o BatchMode=yes -o StrictHostKeyChecking=no /var/lib/litestream/baseline_vpn_shop.db root@${NL_IP}:/tmp/fi_merge/baseline_vpn_shop.db
 fi
 
 # Run failback_merge.py on NL
-ssh -o BatchMode=yes -o ConnectTimeout=30 root@${NL_IP} "python3 /usr/local/bin/failback_merge.py \
+ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=30 root@${NL_IP} "python3 /usr/local/bin/failback_merge.py \
     --nl-vpn /root/vpn-shop/data-silentconnect/vpn_shop.db \
     --fi-vpn /tmp/fi_merge/fi_vpn.db \
     --baseline-vpn /tmp/fi_merge/baseline_vpn_shop.db \
@@ -133,9 +137,9 @@ fi
 
 # Step 6: Start and verify services on NL
 log "Step 6: Starting and validating services on NL..."
-ssh -o BatchMode=yes root@${NL_IP} "systemctl start vpn-shop-silentconnect vpn-shop-web litestream && systemctl restart x-ui caddy subjson"
+ssh -o BatchMode=yes -o StrictHostKeyChecking=no root@${NL_IP} "systemctl start vpn-shop-silentconnect vpn-shop-web litestream && systemctl restart x-ui caddy subjson"
 
-NL_BOT_ACTIVE=$(ssh -o BatchMode=yes root@${NL_IP} "systemctl is-active vpn-shop-silentconnect 2>/dev/null || echo 'inactive'")
+NL_BOT_ACTIVE=$(ssh -o BatchMode=yes -o StrictHostKeyChecking=no root@${NL_IP} "systemctl is-active vpn-shop-silentconnect 2>/dev/null || echo 'inactive'")
 if [ "$NL_BOT_ACTIVE" != "active" ]; then
     err "vpn-shop-silentconnect on NL is not active!"
 fi
