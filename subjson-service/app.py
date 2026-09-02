@@ -7,9 +7,20 @@ QUIESCE_ACTIVE = False
 QUIESCE_LEASE_UNTIL = 0.0
 
 def is_quiesced() -> bool:
-    global QUIESCE_ACTIVE
+    global QUIESCE_ACTIVE, QUIESCE_LEASE_UNTIL
     with QUIESCE_LOCK:
-        return bool(QUIESCE_ACTIVE)
+        if not QUIESCE_ACTIVE:
+            return False
+        if time.time() > QUIESCE_LEASE_UNTIL:
+            QUIESCE_ACTIVE = False
+            QUIESCE_LEASE_UNTIL = 0.0
+            return False
+        return True
+
+
+def hash_secret(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
 
 import base64
 import collections
@@ -26,6 +37,7 @@ import re
 import secrets
 import socket
 import sqlite3
+import ssl
 import sys
 import time
 import urllib.parse
@@ -461,7 +473,7 @@ def create_inline_renewal_order(
         discount_percent = 0
         promo_id = None
         if promo_code:
-            code_hash = hashlib.sha256(promo_code.strip().lower().encode("utf-8")).hexdigest()
+            code_hash = hash_secret(promo_code.strip().lower())
             p_row = conn_shop.execute("SELECT * FROM promo_codes WHERE code_hash = ? AND enabled = 1", (code_hash,)).fetchone()
             if p_row:
                 discount_percent = int(p_row["discount_percent"] or 0)
@@ -674,6 +686,12 @@ def handle_inline_order_paid(order_public_id: str) -> bool:
         row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (order_public_id,)).fetchone()
         if not row:
             return False
+
+        # Idempotent CAS: skip if already delivered or cancelled
+        current_status = row["status"]
+        if current_status in ("delivered", "cancelled"):
+            conn.close()
+            return True  # Already processed
 
         meta = json.loads(row["meta_json"]) if row["meta_json"] else {}
         meta["web_paid_reported_at"] = int(time.time())
@@ -1708,13 +1726,10 @@ def build_dual_auto_wifi_first_test_client_config(
 def fetch_fi_internal_fragment(subscription_id: str) -> list[dict[str, Any]]:
     import urllib.request
     import json
-    import ssl
     fi_host = os.environ.get("FI_STANDBY_HOST", "fi.example.com")
     secret_segment = os.environ.get("SECRET_SEGMENT", "secret-sub")  # PLACEHOLDER
     url = f"https://{fi_host}/{secret_segment}/internal-fragment/{subscription_id}"
     ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
     req = urllib.request.Request(url, headers={
         "X-Internal-Secret": INTERNAL_SECRET,
         "Host": fi_host

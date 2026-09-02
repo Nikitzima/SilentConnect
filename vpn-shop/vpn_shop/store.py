@@ -209,6 +209,16 @@ CREATE TABLE IF NOT EXISTS referral_payouts (
   meta_json TEXT NOT NULL DEFAULT '{}',
   FOREIGN KEY (referrer_id) REFERENCES referrers(id)
 );
+
+CREATE TABLE IF NOT EXISTS webhook_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  gateway TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  order_public_id TEXT,
+  processed_at INTEGER NOT NULL,
+  UNIQUE(gateway, event_id)
+);
 """
 
 
@@ -663,6 +673,27 @@ class Store:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
         return self._row_to_dict(row)
+
+    def record_webhook_event(
+        self,
+        gateway: str,
+        event_id: str,
+        event_type: str,
+        order_public_id: str | None = None,
+    ) -> bool:
+        """Idempotent webhook event recording. Returns True if recorded, False if duplicate."""
+        with self._connect() as conn:
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO webhook_events(gateway, event_id, event_type, order_public_id, processed_at)
+                    VALUES(?, ?, ?, ?, ?)
+                    """,
+                    (gateway, event_id, event_type, order_public_id, now_ts()),
+                )
+                return True
+            except sqlite3.IntegrityError:
+                return False  # Duplicate event
 
     def get_latest_order_for_chat(
         self,
