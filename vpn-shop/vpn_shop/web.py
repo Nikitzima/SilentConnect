@@ -1948,6 +1948,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if self.command != "HEAD":
@@ -1959,6 +1960,7 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _redirect(self, location: str) -> None:
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", location)
+        self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
 
     def _read_form(self) -> dict[str, str]:
