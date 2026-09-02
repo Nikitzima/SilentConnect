@@ -7,19 +7,9 @@ QUIESCE_ACTIVE = False
 QUIESCE_LEASE_UNTIL = 0.0
 
 def is_quiesced() -> bool:
-    global QUIESCE_ACTIVE, QUIESCE_LEASE_UNTIL
+    global QUIESCE_ACTIVE
     with QUIESCE_LOCK:
-        if not QUIESCE_ACTIVE:
-            return False
-        if time.time() > QUIESCE_LEASE_UNTIL:
-            QUIESCE_ACTIVE = False
-            QUIESCE_LEASE_UNTIL = 0.0
-            return False
-        return True
-
-
-def hash_secret(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+        return bool(QUIESCE_ACTIVE)
 
 
 import base64
@@ -53,6 +43,7 @@ if _vpn_shop_path not in sys.path:
 
 try:
     from vpn_shop.catalog import calculate_renewal_price, quote_price
+    from vpn_shop.security import hash_secret
 except ImportError:
     def quote_price(device_limit: int = 3, duration_days: int = 30, settings: Any = None) -> int:
         prices = {3: 100, 6: 150, 9: 200}
@@ -71,6 +62,10 @@ except ImportError:
         return max(((raw + 5) // 10) * 10 - 1, 9)
 
     calculate_renewal_price = quote_price
+
+    def hash_secret(value: str) -> str:
+        effective_pepper = os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")
+        return hmac.new(effective_pepper, value.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 LOGGER = logging.getLogger("subjson-service")
