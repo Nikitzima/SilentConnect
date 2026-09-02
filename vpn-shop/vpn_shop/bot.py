@@ -4543,8 +4543,10 @@ class ShopBot:
                 self._merge_session_state(chat_id, "admin", "admin_share_warp_server", {"admin": True}, drop_keys=(ACTION_GUARD_KEY,))
                 nl_srv = awg_manager._get_server("nl")
                 fi_srv = awg_manager._get_server("fi")
+                pl_srv = awg_manager._get_server("pl")
                 nl_label = f"🇳🇱 Нидерланды (NL) ({nl_srv.get('endpoint_host')}:{nl_srv.get('endpoint_port')})"
                 fi_label = f"🇫🇮 Финляндия (FI) ({fi_srv.get('endpoint_host')}:{fi_srv.get('endpoint_port')})"
+                pl_label = f"🇵🇱 Польша (PL) ({pl_srv.get('endpoint_host')}:{pl_srv.get('endpoint_port')})"
                 self.telegram.send_message(
                     chat_id,
                     "Выберите сервер для выдачи Warp / AmneziaWG конфига:",
@@ -4552,6 +4554,7 @@ class ShopBot:
                         [
                             [(nl_label, "admin:share_warp_srv:nl")],
                             [(fi_label, "admin:share_warp_srv:fi")],
+                            [(pl_label, "admin:share_warp_srv:pl")],
                             [("« Назад в админ-меню", "admin:menu", "primary")],
                         ]
                     ),
