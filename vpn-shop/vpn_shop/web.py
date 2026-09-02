@@ -1685,12 +1685,22 @@ class WebCheckout:
           </div>
         </section>
         <script>
+        window.addEventListener("pageshow", function(event) {{
+          if (window.turnstile) {{
+            try {{ window.turnstile.reset(); }} catch(err) {{}}
+          }}
+        }});
+
         function handleOrderSubmit(e) {{
           const form = e.target;
-          const turnstileToken = (form.querySelector('[name="cf-turnstile-response"]') || {{}}).value || (window.turnstile ? window.turnstile.getResponse() : "");
+          const tokenInput = form.querySelector('[name="cf-turnstile-response"]');
+          const turnstileToken = (tokenInput && tokenInput.value) || (window.turnstile ? window.turnstile.getResponse() : "");
           const statusDiv = document.getElementById("orderFormStatus");
           if (!turnstileToken) {{
             e.preventDefault();
+            if (window.turnstile) {{
+              try {{ window.turnstile.reset(); }} catch(err) {{}}
+            }}
             if (statusDiv) {{
               statusDiv.style.display = "block";
               statusDiv.textContent = "Пожалуйста, подтвердите, что вы человек (поставьте галочку Cloudflare).";
