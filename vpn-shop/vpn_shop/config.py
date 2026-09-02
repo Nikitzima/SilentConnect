@@ -156,7 +156,7 @@ def load_settings(root_dir: Path | None = None, env_file: str | Path | None = No
         xui_panel_url=_env("XUI_PANEL_URL", "https://127.0.0.1:2053/").rstrip("/") + "/",
         xui_username=os.environ.get("XUI_USERNAME", "").strip(),
         xui_password=os.environ.get("XUI_PASSWORD", "").strip(),
-        xui_verify_tls=_bool("XUI_VERIFY_TLS", False),
+        xui_verify_tls=_bool("XUI_VERIFY_TLS", True),
         xui_db_path=_path_from_env("XUI_DB_PATH", "/etc/x-ui/x-ui.db", resolved_root),
         xui_xhttp_inbound_id=_int("XUI_XHTTP_INBOUND_ID", 1),
         xui_tcp_inbound_id=_int("XUI_TCP_INBOUND_ID", 2),

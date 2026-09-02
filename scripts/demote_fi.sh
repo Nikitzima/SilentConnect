@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
 # ==============================================================================
 # demote_fi.sh - Safe Failback & Re-synchronization Script
 #
@@ -8,8 +10,8 @@
 # 3. Initiates Quiesce Lock on FI SubJSON (30s lease + 10s heartbeat loop).
 # 4. Stops FI vpn-shop-silentconnect and vpn-shop-web services.
 # 5. Transfers delta to NL and executes failback_merge.py.
-# 6. Switches Cloudflare DNS back to NL IP (DNS-Only ⚪).
-# 7. Starts and verifies services on NL.
+# 6. Starts and verifies services on NL.
+# 7. Switches Cloudflare DNS back to NL IP (DNS-Only ⚪).
 # 8. Releases FI Quiesce Lock.
 # 9. Dispatches Telegram administrative notification.
 # ==============================================================================
@@ -46,6 +48,8 @@ log "=== STARTING SAFE FAILBACK & RE-SYNCHRONIZATION TO NL (${NL_IP}) ==="
 ENV_FILE="${ENV_FILE:-/root/vpn-shop/.env}"
 SUBJSON_ENV="/root/subjson-service/subjson.env"
 
+BOT_TOKEN=""
+ADMIN_ID=""
 if [ -f "$ENV_FILE" ]; then
     BOT_TOKEN=$(grep -E '^TELEGRAM_BOT_TOKEN=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"'\''' || true)
     ADMIN_ID=$(grep -E '^ADMIN_TELEGRAM_ID=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"'\''' || true)
@@ -117,31 +121,39 @@ if [ -f "/var/lib/litestream/baseline_vpn_shop.db" ]; then
 fi
 
 # Run failback_merge.py on NL
-ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=30 root@${NL_IP} "python3 /usr/local/bin/failback_merge.py \
+if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=30 root@${NL_IP} "python3 /usr/local/bin/failback_merge.py \
     --nl-vpn /root/vpn-shop/data-silentconnect/vpn_shop.db \
     --fi-vpn /tmp/fi_merge/fi_vpn.db \
     --baseline-vpn /tmp/fi_merge/baseline_vpn_shop.db \
     --nl-xui /etc/x-ui/x-ui.db \
     --fi-xui /tmp/fi_merge/fi_xui.db \
-    --baseline-xui /tmp/fi_merge/baseline_xui.db"
+    --baseline-xui /tmp/fi_merge/baseline_xui.db"; then
+    err "failback_merge.py failed on NL!"
+    err "ABORTING: DNS will NOT be switched. NL may have corrupt or unmerged data."
+    cleanup_heartbeat
+    exit 2
+fi
 
 log "3-Way Merge completed on NL."
 
-# Step 5: Switch Cloudflare DNS back to NL IP (DNS-Only ⚪)
-log "Step 5: Switching Cloudflare DNS records back to NL IP (${NL_IP})..."
-if [ -x "/usr/local/bin/cf-failover-dns.sh" ]; then
-    /usr/local/bin/cf-failover-dns.sh demote-fi
-else
-    log "WARNING: /usr/local/bin/cf-failover-dns.sh not found or not executable"
-fi
-
-# Step 6: Start and verify services on NL
-log "Step 6: Starting and validating services on NL..."
+# Step 5: Start and verify services on NL FIRST
+log "Step 5: Starting and validating services on NL..."
 ssh -o BatchMode=yes -o StrictHostKeyChecking=no root@${NL_IP} "systemctl start vpn-shop-silentconnect vpn-shop-web litestream && systemctl restart x-ui caddy subjson"
 
 NL_BOT_ACTIVE=$(ssh -o BatchMode=yes -o StrictHostKeyChecking=no root@${NL_IP} "systemctl is-active vpn-shop-silentconnect 2>/dev/null || echo 'inactive'")
 if [ "$NL_BOT_ACTIVE" != "active" ]; then
-    err "vpn-shop-silentconnect on NL is not active!"
+    err "vpn-shop-silentconnect on NL is not active! ABORTING failback."
+    cleanup_heartbeat
+    exit 3
+fi
+log "NL services verified and active."
+
+# Step 6: Switch Cloudflare DNS back to NL IP (DNS-Only ⚪) ONLY AFTER NL is verified
+log "Step 6: Switching Cloudflare DNS records back to NL IP (${NL_IP})..."
+if [ -x "/usr/local/bin/cf-failover-dns.sh" ]; then
+    /usr/local/bin/cf-failover-dns.sh demote-fi
+else
+    log "WARNING: /usr/local/bin/cf-failover-dns.sh not found or not executable"
 fi
 
 # Step 7: Release Quiesce Lock on FI

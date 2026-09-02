@@ -73,6 +73,161 @@ def check_integrity(conn: sqlite3.Connection, db_name: str) -> None:
         raise RuntimeError(f"Integrity check failed for {db_name}: {res}")
     log(f"Integrity check OK for {db_name}")
 
+    # Also check foreign key constraints
+    cursor.execute("PRAGMA foreign_key_check;")
+    fk_res = cursor.fetchall()
+    if fk_res:
+        raise RuntimeError(f"Foreign key violations in {db_name}: {fk_res}")
+    log(f"Foreign key check OK for {db_name}")
+
+
+# ==============================================================================
+# Helper Merge Functions
+# ==============================================================================
+
+def merge_promo_codes(
+    nl_conn: sqlite3.Connection,
+    fi_conn: sqlite3.Connection,
+    baseline_conn: Optional[sqlite3.Connection] = None,
+    dry_run: bool = False
+) -> Dict[str, int]:
+    """Merge promo_codes with used_count delta accumulation."""
+    stats = {"merged": 0, "inserted": 0, "updated": 0}
+    try:
+        fi_cur = fi_conn.cursor()
+        nl_cur = nl_conn.cursor()
+
+        fi_cur.execute("SELECT * FROM promo_codes;")
+        for fi_pc in fi_cur.fetchall():
+            nl_cur.execute("SELECT * FROM promo_codes WHERE code_hash = ?;", (fi_pc["code_hash"],))
+            nl_pc = nl_cur.fetchone()
+
+            if nl_pc is None:
+                # New promo code from FI
+                cols = [k for k in fi_pc.keys() if k != "id"]
+                vals = [fi_pc[k] for k in cols]
+                placeholders = ", ".join(["?"] * len(cols))
+                col_names = ", ".join(cols)
+                if not dry_run:
+                    nl_cur.execute(f"INSERT INTO promo_codes ({col_names}) VALUES ({placeholders});", vals)
+                stats["inserted"] += 1
+            else:
+                # Accumulate used_count delta: FI_increment = fi.used_count - baseline.used_count
+                delta = 0
+                if baseline_conn:
+                    try:
+                        base_cur = baseline_conn.cursor()
+                        base_cur.execute("SELECT used_count FROM promo_codes WHERE code_hash = ?;", (fi_pc["code_hash"],))
+                        base_row = base_cur.fetchone()
+                        if base_row:
+                            delta = max(0, (fi_pc["used_count"] or 0) - (base_row["used_count"] or 0))
+                        else:
+                            delta = fi_pc["used_count"] or 0
+                    except sqlite3.OperationalError:
+                        delta = max(0, (fi_pc["used_count"] or 0) - (nl_pc["used_count"] or 0))
+                else:
+                    delta = max(0, (fi_pc["used_count"] or 0) - (nl_pc["used_count"] or 0))
+
+                new_used_count = (nl_pc["used_count"] or 0) + delta
+                max_last_used = max(nl_pc["last_used_at"] or 0, fi_pc["last_used_at"] or 0) or None
+                if not dry_run:
+                    nl_cur.execute(
+                        "UPDATE promo_codes SET used_count = ?, last_used_at = COALESCE(?, last_used_at) WHERE code_hash = ?;",
+                        (new_used_count, max_last_used, fi_pc["code_hash"])
+                    )
+                stats["updated"] += 1
+            stats["merged"] += 1
+    except sqlite3.OperationalError:
+        pass
+    return stats
+
+
+def merge_invite_tokens(
+    nl_conn: sqlite3.Connection,
+    fi_conn: sqlite3.Connection,
+    baseline_conn: Optional[sqlite3.Connection] = None,
+    dry_run: bool = False
+) -> Dict[str, int]:
+    """Merge invite_tokens with used_count delta accumulation."""
+    stats = {"merged": 0, "inserted": 0, "updated": 0}
+    try:
+        fi_cur = fi_conn.cursor()
+        nl_cur = nl_conn.cursor()
+
+        fi_cur.execute("SELECT * FROM invite_tokens;")
+        for fi_it in fi_cur.fetchall():
+            nl_cur.execute("SELECT * FROM invite_tokens WHERE code_hash = ?;", (fi_it["code_hash"],))
+            nl_it = nl_cur.fetchone()
+
+            if nl_it is None:
+                # New invite token from FI
+                cols = [k for k in fi_it.keys() if k != "id"]
+                vals = [fi_it[k] for k in cols]
+                placeholders = ", ".join(["?"] * len(cols))
+                col_names = ", ".join(cols)
+                if not dry_run:
+                    nl_cur.execute(f"INSERT INTO invite_tokens ({col_names}) VALUES ({placeholders});", vals)
+                stats["inserted"] += 1
+            else:
+                # Accumulate used_count delta
+                delta = 0
+                if baseline_conn:
+                    try:
+                        base_cur = baseline_conn.cursor()
+                        base_cur.execute("SELECT used_count FROM invite_tokens WHERE code_hash = ?;", (fi_it["code_hash"],))
+                        base_row = base_cur.fetchone()
+                        if base_row:
+                            delta = max(0, (fi_it["used_count"] or 0) - (base_row["used_count"] or 0))
+                        else:
+                            delta = fi_it["used_count"] or 0
+                    except sqlite3.OperationalError:
+                        delta = max(0, (fi_it["used_count"] or 0) - (nl_it["used_count"] or 0))
+                else:
+                    delta = max(0, (fi_it["used_count"] or 0) - (nl_it["used_count"] or 0))
+
+                new_used_count = (nl_it["used_count"] or 0) + delta
+                if not dry_run:
+                    nl_cur.execute(
+                        "UPDATE invite_tokens SET used_count = ? WHERE code_hash = ?;",
+                        (new_used_count, fi_it["code_hash"])
+                    )
+                stats["updated"] += 1
+            stats["merged"] += 1
+    except sqlite3.OperationalError:
+        pass
+    return stats
+
+
+def merge_webhook_events(
+    nl_conn: sqlite3.Connection,
+    fi_conn: sqlite3.Connection,
+    dry_run: bool = False
+) -> Dict[str, int]:
+    """Merge webhook_events (idempotent, skip duplicates)."""
+    stats = {"merged": 0, "skipped_duplicates": 0}
+    try:
+        fi_cur = fi_conn.cursor()
+        nl_cur = nl_conn.cursor()
+        fi_cur.execute("SELECT * FROM webhook_events;")
+        for fi_we in fi_cur.fetchall():
+            nl_cur.execute(
+                "SELECT id FROM webhook_events WHERE gateway = ? AND event_id = ?;",
+                (fi_we["gateway"], fi_we["event_id"])
+            )
+            if nl_cur.fetchone() is None:
+                cols = [k for k in fi_we.keys() if k != "id"]
+                vals = [fi_we[k] for k in cols]
+                placeholders = ", ".join(["?"] * len(cols))
+                col_names = ", ".join(cols)
+                if not dry_run:
+                    nl_cur.execute(f"INSERT INTO webhook_events ({col_names}) VALUES ({placeholders});", vals)
+                stats["merged"] += 1
+            else:
+                stats["skipped_duplicates"] += 1
+    except sqlite3.OperationalError:
+        pass
+    return stats
+
 
 # ==============================================================================
 # VPN Shop Database Merge (vpn_shop.db)
@@ -102,7 +257,10 @@ def merge_vpn_shop(
         "telegram_users_merged": 0,
         "trial_redemptions_merged": 0,
         "referrers_merged": 0,
+        "promo_codes_merged": 0,
+        "invite_tokens_merged": 0,
         "referral_ledger_merged": 0,
+        "webhook_events_merged": 0,
         "awg_peers_merged": 0,
     }
 
@@ -113,6 +271,11 @@ def merge_vpn_shop(
 
     if not dry_run:
         make_backup(nl_db_path)
+
+    baseline_conn = None
+    if baseline_db_path and os.path.exists(baseline_db_path):
+        baseline_conn = sqlite3.connect(baseline_db_path)
+        baseline_conn.row_factory = sqlite3.Row
 
     nl_conn = sqlite3.connect(nl_db_path)
     nl_conn.row_factory = sqlite3.Row
@@ -195,6 +358,41 @@ def merge_vpn_shop(
                 ref_id_map[row["id"]] = nl_match["id"]
 
         # ----------------------------------------------------------------------
+        # 2b. Merge promo_codes & invite_tokens
+        # ----------------------------------------------------------------------
+        promo_stats = merge_promo_codes(nl_conn, fi_conn, baseline_conn, dry_run)
+        log(f"Promo codes: {promo_stats}")
+        stats["promo_codes_merged"] = promo_stats.get("merged", 0)
+
+        invite_stats = merge_invite_tokens(nl_conn, fi_conn, baseline_conn, dry_run)
+        log(f"Invite tokens: {invite_stats}")
+        stats["invite_tokens_merged"] = invite_stats.get("merged", 0)
+
+        # Build promo_id_map: FI promo id -> NL promo id (by code_hash)
+        promo_id_map: Dict[int, int] = {}
+        try:
+            fi_cur.execute("SELECT id, code_hash FROM promo_codes;")
+            for fi_pc in fi_cur.fetchall():
+                nl_cur.execute("SELECT id FROM promo_codes WHERE code_hash = ?;", (fi_pc["code_hash"],))
+                nl_match = nl_cur.fetchone()
+                if nl_match:
+                    promo_id_map[fi_pc["id"]] = nl_match["id"]
+        except sqlite3.OperationalError:
+            pass
+
+        # Build invite_id_map: FI invite id -> NL invite id (by code_hash)
+        invite_id_map: Dict[int, int] = {}
+        try:
+            fi_cur.execute("SELECT id, code_hash FROM invite_tokens;")
+            for fi_it in fi_cur.fetchall():
+                nl_cur.execute("SELECT id FROM invite_tokens WHERE code_hash = ?;", (fi_it["code_hash"],))
+                nl_match = nl_cur.fetchone()
+                if nl_match:
+                    invite_id_map[fi_it["id"]] = nl_match["id"]
+        except sqlite3.OperationalError:
+            pass
+
+        # ----------------------------------------------------------------------
         # 3. Merge profiles
         # ----------------------------------------------------------------------
         fi_cur.execute("SELECT * FROM profiles;")
@@ -248,7 +446,7 @@ def merge_vpn_shop(
                 prof_id_map[row["id"]] = nl_match["id"]
 
         # ----------------------------------------------------------------------
-        # 4. Merge orders (Remapping FK provisioned_profile_id)
+        # 4. Merge orders (Remapping FK provisioned_profile_id, promo_id, invite_id)
         # ----------------------------------------------------------------------
         fi_cur.execute("SELECT * FROM orders;")
         for fi_ord in fi_cur.fetchall():
@@ -257,7 +455,9 @@ def merge_vpn_shop(
             nl_ord = nl_cur.fetchone()
 
             # Remap foreign keys
-            remapped_prof_id = prof_id_map.get(fi_ord["provisioned_profile_id"]) if fi_ord["provisioned_profile_id"] else None
+            remapped_prof_id = prof_id_map.get(fi_ord["provisioned_profile_id"]) if ("provisioned_profile_id" in fi_ord.keys() and fi_ord["provisioned_profile_id"]) else None
+            remapped_promo_id = promo_id_map.get(fi_ord["promo_id"]) if ("promo_id" in fi_ord.keys() and fi_ord["promo_id"]) else None
+            remapped_invite_id = invite_id_map.get(fi_ord["invite_id"]) if ("invite_id" in fi_ord.keys() and fi_ord["invite_id"]) else None
 
             if nl_ord is None:
                 cols = [k for k in fi_ord.keys() if k != "id"]
@@ -265,6 +465,10 @@ def merge_vpn_shop(
                 for k in cols:
                     if k == "provisioned_profile_id":
                         vals.append(remapped_prof_id)
+                    elif k == "promo_id":
+                        vals.append(remapped_promo_id)
+                    elif k == "invite_id":
+                        vals.append(remapped_invite_id)
                     else:
                         vals.append(fi_ord[k])
                 placeholders = ", ".join(["?"] * len(cols))
@@ -280,6 +484,8 @@ def merge_vpn_shop(
                             UPDATE orders SET
                                 status = ?,
                                 provisioned_profile_id = COALESCE(?, provisioned_profile_id),
+                                promo_id = COALESCE(?, promo_id),
+                                invite_id = COALESCE(?, invite_id),
                                 closed_at = COALESCE(?, closed_at),
                                 meta_json = COALESCE(?, meta_json),
                                 updated_at = ?
@@ -287,8 +493,10 @@ def merge_vpn_shop(
                         """, (
                             fi_ord["status"],
                             remapped_prof_id,
-                            fi_ord["closed_at"],
-                            fi_ord["meta_json"],
+                            remapped_promo_id,
+                            remapped_invite_id,
+                            fi_ord["closed_at"] if "closed_at" in fi_ord.keys() else None,
+                            fi_ord["meta_json"] if "meta_json" in fi_ord.keys() else None,
                             fi_ord["updated_at"],
                             ord_pub_id
                         ))
@@ -391,6 +599,13 @@ def merge_vpn_shop(
             pass
 
         # ----------------------------------------------------------------------
+        # 7b. Merge webhook_events
+        # ----------------------------------------------------------------------
+        webhook_stats = merge_webhook_events(nl_conn, fi_conn, dry_run)
+        log(f"Webhook events: {webhook_stats}")
+        stats["webhook_events_merged"] = webhook_stats.get("merged", 0)
+
+        # ----------------------------------------------------------------------
         # 8. Merge awg_peers
         # ----------------------------------------------------------------------
         try:
@@ -440,6 +655,8 @@ def merge_vpn_shop(
         err(f"vpn_shop.db merge failed: {e}")
         raise
     finally:
+        if baseline_conn:
+            baseline_conn.close()
         nl_conn.close()
         fi_conn.close()
 
