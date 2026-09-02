@@ -468,8 +468,20 @@ def create_inline_renewal_order(
         discount_percent = 0
         promo_id = None
         if promo_code:
-            code_hash = hash_secret(promo_code.strip().lower())
-            p_row = conn_shop.execute("SELECT * FROM promo_codes WHERE code_hash = ? AND enabled = 1", (code_hash,)).fetchone()
+            code_hash = hash_secret(promo_code.strip().upper())
+            now_ts = int(time.time())
+            p_row = conn_shop.execute(
+                """
+                UPDATE promo_codes
+                SET used_count = used_count + 1, last_used_at = ?
+                WHERE code_hash = ?
+                  AND enabled = 1
+                  AND used_count < max_uses
+                  AND (expires_at IS NULL OR expires_at > ?)
+                RETURNING *
+                """,
+                (now_ts, code_hash, now_ts),
+            ).fetchone()
             if p_row:
                 discount_percent = int(p_row["discount_percent"] or 0)
                 promo_id = p_row["id"]
@@ -524,28 +536,36 @@ def create_inline_renewal_order(
             new_exp_s = base_exp + duration_days * 86400
             new_exp_ms = new_exp_s * 1000
 
-            # Update xui db
-            xui_rw = sqlite3.connect(XUI_DB_PATH, timeout=30.0)
-            xui_rw.execute("PRAGMA busy_timeout = 30000;")
             try:
-                inb = xui_rw.execute("SELECT settings FROM inbounds WHERE id = ?", (found_client["inbound_id"],)).fetchone()
-                if inb and inb[0]:
-                    st = json.loads(inb[0])
-                    for cl in st.get("clients") or []:
-                        if str(cl.get("subId") or "") == sub_id:
-                            cl["expiryTime"] = new_exp_ms
-                            cl["enable"] = True
-                            break
-                    xui_rw.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(st), found_client["inbound_id"]))
-                    xui_rw.commit()
-            finally:
-                xui_rw.close()
-                invalidate_inbounds_cache()
+                # Update xui db
+                xui_rw = sqlite3.connect(XUI_DB_PATH, timeout=30.0)
+                xui_rw.execute("PRAGMA busy_timeout = 30000;")
+                try:
+                    inb = xui_rw.execute("SELECT settings FROM inbounds WHERE id = ?", (found_client["inbound_id"],)).fetchone()
+                    if inb and inb[0]:
+                        st = json.loads(inb[0])
+                        for cl in st.get("clients") or []:
+                            if str(cl.get("subId") or "") == sub_id:
+                                cl["expiryTime"] = new_exp_ms
+                                cl["enable"] = True
+                                break
+                        xui_rw.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(st), found_client["inbound_id"]))
+                        xui_rw.commit()
+                finally:
+                    xui_rw.close()
+                    invalidate_inbounds_cache()
 
-            # Update profiles & orders in shop db
-            conn_shop.execute("UPDATE profiles SET expires_at = ?, last_renewed_at = ? WHERE id = ?", (new_exp_s, now, prof_dict["id"]))
-            conn_shop.execute("UPDATE orders SET status = 'delivered', closed_at = ? WHERE public_id = ?", (now, order_pub_id))
-            conn_shop.commit()
+                # Update profiles & orders in shop db
+                conn_shop.execute("UPDATE profiles SET expires_at = ?, last_renewed_at = ? WHERE id = ?", (new_exp_s, now, prof_dict["id"]))
+                conn_shop.execute("UPDATE orders SET status = 'delivered', closed_at = ? WHERE public_id = ?", (now, order_pub_id))
+                conn_shop.commit()
+            except Exception as prov_err:
+                LOGGER.exception("Failed to provision renewal order %s: %s", order_pub_id, prov_err)
+                conn_shop.execute("UPDATE orders SET status = 'cancelled', updated_at = ?, closed_at = ? WHERE public_id = ?", (now, now, order_pub_id))
+                if promo_id:
+                    conn_shop.execute("UPDATE promo_codes SET used_count = MAX(0, used_count - 1) WHERE id = ?", (promo_id,))
+                conn_shop.commit()
+                raise
     finally:
         conn_shop.close()
 
@@ -5951,8 +5971,11 @@ class RequestHandler(BaseHTTPRequestHandler):
             query = urllib.parse.parse_qs(parsed_url.query)
             # Rate limit subscription endpoints (audit #10); healthz/internal exempt.
             if len(path) >= 2 and path[0] == SECRET_SEGMENT and not path[1].startswith("internal"):
-                client_ip = (self.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-                             or (self.client_address[0] if self.client_address else "unknown"))
+                xff = self.headers.get("X-Forwarded-For", "").strip()
+                if xff:
+                    client_ip = xff.split(",")[-1].strip()
+                else:
+                    client_ip = self.client_address[0] if self.client_address else "unknown"
                 if not check_rate_limit(client_ip):
                     self._send_json(HTTPStatus.TOO_MANY_REQUESTS, {"error": "rate_limited", "detail": "too many requests, retry in a minute"}, include_body)
                     return

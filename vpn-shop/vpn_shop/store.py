@@ -84,6 +84,14 @@ CREATE TABLE IF NOT EXISTS orders (
   FOREIGN KEY (provisioned_profile_id) REFERENCES profiles(id)
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_open_orders_promo
+  ON orders(promo_id) WHERE promo_id IS NOT NULL
+  AND status IN ('waiting_payment', 'auto_provision');
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_open_orders_invite
+  ON orders(invite_id) WHERE invite_id IS NOT NULL
+  AND status IN ('waiting_payment', 'auto_provision');
+
 CREATE TABLE IF NOT EXISTS profiles (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   public_id TEXT NOT NULL UNIQUE,

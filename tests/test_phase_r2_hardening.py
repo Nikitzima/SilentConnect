@@ -515,6 +515,158 @@ class TestPhaseR2Hardening(unittest.TestCase):
             # Should NOT raise
             subjson_app.validate_production_secrets()
 
+    # =========================================================================
+    # Round 4 Remediation Tests
+    # =========================================================================
+    def test_r4_config_xui_verify_tls_default_true(self):
+        """Verify XUI_VERIFY_TLS defaults to True in Settings."""
+        from vpn_shop.config import load_settings
+        with patch.dict(os.environ, {}, clear=True):
+            s = load_settings()
+            self.assertTrue(s.xui_verify_tls)
+
+    def test_r4_partial_unique_indexes_orders(self):
+        """Verify partial unique indexes prevent duplicate open orders for same promo/invite."""
+        conn = sqlite3.connect(str(self.shop_db_path))
+        try:
+            # Insert a promo code
+            code, promo = self.store.create_promo_code(
+                promo_type="discount",
+                transport="tcp",
+                duration_days=30,
+                discount_percent=50,
+                profile_mode="anonymous",
+                max_uses=5,
+            )
+            promo_id = promo["id"]
+
+            # First open order with promo_id
+            conn.execute(
+                """
+                INSERT INTO orders(public_id, kind, status, transport, duration_days, profile_mode, base_price_rub, final_price_rub, promo_id, created_at, updated_at, terms_version)
+                VALUES('ord_r4_1', 'new', 'waiting_payment', 'tcp', 30, 'anonymous', 100, 50, ?, 1000, 1000, '2026-04-20')
+                """,
+                (promo_id,)
+            )
+            conn.commit()
+
+            # Second concurrent open order with same promo_id must violate unique index
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute(
+                    """
+                    INSERT INTO orders(public_id, kind, status, transport, duration_days, profile_mode, base_price_rub, final_price_rub, promo_id, created_at, updated_at, terms_version)
+                    VALUES('ord_r4_2', 'new', 'waiting_payment', 'tcp', 30, 'anonymous', 100, 50, ?, 1000, 1000, '2026-04-20')
+                    """,
+                    (promo_id,)
+                )
+
+            # Once first order is delivered, another order with same promo_id can be created
+            conn.execute("UPDATE orders SET status = 'delivered' WHERE public_id = 'ord_r4_1'")
+            conn.commit()
+
+            conn.execute(
+                """
+                INSERT INTO orders(public_id, kind, status, transport, duration_days, profile_mode, base_price_rub, final_price_rub, promo_id, created_at, updated_at, terms_version)
+                VALUES('ord_r4_2', 'new', 'waiting_payment', 'tcp', 30, 'anonymous', 100, 50, ?, 1000, 1000, '2026-04-20')
+                """,
+                (promo_id,)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_r4_inline_renewal_promo_case_insensitive_and_atomic_consumption(self):
+        """Verify inline renewal matches promo case-insensitively and atomically increments used_count."""
+        # Insert profile
+        conn = sqlite3.connect(str(self.shop_db_path))
+        try:
+            conn.execute(
+                """
+                INSERT INTO profiles (id, public_id, xui_inbound_id, transport, profile_mode, xui_email, xui_client_id, status, created_at, expires_at)
+                VALUES (200, 'prof_r4_test', 1, 'tcp', 'anonymous', 'client1@test.com', 'uuid-client-1', 'active', 1000, 2000000000)
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Create 100% discount promo code in uppercase
+        code, promo = self.store.create_promo_code(
+            promo_type="discount",
+            transport="tcp",
+            duration_days=30,
+            discount_percent=100,
+            profile_mode="anonymous",
+            max_uses=1,
+        )
+        promo_id = promo["id"]
+
+        # Call create_inline_renewal_order with lowercase promo
+        res = subjson_app.create_inline_renewal_order(
+            sub_id="sub111111111111",
+            duration_days=30,
+            device_limit=3,
+            promo_code=code.lower(),
+            customer_email="test@example.com"
+        )
+        self.assertEqual(res["final_price_rub"], 0)
+        self.assertEqual(res["status"], "delivered")
+
+        # Promo should now be consumed (used_count == 1)
+        p_row = self.store.find_valid_promo(code)
+        self.assertIsNone(p_row)  # exhausted
+
+        # Second attempt with same promo cannot get 100% discount
+        res2 = subjson_app.create_inline_renewal_order(
+            sub_id="sub111111111111",
+            duration_days=30,
+            device_limit=3,
+            promo_code=code.lower(),
+            customer_email="test@example.com"
+        )
+        self.assertGreater(res2["final_price_rub"], 0)
+
+    def test_r4_inline_renewal_promo_rollback_on_failure(self):
+        """Verify inline renewal rolls back promo used_count if provisioning fails."""
+        # Insert profile
+        conn = sqlite3.connect(str(self.shop_db_path))
+        try:
+            conn.execute(
+                """
+                INSERT INTO profiles (id, public_id, xui_inbound_id, transport, profile_mode, xui_email, xui_client_id, status, created_at, expires_at)
+                VALUES (201, 'prof_r4_rollback', 999, 'tcp', 'anonymous', 'client1@test.com', 'uuid-client-1', 'active', 1000, 2000000000)
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        code, promo = self.store.create_promo_code(
+            promo_type="discount",
+            transport="tcp",
+            duration_days=30,
+            discount_percent=100,
+            profile_mode="anonymous",
+            max_uses=1,
+        )
+        promo_id = promo["id"]
+
+        # Mock an exception during provisioning
+        with patch.object(subjson_app, "invalidate_inbounds_cache", side_effect=RuntimeError("xui disk error")):
+            with self.assertRaises(RuntimeError):
+                subjson_app.create_inline_renewal_order(
+                    sub_id="sub111111111111",
+                    duration_days=30,
+                    device_limit=3,
+                    promo_code=code.lower(),
+                    customer_email="test@example.com"
+                )
+
+        # Promo used_count should have rolled back to 0
+        p_valid = self.store.find_valid_promo(code)
+        self.assertIsNotNone(p_valid)
+        self.assertEqual(p_valid["used_count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
