@@ -1950,7 +1950,7 @@ def build_singbox_smart_config(
             "type": "hysteria2",
             "tag": "nl-speed-hysteria2",
             "server": nl_sub,
-            "server_port": 443,
+            "server_port": HYSTERIA_PORT,
             "password": client_uuid,
             "tls": {
                 "enabled": True,
@@ -1958,8 +1958,10 @@ def build_singbox_smart_config(
                 "alpn": ["h3"],
             },
             "obfs": {
-                "type": "salamander",
+                "type": "gecko",
                 "password": HYSTERIA_SALAMANDER_PASSWORD,
+                "min_packet_size": 512,
+                "max_packet_size": 1000,
             },
         },
         {
@@ -6375,7 +6377,23 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_subscription_json(payload, include_body, subscription_route=path[1], subscription_id=path[2])
                     return
 
-                if path[1] in {"json", "sub", "json-ru", "sub-ru", "singbox", "happ"}:
+                if path[1] in {"singbox", "sing-box", "sfa"}:
+                    payload = build_singbox_smart_config(path[2], public_host, "split-ru")
+                    self._send_json(HTTPStatus.OK, payload, include_body)
+                    return
+
+                if path[1] in {"singbox-global", "sing-box-global", "sfa-global"}:
+                    payload = build_singbox_smart_config(path[2], public_host, "global")
+                    self._send_json(HTTPStatus.OK, payload, include_body)
+                    return
+
+                user_agent = self.headers.get("User-Agent", "").lower()
+                if ("sing-box" in user_agent or "sfa" in user_agent) and path[1] in {"json", "sub", "json-ru", "sub-ru"}:
+                    payload = build_singbox_smart_config(path[2], public_host, "split-ru")
+                    self._send_json(HTTPStatus.OK, payload, include_body)
+                    return
+
+                if path[1] in {"json", "sub", "json-ru", "sub-ru", "happ"}:
                     payload = build_four_profiles(path[2], public_host, "split-ru")
                     self._send_subscription_json(payload, include_body, subscription_route=path[1], subscription_id=path[2])
                     return
