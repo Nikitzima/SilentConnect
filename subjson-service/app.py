@@ -197,12 +197,12 @@ GRPC_REALITY_SHORT_ID = os.environ.get("GRPC_REALITY_SHORT_ID", "0123456789abcde
 GRPC_REALITY_SNI = os.environ.get("GRPC_REALITY_SNI", "vk.com").strip()
 GRPC_SERVICE_NAME = os.environ.get("GRPC_SERVICE_NAME", "grpc-maxru").strip()
 
-FI_REALITY_SNI_CLASSIC = os.environ.get("FI_REALITY_SNI_CLASSIC", "itunes.apple.com").strip()
-FI_REALITY_SNI_FAST = os.environ.get("FI_REALITY_SNI_FAST", "captive.apple.com").strip()
-FI_GRPC_REALITY_SNI = os.environ.get("FI_GRPC_REALITY_SNI", "fcm.googleapis.com").strip()
+FI_REALITY_SNI_CLASSIC = os.environ.get("FI_REALITY_SNI_CLASSIC", "mirror.hetzner.de").strip()
+FI_REALITY_SNI_FAST = os.environ.get("FI_REALITY_SNI_FAST", "community.hetzner.com").strip()
+FI_GRPC_REALITY_SNI = os.environ.get("FI_GRPC_REALITY_SNI", "docs.hetzner.com").strip()
 FI_XHTTP_REALITY_PUBLIC_KEY = os.environ.get("FI_XHTTP_REALITY_PUBLIC_KEY", "ASvvjJ4dOcHst5FWDJ9D562UQ0nN1pAw0l13Z58RNQA").strip()
 FI_XHTTP_REALITY_SHORT_ID = os.environ.get("FI_XHTTP_REALITY_SHORT_ID", "a1b2c3d4e5f60718").strip()
-FI_XHTTP_REALITY_SNI = os.environ.get("FI_XHTTP_REALITY_SNI", "speed.cloudflare.com").strip()
+FI_XHTTP_REALITY_SNI = os.environ.get("FI_XHTTP_REALITY_SNI", "kde.org").strip()
 FI_XHTTP_REALITY_PORT = int(os.environ.get("FI_XHTTP_REALITY_PORT", "39443"))
 
 PL_STANDBY_HOST = os.environ.get("PL_STANDBY_HOST", "").strip()
