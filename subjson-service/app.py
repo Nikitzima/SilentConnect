@@ -2149,13 +2149,11 @@ def build_singbox_smart_config(
             "packet_encoding": "xudp",
         },
         {"type": "direct", "tag": "direct"},
-        {"type": "block", "tag": "block"},
-        {"type": "dns", "tag": "dns-out"},
     ]
 
     route_rules = [
         {"action": "sniff"},
-        {"protocol": "dns", "outbound": "dns-out"},
+        {"protocol": "dns", "action": "hijack-dns"},
         {"ip_is_private": True, "outbound": "direct"},
         {"protocol": "bittorrent", "outbound": "direct"},
     ]
@@ -2169,7 +2167,6 @@ def build_singbox_smart_config(
                 ],
                 "outbound": "direct",
             },
-            {"geoip": "ru", "outbound": "direct"},
         ])
 
     pl_edge = os.environ.get("PL_STANDBY_HOST", PL_STANDBY_HOST).strip()
@@ -2317,17 +2314,14 @@ def build_singbox_smart_config(
                     "server": "77.88.8.8",
                     "detour": "direct",
                 },
-                {
-                    "tag": "dns-block",
-                    "type": "local",
-                },
             ],
             "rules": [
-                {"outbound": "any", "server": "dns-direct"},
-                {"clash_mode": "Direct", "server": "dns-direct"},
-                {"clash_mode": "Global", "server": "dns-remote"},
-                {"geosite": "category-ads-all", "server": "dns-block"},
-                {"geosite": "ru", "server": "dns-direct"},
+                {
+                    "domain_suffix": [
+                        "ru", "su", "xn--p1ai", "yandex.ru", "vk.com", "gosuslugi.ru",
+                    ],
+                    "server": "dns-direct",
+                },
             ],
             "final": "dns-remote",
             "strategy": "prefer_ipv4",
@@ -2354,8 +2348,6 @@ def build_singbox_smart_config(
         "experimental": {
             "cache_file": {
                 "enabled": True,
-                "path": "cache.db",
-                "store_fakeip": False,
             }
         },
     }
