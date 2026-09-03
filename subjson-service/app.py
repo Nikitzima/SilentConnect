@@ -204,7 +204,7 @@ FI_XHTTP_REALITY_PUBLIC_KEY = os.environ.get("FI_XHTTP_REALITY_PUBLIC_KEY", "ASv
 FI_XHTTP_REALITY_SHORT_ID = os.environ.get("FI_XHTTP_REALITY_SHORT_ID", "a1b2c3d4e5f60718").strip()
 FI_XHTTP_REALITY_SNI = os.environ.get("FI_XHTTP_REALITY_SNI", "kde.org").strip()
 FI_XHTTP_REALITY_PORT = int(os.environ.get("FI_XHTTP_REALITY_PORT", "39443"))
-HYSTERIA_PORT = int(os.environ.get("HYSTERIA_PORT", "33443"))
+HYSTERIA_PORT = int(os.environ.get("HYSTERIA_PORT", "8443"))
 
 PL_STANDBY_HOST = os.environ.get("PL_STANDBY_HOST", "").strip()
 PL_REALITY_PUBLIC_KEY = os.environ.get("PL_REALITY_PUBLIC_KEY", "hgj4G9HOJ_6OVYTkeha0vVdEcyuLVzR4Op2BV7CeIW8").strip()
