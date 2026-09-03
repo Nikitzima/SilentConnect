@@ -1467,20 +1467,14 @@ def build_raw_client_config(subscription_id: str, public_host: str) -> dict[str,
 
 DNS_PRESETS: dict[str, list[Any]] = {
     "default": [
-        {
-            "address": "localhost",
-            "domains": [
-                "domain:silentconnect.net",
-                "domain:max.ru",
-                "domain:kernel.org"],
-        },
         "1.1.1.1",
         "8.8.8.8",
-        "localhost"],
+        "77.88.8.8"
+    ],
     "google": [
         "8.8.8.8",
-        "8.8.4.4",
-        "localhost"],
+        "8.8.4.4"
+    ],
 }
 
 
@@ -3102,7 +3096,7 @@ def build_four_profiles(
                     }
                 },
                 "settings": {
-                    "address": public_host,
+                    "address": os.environ.get("NL_SERVER_IP", "193.233.210.189"),
                     "port": HYSTERIA_PORT,
                     "version": 2,
                     "auth": client_uuid,
