@@ -2343,8 +2343,6 @@ def build_singbox_smart_config(
             "rules": route_rules,
             "final": "proxy-selector",
         },
-        "remarks": f"✨ Автоматический ({email})",
-        "meta": meta,
         "experimental": {
             "cache_file": {
                 "enabled": True,
