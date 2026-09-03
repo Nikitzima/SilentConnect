@@ -197,9 +197,12 @@ GRPC_REALITY_SHORT_ID = os.environ.get("GRPC_REALITY_SHORT_ID", "0123456789abcde
 GRPC_REALITY_SNI = os.environ.get("GRPC_REALITY_SNI", "vk.com").strip()
 GRPC_SERVICE_NAME = os.environ.get("GRPC_SERVICE_NAME", "grpc-maxru").strip()
 
-FI_XHTTP_REALITY_PUBLIC_KEY = os.environ.get("FI_XHTTP_REALITY_PUBLIC_KEY", "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA").strip()  # PLACEHOLDER 0000000000
-FI_XHTTP_REALITY_SHORT_ID = os.environ.get("FI_XHTTP_REALITY_SHORT_ID", "0123456789abcdef").strip()  # PLACEHOLDER
-FI_XHTTP_REALITY_SNI = os.environ.get("FI_XHTTP_REALITY_SNI", "sber.ru").strip()
+FI_REALITY_SNI_CLASSIC = os.environ.get("FI_REALITY_SNI_CLASSIC", "itunes.apple.com").strip()
+FI_REALITY_SNI_FAST = os.environ.get("FI_REALITY_SNI_FAST", "captive.apple.com").strip()
+FI_GRPC_REALITY_SNI = os.environ.get("FI_GRPC_REALITY_SNI", "fcm.googleapis.com").strip()
+FI_XHTTP_REALITY_PUBLIC_KEY = os.environ.get("FI_XHTTP_REALITY_PUBLIC_KEY", "ASvvjJ4dOcHst5FWDJ9D562UQ0nN1pAw0l13Z58RNQA").strip()
+FI_XHTTP_REALITY_SHORT_ID = os.environ.get("FI_XHTTP_REALITY_SHORT_ID", "a1b2c3d4e5f60718").strip()
+FI_XHTTP_REALITY_SNI = os.environ.get("FI_XHTTP_REALITY_SNI", "speed.cloudflare.com").strip()
 FI_XHTTP_REALITY_PORT = int(os.environ.get("FI_XHTTP_REALITY_PORT", "39443"))
 
 PL_STANDBY_HOST = os.environ.get("PL_STANDBY_HOST", "").strip()
@@ -3169,18 +3172,20 @@ def build_four_profiles(
     if xhttp_cfg["meta"]:
         xhttp_cfg["meta"]["serverDescription"] = "Незаметный · VLESS-XHTTP-Reality (NL)"
 
-    # --- Profile 6: FI Sber.ru (Classic) ---
+    # --- Profile 6: FI Classic ---
     fi_sber = copy.deepcopy(sber_cfg)
     fi_sber["remarks"] = f"🇫🇮 🛡️ Классический ({email})"
     fi_sber["outbounds"][0]["settings"]["address"] = fi_edge
+    fi_sber["outbounds"][0]["streamSettings"]["realitySettings"]["serverName"] = FI_REALITY_SNI_CLASSIC
     fi_sber["meta"] = build_happ_config_meta(subscription_id)
     if fi_sber["meta"]:
         fi_sber["meta"]["serverDescription"] = "Классический · TCP Reality (FI)"
 
-    # --- Profile 7: FI Kinopoisk (Fast) ---
+    # --- Profile 7: FI Fast ---
     fi_kino = copy.deepcopy(kino_cfg)
     fi_kino["remarks"] = f"🇫🇮 ⚡ Быстрый ({email})"
     fi_kino["outbounds"][0]["settings"]["address"] = fi_edge
+    fi_kino["outbounds"][0]["streamSettings"]["realitySettings"]["serverName"] = FI_REALITY_SNI_FAST
     fi_kino["meta"] = build_happ_config_meta(subscription_id)
     if fi_kino["meta"]:
         fi_kino["meta"]["serverDescription"] = "Быстрый · TCP Reality (FI)"
@@ -3198,6 +3203,8 @@ def build_four_profiles(
     fi_grpc = copy.deepcopy(grpc_cfg)
     fi_grpc["remarks"] = f"🇫🇮 🔐 Запасной ({email})"
     fi_grpc["outbounds"][0]["settings"]["address"] = fi_edge
+    fi_grpc["outbounds"][0]["streamSettings"]["realitySettings"]["serverName"] = FI_GRPC_REALITY_SNI
+    fi_grpc["outbounds"][0]["streamSettings"]["realitySettings"]["shortId"] = "9a2f7c6d1e4b8a30"
     fi_grpc["meta"] = build_happ_config_meta(subscription_id)
     if fi_grpc["meta"]:
         fi_grpc["meta"]["serverDescription"] = "Запасной · VLESS-gRPC-Reality (FI)"
