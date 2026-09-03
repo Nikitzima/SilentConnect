@@ -2306,20 +2306,19 @@ def build_singbox_smart_config(
             "servers": [
                 {
                     "tag": "dns-remote",
-                    "address": "https://1.1.1.1/dns-query",
-                    "address_resolver": "dns-direct",
-                    "strategy": "prefer_ipv4",
+                    "type": "https",
+                    "server": "1.1.1.1",
                     "detour": "proxy-selector",
                 },
                 {
                     "tag": "dns-direct",
-                    "address": "https://77.88.8.8/dns-query",
-                    "strategy": "prefer_ipv4",
+                    "type": "udp",
+                    "server": "77.88.8.8",
                     "detour": "direct",
                 },
                 {
                     "tag": "dns-block",
-                    "address": "rcode://success",
+                    "type": "local",
                 },
             ],
             "rules": [
@@ -2337,7 +2336,7 @@ def build_singbox_smart_config(
                 "type": "tun",
                 "tag": "tun-in",
                 "interface_name": "sing-tun",
-                "inet4_address": "172.19.0.1/30",
+                "address": ["172.19.0.1/30"],
                 "auto_route": True,
                 "strict_route": True,
                 "stack": "mixed",
