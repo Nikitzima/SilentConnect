@@ -2243,7 +2243,7 @@ def build_singbox_smart_config(
                 "type": "hysteria2",
                 "tag": "pl-speed-hysteria2",
                 "server": pl_edge,
-                "server_port": 443,
+                "server_port": HYSTERIA_PORT,
                 "password": client_uuid,
                 "tls": {
                     "enabled": True,
@@ -2251,8 +2251,10 @@ def build_singbox_smart_config(
                     "alpn": ["h3"],
                 },
                 "obfs": {
-                    "type": "salamander",
+                    "type": "gecko",
                     "password": HYSTERIA_SALAMANDER_PASSWORD,
+                    "min_packet_size": 512,
+                    "max_packet_size": 1000,
                 },
             },
             {
@@ -2792,7 +2794,7 @@ def build_streisand_bundle(
         uris.extend([
             f"vless://{client_uuid}@{pl_edge}:443?type=tcp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇵🇱 11. Классический TCP (PL)')}",
             f"vless://{client_uuid}@{pl_edge}:443?type=tcp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_FAST}&sid={PL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇵🇱 12. Быстрый TCP (PL)')}",
-            f"hy2://{client_uuid}@{pl_edge}:443?sni={pl_edge}&alpn=h3&obfs=salamander&obfs-password={salamander_pwd}#{urllib.parse.quote('🇵🇱 13. Скоростной Hysteria2 (PL)')}",
+            f"hysteria2://{client_uuid}@{pl_edge}:{HYSTERIA_PORT}/?sni={pl_edge}&obfs=gecko&obfs-password={salamander_pwd}&min_packet_size=512&max_packet_size=1000#{urllib.parse.quote('🇵🇱 13. Скоростной Hysteria2 (PL)')}",
             f"vless://{client_uuid}@{pl_edge}:29443?type=grpc&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇵🇱 14. Запасной gRPC (PL)')}",
             f"vless://{client_uuid}@{pl_edge}:{PL_XHTTP_REALITY_PORT}?type=xhttp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&path=%2Fxh-7m2q9r4k1v8p3s6&mode=packet-up#{urllib.parse.quote('🇵🇱 15. Незаметный XHTTP Reality (PL)')}",
         ])
