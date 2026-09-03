@@ -2051,7 +2051,7 @@ def build_singbox_smart_config(
             "type": "hysteria2",
             "tag": "fi-speed-hysteria2",
             "server": fi_edge,
-            "server_port": 443,
+            "server_port": HYSTERIA_PORT,
             "password": client_uuid,
             "tls": {
                 "enabled": True,
@@ -2059,8 +2059,10 @@ def build_singbox_smart_config(
                 "alpn": ["h3"],
             },
             "obfs": {
-                "type": "salamander",
+                "type": "gecko",
                 "password": HYSTERIA_SALAMANDER_PASSWORD,
+                "min_packet_size": 512,
+                "max_packet_size": 1000,
             },
         },
         {
@@ -2785,7 +2787,7 @@ def build_streisand_bundle(
         f"vless://{client_uuid}@{nl_edge}:443?type=xhttp&security=tls&sni={nl_edge}&alpn=h2,http/1.1&path=%2Fxh-mx-d1f7c0429d6a&mode=packet-up#{urllib.parse.quote('🇳🇱 5. Незаметный XHTTP (NL)')}",
         f"vless://{client_uuid}@{fi_edge}:443?type=tcp&security=reality&pbk={tcp_pk}&fp=chrome&sni={TCP_REALITY_SNI_CLASSIC}&sid={tcp_sid}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 6. Классический TCP (FI)')}",
         f"vless://{client_uuid}@{fi_edge}:443?type=tcp&security=reality&pbk={tcp_pk}&fp=chrome&sni={TCP_REALITY_SNI_FAST}&sid={tcp_sid}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 7. Быстрый TCP (FI)')}",
-        f"hy2://{client_uuid}@{fi_edge}:443?sni={fi_edge}&alpn=h3&obfs=salamander&obfs-password={salamander_pwd}#{urllib.parse.quote('🇫🇮 8. Скоростной Hysteria2 (FI)')}",
+        f"hysteria2://{client_uuid}@{fi_edge}:{HYSTERIA_PORT}/?sni={fi_edge}&obfs=gecko&obfs-password={salamander_pwd}&min_packet_size=512&max_packet_size=1000#{urllib.parse.quote('🇫🇮 8. Скоростной Hysteria2 (FI)')}",
         f"vless://{client_uuid}@{fi_edge}:29443?type=grpc&security=reality&pbk={grpc_pk}&fp=chrome&sni={GRPC_REALITY_SNI}&sid={grpc_sid}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇫🇮 9. Запасной gRPC (FI)')}",
         f"vless://{client_uuid}@{fi_edge}:{FI_XHTTP_REALITY_PORT}?type=xhttp&security=reality&pbk={fi_xhttp_pk}&fp=chrome&sni={FI_XHTTP_REALITY_SNI}&sid={fi_xhttp_sid}&path=%2Fxh-mx-d1f7c0429d6a&mode=packet-up#{urllib.parse.quote('🇫🇮 10. Незаметный XHTTP Reality (FI)')}",
     ]
