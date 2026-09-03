@@ -2778,7 +2778,7 @@ def build_streisand_bundle(
     uris = [
         f"vless://{client_uuid}@{nl_edge}:443?type=tcp&security=reality&pbk={tcp_pk}&fp=chrome&sni={TCP_REALITY_SNI_CLASSIC}&sid={tcp_sid}&flow=xtls-rprx-vision#{urllib.parse.quote('🇳🇱 1. Классический TCP (NL)')}",
         f"vless://{client_uuid}@{nl_edge}:443?type=tcp&security=reality&pbk={tcp_pk}&fp=chrome&sni={TCP_REALITY_SNI_FAST}&sid={tcp_sid}&flow=xtls-rprx-vision#{urllib.parse.quote('🇳🇱 2. Быстрый TCP (NL)')}",
-        f"hy2://{client_uuid}@{nl_sub}:443?sni={nl_sub}&alpn=h3&obfs=salamander&obfs-password={salamander_pwd}#{urllib.parse.quote('🇳🇱 3. Скоростной Hysteria2 (NL)')}",
+        f"hy2://{client_uuid}@{nl_sub}:{HYSTERIA_PORT}?sni={nl_sub}&alpn=h3&obfs=salamander&obfs-password={salamander_pwd}#{urllib.parse.quote('🇳🇱 3. Скоростной Hysteria2 (NL)')}",
         f"vless://{client_uuid}@{nl_edge}:29443?type=grpc&security=reality&pbk={grpc_pk}&fp=chrome&sni={GRPC_REALITY_SNI}&sid={grpc_sid}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇳🇱 4. Запасной gRPC (NL)')}",
         f"vless://{client_uuid}@{nl_edge}:443?type=xhttp&security=tls&sni={nl_edge}&alpn=h2,http/1.1&path=%2Fxh-mx-d1f7c0429d6a&mode=packet-up#{urllib.parse.quote('🇳🇱 5. Незаметный XHTTP (NL)')}",
         f"vless://{client_uuid}@{fi_edge}:443?type=tcp&security=reality&pbk={tcp_pk}&fp=chrome&sni={TCP_REALITY_SNI_CLASSIC}&sid={tcp_sid}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 6. Классический TCP (FI)')}",
@@ -3084,16 +3084,9 @@ def build_four_profiles(
             {
                 "protocol": "hysteria",
                 "tag": "proxy",
-                "obfs": {
-                    "type": "gecko",
-                    "password": HYSTERIA_SALAMANDER_PASSWORD,
-                    "min_packet_size": 512,
-                    "max_packet_size": 1000
-                },
                 "streamSettings": {
                     "finalmask": {
                         "udp": [
-                            {"settings": {"password": HYSTERIA_SALAMANDER_PASSWORD}, "type": "gecko"},
                             {"settings": {"password": HYSTERIA_SALAMANDER_PASSWORD}, "type": "salamander"}
                         ]
                     },
@@ -3102,10 +3095,6 @@ def build_four_profiles(
                         "auth_str": client_uuid,
                         "authStr": client_uuid,
                         "password": client_uuid,
-                        "obfs": {
-                            "type": "gecko",
-                            "password": HYSTERIA_SALAMANDER_PASSWORD
-                        },
                         "udpIdleTimeout": 60,
                         "version": 2
                     },
@@ -3121,11 +3110,7 @@ def build_four_profiles(
                     "port": HYSTERIA_PORT,
                     "version": 2,
                     "auth": client_uuid,
-                    "auth_str": client_uuid,
-                    "obfs": {
-                        "type": "gecko",
-                        "password": HYSTERIA_SALAMANDER_PASSWORD
-                    }
+                    "auth_str": client_uuid
                 }
             },
             {"protocol": "freedom", "tag": "direct"},
