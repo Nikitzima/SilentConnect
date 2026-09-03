@@ -2154,6 +2154,7 @@ def build_singbox_smart_config(
     ]
 
     route_rules = [
+        {"action": "sniff"},
         {"protocol": "dns", "outbound": "dns-out"},
         {"ip_is_private": True, "outbound": "direct"},
         {"protocol": "bittorrent", "outbound": "direct"},
@@ -2340,16 +2341,7 @@ def build_singbox_smart_config(
                 "auto_route": True,
                 "strict_route": True,
                 "stack": "mixed",
-                "sniff": True,
-                "sniff_override_destination": True,
-            },
-            {
-                "type": "mixed",
-                "tag": "mixed-in",
-                "listen": "127.0.0.1",
-                "listen_port": 20808,
-                "sniff": True,
-            },
+            }
         ],
         "outbounds": outbounds,
         "route": {
