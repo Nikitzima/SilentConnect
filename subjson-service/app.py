@@ -204,7 +204,7 @@ FI_XHTTP_REALITY_PUBLIC_KEY = os.environ.get("FI_XHTTP_REALITY_PUBLIC_KEY", "ASv
 FI_XHTTP_REALITY_SHORT_ID = os.environ.get("FI_XHTTP_REALITY_SHORT_ID", "a1b2c3d4e5f60718").strip()
 FI_XHTTP_REALITY_SNI = os.environ.get("FI_XHTTP_REALITY_SNI", "kde.org").strip()
 FI_XHTTP_REALITY_PORT = int(os.environ.get("FI_XHTTP_REALITY_PORT", "39443"))
-HYSTERIA_PORT = int(os.environ.get("HYSTERIA_PORT", "8443"))
+HYSTERIA_PORT = int(os.environ.get("HYSTERIA_PORT", "443"))
 
 PL_STANDBY_HOST = os.environ.get("PL_STANDBY_HOST", "").strip()
 PL_REALITY_PUBLIC_KEY = os.environ.get("PL_REALITY_PUBLIC_KEY", "hgj4G9HOJ_6OVYTkeha0vVdEcyuLVzR4Op2BV7CeIW8").strip()
@@ -1277,6 +1277,7 @@ RU_DIRECT_DOMAINS = [
     "domain:yandex.net",
     "domain:yastatic.net",
     "domain:vk.com",
+    "domain:bedrive.ru",
     "domain:userapi.com",
     "domain:mycdn.me",
     "domain:2gis.com",
@@ -1467,13 +1468,22 @@ def build_raw_client_config(subscription_id: str, public_host: str) -> dict[str,
 
 DNS_PRESETS: dict[str, list[Any]] = {
     "default": [
+        {
+            "address": "localhost",
+            "domains": [
+                "domain:silentconnect.net",
+                "domain:max.ru",
+                "domain:kernel.org",
+            ],
+        },
         "1.1.1.1",
         "8.8.8.8",
-        "77.88.8.8"
+        "localhost",
     ],
     "google": [
         "8.8.8.8",
-        "8.8.4.4"
+        "8.8.4.4",
+        "localhost",
     ],
 }
 
@@ -3096,7 +3106,7 @@ def build_four_profiles(
                     }
                 },
                 "settings": {
-                    "address": os.environ.get("NL_SERVER_IP", "193.233.210.189"),
+                    "address": public_host,
                     "port": HYSTERIA_PORT,
                     "version": 2,
                     "auth": client_uuid,
@@ -3116,7 +3126,7 @@ def build_four_profiles(
         "stats": {}
     }
     if hyst_cfg["meta"]:
-        hyst_cfg["meta"]["serverDescription"] = "Скоростной · Hysteria 2 + UDP (NL)"
+        hyst_cfg["meta"]["serverDescription"] = "Скоростной · Hysteria 2 + UDP"
 
     # --- Profile 4: NL VLESS gRPC ---
     grpc_cfg = copy.deepcopy(sber_cfg)
