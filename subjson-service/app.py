@@ -2312,7 +2312,6 @@ def build_singbox_smart_config(
                     "tag": "dns-direct",
                     "type": "udp",
                     "server": "77.88.8.8",
-                    "detour": "direct",
                 },
             ],
             "rules": [
