@@ -202,9 +202,9 @@ FI_REALITY_SNI_FAST = os.environ.get("FI_REALITY_SNI_FAST", "community.hetzner.c
 FI_GRPC_REALITY_SNI = os.environ.get("FI_GRPC_REALITY_SNI", "docs.hetzner.com").strip()
 FI_XHTTP_REALITY_PUBLIC_KEY = os.environ.get("FI_XHTTP_REALITY_PUBLIC_KEY", "ASvvjJ4dOcHst5FWDJ9D562UQ0nN1pAw0l13Z58RNQA").strip()
 FI_XHTTP_REALITY_SHORT_ID = os.environ.get("FI_XHTTP_REALITY_SHORT_ID", "a1b2c3d4e5f60718").strip()
-FI_XHTTP_REALITY_SNI = os.environ.get("FI_XHTTP_REALITY_SNI", "kde.org").strip()
+FI_XHTTP_REALITY_SNI = os.environ.get("FI_XHTTP_REALITY_SNI", "sber.ru").strip()
 FI_XHTTP_REALITY_PORT = int(os.environ.get("FI_XHTTP_REALITY_PORT", "39443"))
-HYSTERIA_PORT = int(os.environ.get("HYSTERIA_PORT", "443"))
+HYSTERIA_PORT = int(os.environ.get("HYSTERIA_PORT", "38443"))
 
 PL_STANDBY_HOST = os.environ.get("PL_STANDBY_HOST", "").strip()
 PL_REALITY_PUBLIC_KEY = os.environ.get("PL_REALITY_PUBLIC_KEY", "hgj4G9HOJ_6OVYTkeha0vVdEcyuLVzR4Op2BV7CeIW8").strip()
@@ -3084,9 +3084,16 @@ def build_four_profiles(
             {
                 "protocol": "hysteria",
                 "tag": "proxy",
+                "obfs": {
+                    "type": "gecko",
+                    "password": HYSTERIA_SALAMANDER_PASSWORD,
+                    "min_packet_size": 512,
+                    "max_packet_size": 1000
+                },
                 "streamSettings": {
                     "finalmask": {
                         "udp": [
+                            {"settings": {"password": HYSTERIA_SALAMANDER_PASSWORD}, "type": "gecko"},
                             {"settings": {"password": HYSTERIA_SALAMANDER_PASSWORD}, "type": "salamander"}
                         ]
                     },
@@ -3095,6 +3102,10 @@ def build_four_profiles(
                         "auth_str": client_uuid,
                         "authStr": client_uuid,
                         "password": client_uuid,
+                        "obfs": {
+                            "type": "gecko",
+                            "password": HYSTERIA_SALAMANDER_PASSWORD
+                        },
                         "udpIdleTimeout": 60,
                         "version": 2
                     },
@@ -3110,7 +3121,11 @@ def build_four_profiles(
                     "port": HYSTERIA_PORT,
                     "version": 2,
                     "auth": client_uuid,
-                    "auth_str": client_uuid
+                    "auth_str": client_uuid,
+                    "obfs": {
+                        "type": "gecko",
+                        "password": HYSTERIA_SALAMANDER_PASSWORD
+                    }
                 }
             },
             {"protocol": "freedom", "tag": "direct"},
@@ -6086,6 +6101,29 @@ class RequestHandler(BaseHTTPRequestHandler):
 
             if len(path) == 3 and path[0] == SECRET_SEGMENT and path[1] == "internal-quiesce":
                 self._handle_internal_quiesce(path[2], True)
+                return
+
+            if len(path) == 2 and path[0] == "internal" and path[1] == "hysteria-auth":
+                client_ip = self.client_address[0]
+                if client_ip not in ("127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1"):
+                    self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"}, True)
+                    return
+                length = int(self.headers.get("Content-Length") or 0)
+                raw_bytes = self.rfile.read(min(length, 65_536))
+                try:
+                    req_data = json.loads(raw_bytes.decode("utf-8"))
+                except Exception:
+                    req_data = {}
+                auth_token = str(req_data.get("auth") or "").strip()
+                _ensure_inbounds_cache()
+                with _inbounds_cache_lock:
+                    matched = _cached_clients_index.get(auth_token)
+                if matched:
+                    row, settings, stream_settings, sniffing, client = matched
+                    if client.get("enable", True):
+                        self._send_json(HTTPStatus.OK, {"ok": True, "id": str(client.get("id") or auth_token)}, True)
+                        return
+                self._send_json(HTTPStatus.OK, {"ok": False, "error": "unauthorized"}, True)
                 return
 
             if is_quiesced() and (self.command == "POST" or "bot" in self.path):
