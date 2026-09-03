@@ -2154,6 +2154,14 @@ def build_singbox_smart_config(
     route_rules = [
         {"action": "sniff"},
         {"protocol": "dns", "action": "hijack-dns"},
+        {
+            "domain": [
+                "sub.silentconnect.net",
+                "edge.silentconnect.net",
+                "fi.silentconnect.net",
+            ],
+            "outbound": "direct",
+        },
         {"ip_is_private": True, "outbound": "direct"},
         {"protocol": "bittorrent", "outbound": "direct"},
     ]
@@ -2164,6 +2172,7 @@ def build_singbox_smart_config(
                     "ru", "su", "xn--p1ai", "gosuslugi.ru", "sberbank.ru",
                     "tinkoff.ru", "yandex.ru", "vk.com", "avito.ru", "ozon.ru",
                     "wildberries.ru", "railnation.ru", "railnation-game.ru",
+                    "silentconnect.net",
                 ],
                 "outbound": "direct",
             },
@@ -2316,8 +2325,16 @@ def build_singbox_smart_config(
             ],
             "rules": [
                 {
+                    "domain": [
+                        "sub.silentconnect.net",
+                        "edge.silentconnect.net",
+                        "fi.silentconnect.net",
+                    ],
+                    "server": "dns-direct",
+                },
+                {
                     "domain_suffix": [
-                        "ru", "su", "xn--p1ai", "yandex.ru", "vk.com", "gosuslugi.ru",
+                        "ru", "su", "xn--p1ai", "yandex.ru", "vk.com", "gosuslugi.ru", "silentconnect.net",
                     ],
                     "server": "dns-direct",
                 },
@@ -2338,6 +2355,7 @@ def build_singbox_smart_config(
         ],
         "outbounds": outbounds,
         "route": {
+            "default_domain_resolver": "dns-direct",
             "auto_detect_interface": True,
             "rules": route_rules,
             "final": "proxy-selector",
