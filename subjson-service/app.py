@@ -204,6 +204,7 @@ FI_XHTTP_REALITY_PUBLIC_KEY = os.environ.get("FI_XHTTP_REALITY_PUBLIC_KEY", "Moc
 FI_XHTTP_REALITY_SHORT_ID = os.environ.get("FI_XHTTP_REALITY_SHORT_ID", "fedcba9876543210").strip()
 FI_XHTTP_REALITY_SNI = os.environ.get("FI_XHTTP_REALITY_SNI", "kde.org").strip()
 FI_XHTTP_REALITY_PORT = int(os.environ.get("FI_XHTTP_REALITY_PORT", "39443"))
+HYSTERIA_PORT = int(os.environ.get("HYSTERIA_PORT", "33443"))
 
 PL_STANDBY_HOST = os.environ.get("PL_STANDBY_HOST", "").strip()
 PL_REALITY_PUBLIC_KEY = os.environ.get("PL_REALITY_PUBLIC_KEY", "hgj4G9HOJ_6OVYTkeha0vVdEcyuLVzR4Op2BV7CeIW8").strip()
@@ -3102,7 +3103,7 @@ def build_four_profiles(
                 },
                 "settings": {
                     "address": public_host,
-                    "port": 443,
+                    "port": HYSTERIA_PORT,
                     "version": 2,
                     "auth": client_uuid,
                     "auth_str": client_uuid
@@ -5888,7 +5889,7 @@ def build_sosproxy_client_config(subscription_id: str, public_host: str) -> list
           },
           "settings": {
             "address": public_host,
-            "port": 443,
+            "port": HYSTERIA_PORT,
             "version": 2
           }
         },
