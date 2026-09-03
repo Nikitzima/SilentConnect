@@ -3145,18 +3145,21 @@ def build_four_profiles(
     if grpc_cfg["meta"]:
         grpc_cfg["meta"]["serverDescription"] = "Запасной · VLESS-gRPC-Reality (NL)"
 
-    # --- Profile 5: NL VLESS XHTTP ---
+    # --- Profile 5: NL VLESS XHTTP Reality ---
     xhttp_cfg = copy.deepcopy(sber_cfg)
     xhttp_cfg["remarks"] = f"🇳🇱 🌊 Незаметный ({email})"
     xhttp_cfg["outbounds"][0]["settings"]["flow"] = ""
+    xhttp_cfg["outbounds"][0]["settings"]["port"] = int(os.environ.get("NL_XHTTP_REALITY_PORT", "39443"))
     xhttp_cfg["outbounds"][0]["streamSettings"]["network"] = "xhttp"
     xhttp_cfg["outbounds"][0]["streamSettings"].pop("tcpSettings", None)
-    xhttp_cfg["outbounds"][0]["streamSettings"].pop("realitySettings", None)
-    xhttp_cfg["outbounds"][0]["streamSettings"]["security"] = "tls"
-    xhttp_cfg["outbounds"][0]["streamSettings"]["tlsSettings"] = {
-        "serverName": nl_edge,
-        "alpn": ["h2", "http/1.1"],
-        "fingerprint": "edge"
+    xhttp_cfg["outbounds"][0]["streamSettings"]["security"] = "reality"
+    xhttp_cfg["outbounds"][0]["streamSettings"]["realitySettings"] = {
+        "show": False,
+        "fingerprint": "chrome",
+        "serverName": TCP_REALITY_SNI_CLASSIC,
+        "publicKey": TCP_REALITY_PUBLIC_KEY,
+        "shortId": TCP_REALITY_SHORT_ID,
+        "spiderX": "/",
     }
     xhttp_cfg["outbounds"][0]["streamSettings"]["xhttpSettings"] = {
         "path": "/xh-mx-d1f7c0429d6a",
@@ -3164,7 +3167,7 @@ def build_four_profiles(
     }
     xhttp_cfg["meta"] = build_happ_config_meta(subscription_id)
     if xhttp_cfg["meta"]:
-        xhttp_cfg["meta"]["serverDescription"] = "Незаметный · VLESS-XHTTP (NL)"
+        xhttp_cfg["meta"]["serverDescription"] = "Незаметный · VLESS-XHTTP-Reality (NL)"
 
     # --- Profile 6: FI Sber.ru (Classic) ---
     fi_sber = copy.deepcopy(sber_cfg)
