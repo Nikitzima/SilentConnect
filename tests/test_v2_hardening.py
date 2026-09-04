@@ -13,10 +13,14 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 os.environ.setdefault("SERVER_PEPPER", "unit-test-pepper-0123456789abcdefghijklmnop")
+os.environ.setdefault("HYSTERIA_SALAMANDER_PASSWORD", "test-salamander-pwd-123")
+os.environ.setdefault("HYSTERIA_AUTH_PASSWORD", "test-auth-pwd-123")
+os.environ.setdefault("SECRET_SEGMENT", "test-secret-sub")
 sys.path.insert(0, str(ROOT / "vpn-shop"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -282,7 +286,7 @@ class SecurityHelperTests(unittest.TestCase):
         row = store.get_order(order["public_id"])
         self.assertNotIn(token, str(row))
         self.assertIsNotNone(store.get_order_by_web_token(order["public_id"], token))
-        self.assertIsNone(store.get_order_by_web_token(order["public_id"], token[:-1] + "x"))
+        self.assertIsNone(store.get_order_by_web_token(order["public_id"], token + "_invalid"))
 
     def test_magic_link_single_use(self):
         store, _ = make_store()
