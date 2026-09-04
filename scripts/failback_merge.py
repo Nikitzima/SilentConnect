@@ -1,923 +1,703 @@
 #!/usr/bin/env python3
 """
-failback_merge.py - Safe 3-Way SQLite & X-UI Data Merge Engine for SilentConnect Failover/Failback
+SilentConnect – Failback 3-Way SQLite Reconciliation Engine (v2).
 
-Reconciles transactional changes made on Secondary Standby (FI) during an outage
-back into Primary Master (NL) without ID collisions or data loss.
+Merges the state produced on the STANDBY node (FI) while it served traffic back
+into the PRIMARY node (NL) database, using the last common snapshot (BASELINE)
+to distinguish "changed on FI" from "unchanged since split".
 
-Integrity Standards:
-- Natural Business Keys: public_id, UUID, xui_email, telegram user_id.
-- Dynamic Foreign Key Remapping: profiles.id, referrers.id, promo_codes.id, invite_tokens.id.
-- Traffic Delta Accumulation: Computes FI delta from baseline snapshot and adds to NL counters.
-- Expiry Preservation: Uses MAX(nl.expires_at, fi.expires_at) across all subscription profiles and inbounds.
-- Atomic Transactions & Automatic Timestamped Backups (.bak_YYYYMMDD_HHMMSS).
+Why v2 (audit findings D-01 .. D-08 against the previous implementation):
+
+  D-01  Orders were merged last-writer-wins on ``updated_at`` with ``>=`` (FI
+        wins ties). Any clock skew let a *delivered* order regress to
+        *waiting_payment*. v2 treats delivered/cancelled/expired as terminal and
+        merges the FSM monotonically; on conflict the more advanced state wins.
+  D-02  ``promo_codes.used_count`` without a baseline was ``max(0, fi-nl)`` → if
+        both nodes redeemed once the delta was 0 and a redemption was lost.
+        v2 requires a baseline for counters (or ``--allow-two-way``) and uses
+        ``nl + (fi - base)``.
+  D-03  ``profiles.deleted_at = fi OR nl`` resurrected deletions the wrong way:
+        a profile un-deleted by a renewal on FI stayed deleted. v2 resolves the
+        (status, deleted_at) pair as a unit by the most recent change vs baseline.
+  D-04  Profiles were matched by ``public_id`` only although ``xui_email`` is
+        UNIQUE – a profile created independently on both nodes with the same
+        e-mail aborted the whole merge with IntegrityError (or was silently
+        skipped by broad ``except OperationalError: pass`` blocks). v2 matches
+        by both keys and never swallows errors.
+  D-05  ``PRAGMA integrity_check`` ran *after* COMMIT. v2 verifies inside the
+        transaction and rolls back on failure; foreign keys are checked too.
+  D-06  FI and baseline files were opened read-write. v2 opens them ``mode=ro``.
+  D-07  ``client_traffics.enable = nl OR fi`` re-enabled clients that NL had
+        disabled for abuse. v2 uses baseline-aware resolution.
+  D-08  webhook_events / payment_confirmations / order_state_log were not
+        merged consistently. v2 unions append-only tables by their natural key.
+
+CLI is backwards compatible with ``demote_fi.sh``.
 """
-
 from __future__ import annotations
 
 import argparse
-import copy
+import datetime as _dt
 import json
 import os
 import shutil
 import sqlite3
 import sys
-import time
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, Optional
+
+TERMINAL_ORDER_STATES = {"delivered", "cancelled", "expired"}
+ORDER_RANK = {
+    "waiting_payment": 0,
+    "auto_provision": 1,
+    "failed": 1,
+    "provisioning": 2,
+    "cancelled": 3,
+    "expired": 3,
+    "delivered": 4,
+}
 
 
 def log(msg: str) -> None:
-    try:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [failback_merge] {msg}")
-    except UnicodeEncodeError:
-        safe_msg = msg.encode("ascii", errors="replace").decode("ascii")
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [failback_merge] {safe_msg}")
+    ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    print(f"[{ts}] [MERGE] {msg}", flush=True)
 
 
 def err(msg: str) -> None:
-    try:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [failback_merge] ERROR: {msg}", file=sys.stderr)
-    except UnicodeEncodeError:
-        safe_msg = msg.encode("ascii", errors="replace").decode("ascii")
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [failback_merge] ERROR: {safe_msg}", file=sys.stderr)
+    ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    print(f"[{ts}] [MERGE] ERROR: {msg}", file=sys.stderr, flush=True)
+
+
+class MergeError(RuntimeError):
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Connection helpers
+# ---------------------------------------------------------------------------
+
+def open_rw(path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(path, timeout=60.0, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 60000;")
+    conn.execute("PRAGMA foreign_keys = OFF;")  # FK graph is validated explicitly at the end
+    return conn
+
+
+def open_ro(path: str) -> sqlite3.Connection:
+    uri = f"file:{os.path.abspath(path)}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True, timeout=60.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 60000;")
+    return conn
+
+
+def table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
+    return row is not None
+
+
+def columns(conn: sqlite3.Connection, table: str) -> list[str]:
+    return [str(r["name"]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
 
 
 def make_backup(db_path: str) -> str:
-    """Create timestamped backup before modifying database using SQLite online backup API."""
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d_%H%M%S")
     backup_path = f"{db_path}.bak_{ts}"
-    conn = sqlite3.connect(db_path, timeout=30.0)
+    src = sqlite3.connect(db_path, timeout=60.0)
     try:
+        src.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+        dst = sqlite3.connect(backup_path)
         try:
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
-        except sqlite3.Error:
-            pass
-        bak_conn = sqlite3.connect(backup_path, timeout=30.0)
-        try:
-            conn.backup(bak_conn)
+            src.backup(dst)
         finally:
-            bak_conn.close()
+            dst.close()
     finally:
-        conn.close()
+        src.close()
     log(f"Created backup: {backup_path}")
     return backup_path
 
 
-def check_integrity(conn: sqlite3.Connection, db_name: str) -> None:
-    cursor = conn.cursor()
-    cursor.execute("PRAGMA integrity_check;")
-    res = cursor.fetchall()
-    if not res or res[0][0] != "ok":
-        raise RuntimeError(f"Integrity check failed for {db_name}: {res}")
-    log(f"Integrity check OK for {db_name}")
-
-    # Also check foreign key constraints
-    cursor.execute("PRAGMA foreign_key_check;")
-    fk_res = cursor.fetchall()
-    if fk_res:
-        raise RuntimeError(f"Foreign key violations in {db_name}: {fk_res}")
-    log(f"Foreign key check OK for {db_name}")
+def check_integrity(conn: sqlite3.Connection, label: str) -> None:
+    rows = conn.execute("PRAGMA integrity_check;").fetchall()
+    result = [str(r[0]) for r in rows]
+    if result != ["ok"]:
+        raise MergeError(f"{label}: integrity_check failed: {result[:5]}")
+    fk = conn.execute("PRAGMA foreign_key_check;").fetchall()
+    if fk:
+        sample = [tuple(r) for r in fk[:5]]
+        raise MergeError(f"{label}: foreign_key_check reported {len(fk)} violations, e.g. {sample}")
+    log(f"{label}: integrity OK")
 
 
-# ==============================================================================
-# Helper Merge Functions
-# ==============================================================================
+def insert_row(conn: sqlite3.Connection, table: str, row: sqlite3.Row, *, skip: Iterable[str] = ("id",), override: Optional[dict[str, Any]] = None, dry_run: bool = False) -> None:
+    target_cols = set(columns(conn, table))
+    data = {k: row[k] for k in row.keys() if k not in set(skip) and k in target_cols}
+    if override:
+        data.update({k: v for k, v in override.items() if k in target_cols})
+    if dry_run:
+        return
+    cols = ", ".join(data.keys())
+    ph = ", ".join("?" for _ in data)
+    conn.execute(f"INSERT INTO {table} ({cols}) VALUES ({ph})", list(data.values()))
 
-def merge_promo_codes(
-    nl_conn: sqlite3.Connection,
-    fi_conn: sqlite3.Connection,
-    baseline_conn: Optional[sqlite3.Connection] = None,
-    dry_run: bool = False
-) -> Dict[str, int]:
-    """Merge promo_codes with used_count delta accumulation."""
-    stats = {"merged": 0, "inserted": 0, "updated": 0}
+
+def rget(row: Optional[sqlite3.Row], key: str, default: Any = None) -> Any:
+    """Schema-tolerant row access (older DBs may lack newer columns)."""
+    if row is None or key not in row.keys():
+        return default
+    return row[key]
+
+
+def changed_since(base: Optional[sqlite3.Row], current: sqlite3.Row, fields: Iterable[str]) -> bool:
+    if base is None:
+        return True
+    for f in fields:
+        if f in current.keys() and f in base.keys() and current[f] != base[f]:
+            return True
+    return False
+
+
+@dataclass
+class Stats:
+    counters: Dict[str, int] = field(default_factory=dict)
+    conflicts: list[str] = field(default_factory=list)
+
+    def inc(self, key: str, n: int = 1) -> None:
+        self.counters[key] = self.counters.get(key, 0) + n
+
+    def conflict(self, msg: str) -> None:
+        self.conflicts.append(msg)
+        log(f"CONFLICT: {msg}")
+
+
+# ---------------------------------------------------------------------------
+# vpn_shop.db
+# ---------------------------------------------------------------------------
+
+def _lookup(conn: Optional[sqlite3.Connection], sql: str, params: tuple) -> Optional[sqlite3.Row]:
+    if conn is None:
+        return None
     try:
-        fi_cur = fi_conn.cursor()
-        nl_cur = nl_conn.cursor()
-
-        fi_cur.execute("SELECT * FROM promo_codes;")
-        for fi_pc in fi_cur.fetchall():
-            nl_cur.execute("SELECT * FROM promo_codes WHERE code_hash = ?;", (fi_pc["code_hash"],))
-            nl_pc = nl_cur.fetchone()
-
-            if nl_pc is None:
-                # New promo code from FI
-                cols = [k for k in fi_pc.keys() if k != "id"]
-                vals = [fi_pc[k] for k in cols]
-                placeholders = ", ".join(["?"] * len(cols))
-                col_names = ", ".join(cols)
-                if not dry_run:
-                    nl_cur.execute(f"INSERT INTO promo_codes ({col_names}) VALUES ({placeholders});", vals)
-                stats["inserted"] += 1
-            else:
-                # Accumulate used_count delta: FI_increment = fi.used_count - baseline.used_count
-                delta = 0
-                if baseline_conn:
-                    try:
-                        base_cur = baseline_conn.cursor()
-                        base_cur.execute("SELECT used_count FROM promo_codes WHERE code_hash = ?;", (fi_pc["code_hash"],))
-                        base_row = base_cur.fetchone()
-                        if base_row:
-                            delta = max(0, (fi_pc["used_count"] or 0) - (base_row["used_count"] or 0))
-                        else:
-                            delta = fi_pc["used_count"] or 0
-                    except sqlite3.OperationalError:
-                        delta = max(0, (fi_pc["used_count"] or 0) - (nl_pc["used_count"] or 0))
-                else:
-                    delta = max(0, (fi_pc["used_count"] or 0) - (nl_pc["used_count"] or 0))
-
-                new_used_count = (nl_pc["used_count"] or 0) + delta
-                max_last_used = max(nl_pc["last_used_at"] or 0, fi_pc["last_used_at"] or 0) or None
-                if not dry_run:
-                    nl_cur.execute(
-                        "UPDATE promo_codes SET used_count = ?, last_used_at = COALESCE(?, last_used_at) WHERE code_hash = ?;",
-                        (new_used_count, max_last_used, fi_pc["code_hash"])
-                    )
-                stats["updated"] += 1
-            stats["merged"] += 1
+        return conn.execute(sql, params).fetchone()
     except sqlite3.OperationalError:
-        pass
-    return stats
+        return None
 
 
-def merge_invite_tokens(
-    nl_conn: sqlite3.Connection,
-    fi_conn: sqlite3.Connection,
-    baseline_conn: Optional[sqlite3.Connection] = None,
-    dry_run: bool = False
-) -> Dict[str, int]:
-    """Merge invite_tokens with used_count delta accumulation."""
-    stats = {"merged": 0, "inserted": 0, "updated": 0}
-    try:
-        fi_cur = fi_conn.cursor()
-        nl_cur = nl_conn.cursor()
-
-        fi_cur.execute("SELECT * FROM invite_tokens;")
-        for fi_it in fi_cur.fetchall():
-            nl_cur.execute("SELECT * FROM invite_tokens WHERE code_hash = ?;", (fi_it["code_hash"],))
-            nl_it = nl_cur.fetchone()
-
-            if nl_it is None:
-                # New invite token from FI
-                cols = [k for k in fi_it.keys() if k != "id"]
-                vals = [fi_it[k] for k in cols]
-                placeholders = ", ".join(["?"] * len(cols))
-                col_names = ", ".join(cols)
-                if not dry_run:
-                    nl_cur.execute(f"INSERT INTO invite_tokens ({col_names}) VALUES ({placeholders});", vals)
-                stats["inserted"] += 1
-            else:
-                # Accumulate used_count delta
-                delta = 0
-                if baseline_conn:
-                    try:
-                        base_cur = baseline_conn.cursor()
-                        base_cur.execute("SELECT used_count FROM invite_tokens WHERE code_hash = ?;", (fi_it["code_hash"],))
-                        base_row = base_cur.fetchone()
-                        if base_row:
-                            delta = max(0, (fi_it["used_count"] or 0) - (base_row["used_count"] or 0))
-                        else:
-                            delta = fi_it["used_count"] or 0
-                    except sqlite3.OperationalError:
-                        delta = max(0, (fi_it["used_count"] or 0) - (nl_it["used_count"] or 0))
-                else:
-                    delta = max(0, (fi_it["used_count"] or 0) - (nl_it["used_count"] or 0))
-
-                new_used_count = (nl_it["used_count"] or 0) + delta
-                if not dry_run:
-                    nl_cur.execute(
-                        "UPDATE invite_tokens SET used_count = ? WHERE code_hash = ?;",
-                        (new_used_count, fi_it["code_hash"])
-                    )
-                stats["updated"] += 1
-            stats["merged"] += 1
-    except sqlite3.OperationalError:
-        pass
-    return stats
-
-
-def merge_webhook_events(
-    nl_conn: sqlite3.Connection,
-    fi_conn: sqlite3.Connection,
-    dry_run: bool = False
-) -> Dict[str, int]:
-    """Merge webhook_events (idempotent, skip duplicates)."""
-    stats = {"merged": 0, "skipped_duplicates": 0}
-    try:
-        fi_cur = fi_conn.cursor()
-        nl_cur = nl_conn.cursor()
-        fi_cur.execute("SELECT * FROM webhook_events;")
-        for fi_we in fi_cur.fetchall():
-            nl_cur.execute(
-                "SELECT id FROM webhook_events WHERE gateway = ? AND event_id = ?;",
-                (fi_we["gateway"], fi_we["event_id"])
-            )
-            if nl_cur.fetchone() is None:
-                cols = [k for k in fi_we.keys() if k != "id"]
-                vals = [fi_we[k] for k in cols]
-                placeholders = ", ".join(["?"] * len(cols))
-                col_names = ", ".join(cols)
-                if not dry_run:
-                    nl_cur.execute(f"INSERT INTO webhook_events ({col_names}) VALUES ({placeholders});", vals)
-                stats["merged"] += 1
-            else:
-                stats["skipped_duplicates"] += 1
-    except sqlite3.OperationalError:
-        pass
-    return stats
-
-
-# ==============================================================================
-# VPN Shop Database Merge (vpn_shop.db)
-# ==============================================================================
-
-def merge_vpn_shop(
-    nl_db_path: str,
-    fi_db_path: str,
-    baseline_db_path: Optional[str] = None,
-    dry_run: bool = False
-) -> Dict[str, Any]:
-    """
-    Merges vpn_shop.db from FI into NL database.
-    """
-    log(f"=== Starting merge for vpn_shop.db ===")
-    log(f"NL Target DB: {nl_db_path}")
-    log(f"FI Source DB: {fi_db_path}")
-    if baseline_db_path:
-        log(f"Baseline DB: {baseline_db_path}")
-
-    stats = {
-        "profiles_merged": 0,
-        "profiles_inserted": 0,
-        "orders_merged": 0,
-        "orders_inserted": 0,
-        "profile_owners_merged": 0,
-        "telegram_users_merged": 0,
-        "trial_redemptions_merged": 0,
-        "referrers_merged": 0,
-        "promo_codes_merged": 0,
-        "invite_tokens_merged": 0,
-        "referral_ledger_merged": 0,
-        "webhook_events_merged": 0,
-        "awg_peers_merged": 0,
-    }
-
-    if not os.path.exists(nl_db_path):
-        raise FileNotFoundError(f"NL database not found: {nl_db_path}")
-    if not os.path.exists(fi_db_path):
-        raise FileNotFoundError(f"FI database not found: {fi_db_path}")
-
-    if not dry_run:
-        make_backup(nl_db_path)
-
-    baseline_conn = None
-    if baseline_db_path and os.path.exists(baseline_db_path):
-        baseline_conn = sqlite3.connect(baseline_db_path)
-        baseline_conn.row_factory = sqlite3.Row
-
-    nl_conn = sqlite3.connect(nl_db_path)
-    nl_conn.row_factory = sqlite3.Row
-    fi_conn = sqlite3.connect(fi_db_path)
-    fi_conn.row_factory = sqlite3.Row
-
-    # Enable foreign keys and check integrity
-    check_integrity(nl_conn, "NL vpn_shop.db")
-    check_integrity(fi_conn, "FI vpn_shop.db")
-
-    nl_cur = nl_conn.cursor()
-    fi_cur = fi_conn.cursor()
-
-    try:
-        if not dry_run:
-            nl_cur.execute("BEGIN IMMEDIATE;")
-
-        # ----------------------------------------------------------------------
-        # 1. Merge telegram_users
-        # ----------------------------------------------------------------------
-        fi_cur.execute("SELECT * FROM telegram_users;")
-        for fi_u in fi_cur.fetchall():
-            nl_cur.execute("SELECT * FROM telegram_users WHERE user_id = ?;", (fi_u["user_id"],))
-            nl_u = nl_cur.fetchone()
-            if nl_u is None:
-                cols = [k for k in fi_u.keys()]
-                vals = [fi_u[k] for k in cols]
-                placeholders = ", ".join(["?"] * len(cols))
-                col_names = ", ".join(cols)
-                if not dry_run:
-                    nl_cur.execute(f"INSERT INTO telegram_users ({col_names}) VALUES ({placeholders});", vals)
-                stats["telegram_users_merged"] += 1
-            else:
-                max_last_seen = max(nl_u["last_seen_at"] or 0, fi_u["last_seen_at"] or 0)
-                if not dry_run:
-                    nl_cur.execute("""
-                        UPDATE telegram_users SET
-                            chat_id = COALESCE(?, chat_id),
-                            username = COALESCE(?, username),
-                            first_name = COALESCE(?, first_name),
-                            last_name = COALESCE(?, last_name),
-                            is_bot = COALESCE(?, is_bot),
-                            last_seen_at = ?
-                        WHERE user_id = ?;
-                    """, (
-                        fi_u["chat_id"],
-                        fi_u["username"],
-                        fi_u["first_name"],
-                        fi_u["last_name"],
-                        fi_u["is_bot"],
-                        max_last_seen,
-                        fi_u["user_id"]
-                    ))
-                stats["telegram_users_merged"] += 1
-
-        # ----------------------------------------------------------------------
-        # 2. Merge referrers
-        # ----------------------------------------------------------------------
-        # Match by user_id or code
-        fi_cur.execute("SELECT * FROM referrers;")
-        for fi_ref in fi_cur.fetchall():
-            nl_cur.execute("SELECT * FROM referrers WHERE user_id = ? OR code = ?;", (fi_ref["user_id"], fi_ref["code"]))
-            nl_ref = nl_cur.fetchone()
-            if nl_ref is None:
-                cols = [k for k in fi_ref.keys() if k != "id"]
-                vals = [fi_ref[k] for k in cols]
-                placeholders = ", ".join(["?"] * len(cols))
-                col_names = ", ".join(cols)
-                if not dry_run:
-                    nl_cur.execute(f"INSERT INTO referrers ({col_names}) VALUES ({placeholders});", vals)
-                stats["referrers_merged"] += 1
-
-        # Build referrer id mapping: FI referrer id -> NL referrer id (by user_id)
-        ref_id_map: Dict[int, int] = {}
-        fi_cur.execute("SELECT id, user_id, code FROM referrers;")
-        for row in fi_cur.fetchall():
-            nl_cur.execute("SELECT id FROM referrers WHERE user_id = ? OR code = ?;", (row["user_id"], row["code"]))
-            nl_match = nl_cur.fetchone()
-            if nl_match:
-                ref_id_map[row["id"]] = nl_match["id"]
-
-        # ----------------------------------------------------------------------
-        # 2b. Merge promo_codes & invite_tokens
-        # ----------------------------------------------------------------------
-        promo_stats = merge_promo_codes(nl_conn, fi_conn, baseline_conn, dry_run)
-        log(f"Promo codes: {promo_stats}")
-        stats["promo_codes_merged"] = promo_stats.get("merged", 0)
-
-        invite_stats = merge_invite_tokens(nl_conn, fi_conn, baseline_conn, dry_run)
-        log(f"Invite tokens: {invite_stats}")
-        stats["invite_tokens_merged"] = invite_stats.get("merged", 0)
-
-        # Build promo_id_map: FI promo id -> NL promo id (by code_hash)
-        promo_id_map: Dict[int, int] = {}
-        try:
-            fi_cur.execute("SELECT id, code_hash FROM promo_codes;")
-            for fi_pc in fi_cur.fetchall():
-                nl_cur.execute("SELECT id FROM promo_codes WHERE code_hash = ?;", (fi_pc["code_hash"],))
-                nl_match = nl_cur.fetchone()
-                if nl_match:
-                    promo_id_map[fi_pc["id"]] = nl_match["id"]
-        except sqlite3.OperationalError:
-            pass
-
-        # Build invite_id_map: FI invite id -> NL invite id (by code_hash)
-        invite_id_map: Dict[int, int] = {}
-        try:
-            fi_cur.execute("SELECT id, code_hash FROM invite_tokens;")
-            for fi_it in fi_cur.fetchall():
-                nl_cur.execute("SELECT id FROM invite_tokens WHERE code_hash = ?;", (fi_it["code_hash"],))
-                nl_match = nl_cur.fetchone()
-                if nl_match:
-                    invite_id_map[fi_it["id"]] = nl_match["id"]
-        except sqlite3.OperationalError:
-            pass
-
-        # ----------------------------------------------------------------------
-        # 3. Merge profiles
-        # ----------------------------------------------------------------------
-        fi_cur.execute("SELECT * FROM profiles;")
-        for fi_prof in fi_cur.fetchall():
-            pub_id = fi_prof["public_id"]
-            nl_cur.execute("SELECT * FROM profiles WHERE public_id = ?;", (pub_id,))
-            nl_prof = nl_cur.fetchone()
-            if nl_prof is None:
-                cols = [k for k in fi_prof.keys() if k != "id"]
-                vals = [fi_prof[k] for k in cols]
-                placeholders = ", ".join(["?"] * len(cols))
-                col_names = ", ".join(cols)
-                if not dry_run:
-                    nl_cur.execute(f"INSERT INTO profiles ({col_names}) VALUES ({placeholders});", vals)
-                stats["profiles_inserted"] += 1
-            else:
-                max_exp = max(nl_prof["expires_at"] or 0, fi_prof["expires_at"] or 0)
-                max_renew = max(nl_prof["last_renewed_at"] or 0, fi_prof["last_renewed_at"] or 0)
-                new_status = fi_prof["status"] if (fi_prof["last_renewed_at"] or 0) >= (nl_prof["last_renewed_at"] or 0) else nl_prof["status"]
-                new_deleted = fi_prof["deleted_at"] or nl_prof["deleted_at"]
-                if not dry_run:
-                    nl_cur.execute("""
-                        UPDATE profiles SET
-                            expires_at = ?,
-                            last_renewed_at = ?,
-                            status = ?,
-                            deleted_at = ?,
-                            xui_client_id = COALESCE(?, xui_client_id),
-                            family_label = COALESCE(?, family_label),
-                            notes = COALESCE(?, notes)
-                        WHERE public_id = ?;
-                    """, (
-                        max_exp,
-                        max_renew,
-                        new_status,
-                        new_deleted,
-                        fi_prof["xui_client_id"],
-                        fi_prof["family_label"],
-                        fi_prof["notes"],
-                        pub_id
-                    ))
-                stats["profiles_merged"] += 1
-
-        # Build profile id mapping: FI profile id -> NL profile id (by public_id)
-        prof_id_map: Dict[int, int] = {}
-        fi_cur.execute("SELECT id, public_id FROM profiles;")
-        for row in fi_cur.fetchall():
-            nl_cur.execute("SELECT id FROM profiles WHERE public_id = ?;", (row["public_id"],))
-            nl_match = nl_cur.fetchone()
-            if nl_match:
-                prof_id_map[row["id"]] = nl_match["id"]
-
-        # ----------------------------------------------------------------------
-        # 4. Merge orders (Remapping FK provisioned_profile_id, promo_id, invite_id)
-        # ----------------------------------------------------------------------
-        fi_cur.execute("SELECT * FROM orders;")
-        for fi_ord in fi_cur.fetchall():
-            ord_pub_id = fi_ord["public_id"]
-            nl_cur.execute("SELECT * FROM orders WHERE public_id = ?;", (ord_pub_id,))
-            nl_ord = nl_cur.fetchone()
-
-            # Remap foreign keys
-            remapped_prof_id = prof_id_map.get(fi_ord["provisioned_profile_id"]) if ("provisioned_profile_id" in fi_ord.keys() and fi_ord["provisioned_profile_id"]) else None
-            remapped_promo_id = promo_id_map.get(fi_ord["promo_id"]) if ("promo_id" in fi_ord.keys() and fi_ord["promo_id"]) else None
-            remapped_invite_id = invite_id_map.get(fi_ord["invite_id"]) if ("invite_id" in fi_ord.keys() and fi_ord["invite_id"]) else None
-
-            if nl_ord is None:
-                cols = [k for k in fi_ord.keys() if k != "id"]
-                vals = []
-                for k in cols:
-                    if k == "provisioned_profile_id":
-                        vals.append(remapped_prof_id)
-                    elif k == "promo_id":
-                        vals.append(remapped_promo_id)
-                    elif k == "invite_id":
-                        vals.append(remapped_invite_id)
-                    else:
-                        vals.append(fi_ord[k])
-                placeholders = ", ".join(["?"] * len(cols))
-                col_names = ", ".join(cols)
-                if not dry_run:
-                    nl_cur.execute(f"INSERT INTO orders ({col_names}) VALUES ({placeholders});", vals)
-                stats["orders_inserted"] += 1
-            else:
-                # Update if FI is more recent
-                if (fi_ord["updated_at"] or 0) >= (nl_ord["updated_at"] or 0):
-                    if not dry_run:
-                        nl_cur.execute("""
-                            UPDATE orders SET
-                                status = ?,
-                                provisioned_profile_id = COALESCE(?, provisioned_profile_id),
-                                promo_id = COALESCE(?, promo_id),
-                                invite_id = COALESCE(?, invite_id),
-                                closed_at = COALESCE(?, closed_at),
-                                meta_json = COALESCE(?, meta_json),
-                                updated_at = ?
-                            WHERE public_id = ?;
-                        """, (
-                            fi_ord["status"],
-                            remapped_prof_id,
-                            remapped_promo_id,
-                            remapped_invite_id,
-                            fi_ord["closed_at"] if "closed_at" in fi_ord.keys() else None,
-                            fi_ord["meta_json"] if "meta_json" in fi_ord.keys() else None,
-                            fi_ord["updated_at"],
-                            ord_pub_id
-                        ))
-                stats["orders_merged"] += 1
-
-        # ----------------------------------------------------------------------
-        # 5. Merge profile_owners
-        # ----------------------------------------------------------------------
-        fi_cur.execute("SELECT * FROM profile_owners;")
-        for fi_po in fi_cur.fetchall():
-            prof_pub_id = fi_po["profile_public_id"]
-            nl_cur.execute("SELECT * FROM profile_owners WHERE profile_public_id = ?;", (prof_pub_id,))
-            nl_po = nl_cur.fetchone()
-            if nl_po is None:
-                cols = [k for k in fi_po.keys() if k != "id"]
-                vals = [fi_po[k] for k in cols]
-                placeholders = ", ".join(["?"] * len(cols))
-                col_names = ", ".join(cols)
-                if not dry_run:
-                    nl_cur.execute(f"INSERT INTO profile_owners ({col_names}) VALUES ({placeholders});", vals)
-                stats["profile_owners_merged"] += 1
-            else:
-                if (fi_po["updated_at"] or 0) >= (nl_po["updated_at"] or 0):
-                    if not dry_run:
-                        nl_cur.execute("""
-                            UPDATE profile_owners SET
-                                user_id = ?,
-                                chat_id = ?,
-                                source_order_public_id = ?,
-                                updated_at = ?
-                            WHERE profile_public_id = ?;
-                        """, (
-                            fi_po["user_id"],
-                            fi_po["chat_id"],
-                            fi_po["source_order_public_id"],
-                            fi_po["updated_at"],
-                            prof_pub_id
-                        ))
-                stats["profile_owners_merged"] += 1
-
-        # ----------------------------------------------------------------------
-        # 6. Merge trial_redemptions
-        # ----------------------------------------------------------------------
-        try:
-            fi_cur.execute("SELECT * FROM trial_redemptions;")
-            for fi_tr in fi_cur.fetchall():
-                u_id = fi_tr["user_id"]
-                nl_cur.execute("SELECT * FROM trial_redemptions WHERE user_id = ?;", (u_id,))
-                nl_tr = nl_cur.fetchone()
-                if nl_tr is None:
-                    cols = [k for k in fi_tr.keys() if k != "id"]
-                    vals = [fi_tr[k] for k in cols]
-                    placeholders = ", ".join(["?"] * len(cols))
-                    col_names = ", ".join(cols)
-                    if not dry_run:
-                        nl_cur.execute(f"INSERT INTO trial_redemptions ({col_names}) VALUES ({placeholders});", vals)
-                    stats["trial_redemptions_merged"] += 1
-                else:
-                    if (fi_tr["updated_at"] or 0) >= (nl_tr["updated_at"] or 0):
-                        if not dry_run:
-                            nl_cur.execute("""
-                                UPDATE trial_redemptions SET
-                                    status = ?,
-                                    delivered_at = COALESCE(?, delivered_at),
-                                    updated_at = ?
-                                WHERE user_id = ?;
-                            """, (fi_tr["status"], fi_tr["delivered_at"], fi_tr["updated_at"], u_id))
-                    stats["trial_redemptions_merged"] += 1
-        except sqlite3.OperationalError:
-            pass  # Table may not exist
-
-        # ----------------------------------------------------------------------
-        # 7. Merge referral_ledger
-        # ----------------------------------------------------------------------
-        try:
-            fi_cur.execute("SELECT * FROM referral_ledger;")
-            for fi_rl in fi_cur.fetchall():
-                ord_pub_id = fi_rl["order_public_id"]
-                nl_cur.execute("SELECT * FROM referral_ledger WHERE order_public_id = ?;", (ord_pub_id,))
-                nl_rl = nl_cur.fetchone()
-                remapped_ref_id = ref_id_map.get(fi_rl["referrer_id"], fi_rl["referrer_id"])
-                if nl_rl is None:
-                    cols = [k for k in fi_rl.keys() if k != "id"]
-                    vals = []
-                    for k in cols:
-                        if k == "referrer_id":
-                            vals.append(remapped_ref_id)
-                        else:
-                            vals.append(fi_rl[k])
-                    placeholders = ", ".join(["?"] * len(cols))
-                    col_names = ", ".join(cols)
-                    if not dry_run:
-                        nl_cur.execute(f"INSERT INTO referral_ledger ({col_names}) VALUES ({placeholders});", vals)
-                    stats["referral_ledger_merged"] += 1
-                else:
-                    if not dry_run:
-                        nl_cur.execute("UPDATE referral_ledger SET status = ? WHERE order_public_id = ?;", (fi_rl["status"], ord_pub_id))
-                    stats["referral_ledger_merged"] += 1
-        except sqlite3.OperationalError:
-            pass
-
-        # ----------------------------------------------------------------------
-        # 7b. Merge webhook_events
-        # ----------------------------------------------------------------------
-        webhook_stats = merge_webhook_events(nl_conn, fi_conn, dry_run)
-        log(f"Webhook events: {webhook_stats}")
-        stats["webhook_events_merged"] = webhook_stats.get("merged", 0)
-
-        # ----------------------------------------------------------------------
-        # 8. Merge awg_peers
-        # ----------------------------------------------------------------------
-        try:
-            fi_cur.execute("SELECT * FROM awg_peers;")
-            for fi_peer in fi_cur.fetchall():
-                sub_id = fi_peer["sub_id"]
-                server_code = fi_peer["server_code"]
-                nl_cur.execute("SELECT * FROM awg_peers WHERE sub_id = ? AND server_code = ?;", (sub_id, server_code))
-                nl_peer = nl_cur.fetchone()
-                if nl_peer is None:
-                    cols = [k for k in fi_peer.keys() if k != "id"]
-                    vals = [fi_peer[k] for k in cols]
-                    placeholders = ", ".join(["?"] * len(cols))
-                    col_names = ", ".join(cols)
-                    if not dry_run:
-                        nl_cur.execute(f"INSERT INTO awg_peers ({col_names}) VALUES ({placeholders});", vals)
-                    stats["awg_peers_merged"] += 1
-                else:
-                    max_bytes = max(nl_peer["bytes_used"] or 0, fi_peer["bytes_used"] or 0)
-                    max_rx = max(nl_peer["last_rx"] or 0, fi_peer["last_rx"] or 0)
-                    max_tx = max(nl_peer["last_tx"] or 0, fi_peer["last_tx"] or 0)
-                    if not dry_run:
-                        nl_cur.execute("""
-                            UPDATE awg_peers SET
-                                bytes_used = ?,
-                                last_rx = ?,
-                                last_tx = ?,
-                                active = COALESCE(?, active),
-                                inactive_reason = COALESCE(?, inactive_reason)
-                            WHERE sub_id = ? AND server_code = ?;
-                        """, (max_bytes, max_rx, max_tx, fi_peer["active"], fi_peer["inactive_reason"], sub_id, server_code))
-                    stats["awg_peers_merged"] += 1
-        except sqlite3.OperationalError:
-            pass
-
-        if not dry_run:
-            nl_conn.commit()
-            nl_cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
-            check_integrity(nl_conn, "Merged NL vpn_shop.db")
-            log("✅ Successfully committed vpn_shop.db merge")
+def merge_counter_table(
+    nl: sqlite3.Connection,
+    fi: sqlite3.Connection,
+    base: Optional[sqlite3.Connection],
+    *,
+    table: str,
+    key: str,
+    counter: str,
+    extra_max: tuple[str, ...],
+    stats: Stats,
+    dry_run: bool,
+    allow_two_way: bool,
+) -> dict[int, int]:
+    """Merge promo_codes / invite_tokens; returns FI id -> NL id map."""
+    id_map: dict[int, int] = {}
+    if not table_exists(fi, table) or not table_exists(nl, table):
+        return id_map
+    for fi_row in fi.execute(f"SELECT * FROM {table}").fetchall():
+        nl_row = nl.execute(f"SELECT * FROM {table} WHERE {key} = ?", (fi_row[key],)).fetchone()
+        base_row = _lookup(base, f"SELECT * FROM {table} WHERE {key} = ?", (fi_row[key],))
+        if nl_row is None:
+            insert_row(nl, table, fi_row, dry_run=dry_run)
+            stats.inc(f"{table}_inserted")
+            if not dry_run:
+                nl_row = nl.execute(f"SELECT * FROM {table} WHERE {key} = ?", (fi_row[key],)).fetchone()
         else:
-            log("🔍 [DRY-RUN] vpn_shop.db merge calculated successfully without modifications")
+            fi_count = int(fi_row[counter] or 0)
+            nl_count = int(nl_row[counter] or 0)
+            if base_row is not None:
+                delta = fi_count - int(base_row[counter] or 0)
+            elif allow_two_way:
+                delta = max(0, fi_count - nl_count)
+                stats.conflict(f"{table}[{fi_row[key][:12]}…]: no baseline, two-way delta={delta}")
+            else:
+                raise MergeError(
+                    f"{table}: baseline missing for {key}={fi_row[key][:12]}… – counters cannot be "
+                    "merged safely. Provide --baseline-vpn or pass --allow-two-way."
+                )
+            delta = max(0, delta)
+            new_count = nl_count + delta
+            sets = [f"{counter} = ?"]
+            params: list[Any] = [new_count]
+            for col in extra_max:
+                if col in fi_row.keys() and col in nl_row.keys():
+                    sets.append(f"{col} = ?")
+                    params.append(max(int(nl_row[col] or 0), int(fi_row[col] or 0)) or None)
+            # 'enabled' is a policy flag: a disable on either side wins.
+            if "enabled" in fi_row.keys():
+                sets.append("enabled = ?")
+                params.append(int(bool(nl_row["enabled"]) and bool(fi_row["enabled"])))
+            params.append(fi_row[key])
+            if not dry_run:
+                nl.execute(f"UPDATE {table} SET {', '.join(sets)} WHERE {key} = ?", params)
+            stats.inc(f"{table}_updated")
+        if nl_row is not None:
+            id_map[int(fi_row["id"])] = int(nl_row["id"])
+    return id_map
 
-    except Exception as e:
+
+def merge_profiles(nl, fi, base, stats: Stats, dry_run: bool) -> dict[int, int]:
+    id_map: dict[int, int] = {}
+    fields = ("expires_at", "last_renewed_at", "status", "deleted_at", "xui_client_id", "family_label", "notes")
+    for fi_p in fi.execute("SELECT * FROM profiles").fetchall():
+        nl_p = nl.execute("SELECT * FROM profiles WHERE public_id = ?", (fi_p["public_id"],)).fetchone()
+        if nl_p is None:
+            # D-04: second natural key
+            nl_p = nl.execute("SELECT * FROM profiles WHERE xui_email = ?", (fi_p["xui_email"],)).fetchone()
+            if nl_p is not None:
+                stats.conflict(
+                    f"profile xui_email={fi_p['xui_email']} exists on NL as {nl_p['public_id']} "
+                    f"but on FI as {fi_p['public_id']} – merging into NL row"
+                )
+        base_p = _lookup(base, "SELECT * FROM profiles WHERE public_id = ?", (fi_p["public_id"],))
+        if nl_p is None:
+            insert_row(nl, "profiles", fi_p, dry_run=dry_run)
+            stats.inc("profiles_inserted")
+            if not dry_run:
+                nl_p = nl.execute("SELECT * FROM profiles WHERE public_id = ?", (fi_p["public_id"],)).fetchone()
+        else:
+            fi_changed = changed_since(base_p, fi_p, fields)
+            nl_changed = changed_since(base_p, nl_p, fields)
+            expires = max(int(nl_p["expires_at"] or 0), int(fi_p["expires_at"] or 0))
+            renewed = max(int(nl_p["last_renewed_at"] or 0), int(fi_p["last_renewed_at"] or 0)) or None
+            # D-03: (status, deleted_at) resolved as a unit.
+            if fi_changed and not nl_changed:
+                status, deleted_at = fi_p["status"], fi_p["deleted_at"]
+            elif nl_changed and not fi_changed:
+                status, deleted_at = nl_p["status"], nl_p["deleted_at"]
+            else:
+                # both changed (or no baseline): the side with the later renewal
+                # wins; a renewal always re-activates.
+                if int(fi_p["last_renewed_at"] or 0) > int(nl_p["last_renewed_at"] or 0):
+                    status, deleted_at = fi_p["status"], fi_p["deleted_at"]
+                elif int(nl_p["last_renewed_at"] or 0) > int(fi_p["last_renewed_at"] or 0):
+                    status, deleted_at = nl_p["status"], nl_p["deleted_at"]
+                else:
+                    status, deleted_at = nl_p["status"], nl_p["deleted_at"]
+                if base_p is not None and fi_changed and nl_changed:
+                    stats.conflict(f"profile {fi_p['public_id']}: changed on both sides; status={status}")
+            if status == "active" and expires > int(_dt.datetime.now().timestamp()):
+                deleted_at = None
+            if not dry_run:
+                nl.execute(
+                    """
+                    UPDATE profiles SET expires_at=?, last_renewed_at=?, status=?, deleted_at=?,
+                        xui_client_id=COALESCE(?, xui_client_id),
+                        family_label=COALESCE(?, family_label),
+                        notes=COALESCE(?, notes)
+                    WHERE id=?
+                    """,
+                    (expires, renewed, status, deleted_at, fi_p["xui_client_id"], fi_p["family_label"], fi_p["notes"], nl_p["id"]),
+                )
+            stats.inc("profiles_merged")
+        if nl_p is not None:
+            id_map[int(fi_p["id"])] = int(nl_p["id"])
+    return id_map
+
+
+def resolve_order_status(nl_status: str, fi_status: str, base_status: Optional[str], public_id: str, stats: Stats) -> str:
+    if nl_status == fi_status:
+        return nl_status
+    if base_status is not None:
+        if fi_status == base_status:
+            return nl_status  # only NL moved
+        if nl_status == base_status:
+            return fi_status  # only FI moved
+    # Both moved (or unknown baseline): terminal states are sticky, the most
+    # advanced state wins; delivered beats cancelled because money+profile exist.
+    winner = max((nl_status, fi_status), key=lambda s: ORDER_RANK.get(s, -1))
+    stats.conflict(f"order {public_id}: NL={nl_status} FI={fi_status} base={base_status} -> {winner}")
+    return winner
+
+
+def merge_orders(nl, fi, base, stats: Stats, dry_run: bool, prof_map, promo_map, invite_map) -> None:
+    nl_cols = set(columns(nl, "orders"))
+    for fi_o in fi.execute("SELECT * FROM orders").fetchall():
+        nl_o = nl.execute("SELECT * FROM orders WHERE public_id = ?", (fi_o["public_id"],)).fetchone()
+        base_o = _lookup(base, "SELECT * FROM orders WHERE public_id = ?", (fi_o["public_id"],))
+        remap: dict[str, Any] = {}
+        if rget(fi_o, "provisioned_profile_id") is not None:
+            remap["provisioned_profile_id"] = prof_map.get(int(fi_o["provisioned_profile_id"]))
+        if rget(fi_o, "promo_id") is not None:
+            remap["promo_id"] = promo_map.get(int(fi_o["promo_id"]))
+        if rget(fi_o, "invite_id") is not None:
+            remap["invite_id"] = invite_map.get(int(fi_o["invite_id"]))
+        if nl_o is None:
+            insert_row(nl, "orders", fi_o, override=remap, dry_run=dry_run)
+            stats.inc("orders_inserted")
+            continue
+        status = resolve_order_status(str(nl_o["status"]), str(fi_o["status"]), rget(base_o, "status"), fi_o["public_id"], stats)
+        try:
+            nl_meta = json.loads(rget(nl_o, "meta_json") or "{}")
+            fi_meta = json.loads(rget(fi_o, "meta_json") or "{}")
+        except json.JSONDecodeError:
+            nl_meta, fi_meta = {}, {}
+        merged_meta = {**fi_meta, **nl_meta} if status == nl_o["status"] else {**nl_meta, **fi_meta}
+        merged_meta.pop("web_token", None)
+        closed_at = rget(nl_o, "closed_at") if status == nl_o["status"] else rget(fi_o, "closed_at")
+        fi_updated = int(rget(fi_o, "updated_at") or 0)
+        nl_updated = int(rget(nl_o, "updated_at") or 0)
+        if status in TERMINAL_ORDER_STATES and not closed_at:
+            closed_at = max(nl_updated, fi_updated) or None
+        sets = ["status = ?"]
+        params: list[Any] = [status]
+        if "closed_at" in nl_cols:
+            sets.append("closed_at = ?"); params.append(closed_at)
+        if "meta_json" in nl_cols:
+            sets.append("meta_json = ?"); params.append(json.dumps(merged_meta, ensure_ascii=False, separators=(",", ":")))
+        for col in ("provisioned_profile_id", "promo_id", "invite_id"):
+            if col in nl_cols:
+                sets.append(f"{col} = COALESCE({col}, ?)"); params.append(remap.get(col))
+        if "updated_at" in nl_cols:
+            sets.append("updated_at = MAX(COALESCE(updated_at, 0), ?)"); params.append(fi_updated)
+        if "version" in nl_cols:
+            sets.append("version = COALESCE(version, 0) + 1")
+        params.append(fi_o["public_id"])
         if not dry_run:
-            nl_conn.rollback()
-        err(f"vpn_shop.db merge failed: {e}")
-        raise
-    finally:
-        if baseline_conn:
-            baseline_conn.close()
-        nl_conn.close()
-        fi_conn.close()
-
-    log(f"Merge statistics for vpn_shop.db: {stats}")
-    return stats
+            nl.execute(f"UPDATE orders SET {', '.join(sets)} WHERE public_id = ?", params)
+        stats.inc("orders_merged")
 
 
-# ==============================================================================
-# X-UI Database Merge (x-ui.db)
-# ==============================================================================
+def merge_by_key_lww(nl, fi, base, *, table: str, key: str, ts_col: str, stats: Stats, dry_run: bool, remap: Optional[dict[str, dict[int, int]]] = None) -> None:
+    """Generic 3-way merge for tables with a natural key and an updated_at."""
+    if not table_exists(fi, table) or not table_exists(nl, table):
+        return
+    nl_cols = set(columns(nl, table))
+    for fi_r in fi.execute(f"SELECT * FROM {table}").fetchall():
+        nl_r = nl.execute(f"SELECT * FROM {table} WHERE {key} = ?", (fi_r[key],)).fetchone()
+        override: dict[str, Any] = {}
+        for col, mapping in (remap or {}).items():
+            if col in fi_r.keys() and fi_r[col] is not None:
+                override[col] = mapping.get(int(fi_r[col]), fi_r[col])
+        if nl_r is None:
+            insert_row(nl, table, fi_r, override=override, dry_run=dry_run)
+            stats.inc(f"{table}_inserted")
+            continue
+        base_r = _lookup(base, f"SELECT * FROM {table} WHERE {key} = ?", (fi_r[key],))
+        fi_ts, nl_ts = int(fi_r[ts_col] or 0), int(nl_r[ts_col] or 0)
+        base_ts = int(base_r[ts_col] or 0) if base_r is not None and ts_col in base_r.keys() else None
+        fi_moved = base_ts is None or fi_ts != base_ts
+        nl_moved = base_ts is None or nl_ts != base_ts
+        if not fi_moved:
+            continue
+        if nl_moved and fi_ts <= nl_ts:
+            continue  # NL is at least as recent – keep
+        data = {k: fi_r[k] for k in fi_r.keys() if k not in ("id", key) and k in nl_cols}
+        data.update(override)
+        if data and not dry_run:
+            sets = ", ".join(f"{k} = ?" for k in data)
+            nl.execute(f"UPDATE {table} SET {sets} WHERE {key} = ?", [*data.values(), fi_r[key]])
+        stats.inc(f"{table}_updated")
 
-def merge_xui(
-    nl_db_path: str,
-    fi_db_path: str,
-    baseline_db_path: Optional[str] = None,
-    dry_run: bool = False
-) -> Dict[str, Any]:
-    """
-    Merges x-ui.db from FI into NL database.
-    Reconciles inbounds.settings client list and client_traffics bandwidth deltas.
-    """
-    log(f"=== Starting merge for x-ui.db ===")
-    log(f"NL Target DB: {nl_db_path}")
-    log(f"FI Source DB: {fi_db_path}")
-    if baseline_db_path:
-        log(f"Baseline DB: {baseline_db_path}")
 
-    stats = {
-        "inbounds_clients_updated": 0,
-        "inbounds_clients_added": 0,
-        "traffic_deltas_applied": 0,
-        "traffic_clients_added": 0,
-        "total_up_delta_bytes": 0,
-        "total_down_delta_bytes": 0,
-    }
+def merge_append_only(nl, fi, *, table: str, keys: tuple[str, ...], stats: Stats, dry_run: bool, remap: Optional[dict[str, dict[int, int]]] = None) -> None:
+    if not table_exists(fi, table) or not table_exists(nl, table):
+        return
+    where = " AND ".join(f"{k} = ?" for k in keys)
+    for fi_r in fi.execute(f"SELECT * FROM {table}").fetchall():
+        exists = nl.execute(f"SELECT 1 FROM {table} WHERE {where}", tuple(fi_r[k] for k in keys)).fetchone()
+        if exists:
+            continue
+        override: dict[str, Any] = {}
+        for col, mapping in (remap or {}).items():
+            if col in fi_r.keys() and fi_r[col] is not None:
+                override[col] = mapping.get(int(fi_r[col]), fi_r[col])
+        insert_row(nl, table, fi_r, override=override, dry_run=dry_run)
+        stats.inc(f"{table}_inserted")
 
-    if not os.path.exists(nl_db_path):
-        raise FileNotFoundError(f"NL database not found: {nl_db_path}")
-    if not os.path.exists(fi_db_path):
-        raise FileNotFoundError(f"FI database not found: {fi_db_path}")
 
+def merge_awg_peers(nl, fi, stats: Stats, dry_run: bool) -> None:
+    """AmneziaWG peers: key (sub_id, server_code); telemetry counters are monotonic -> MAX."""
+    if not table_exists(fi, "awg_peers") or not table_exists(nl, "awg_peers"):
+        return
+    nl_cols = set(columns(nl, "awg_peers"))
+    for fp in fi.execute("SELECT * FROM awg_peers").fetchall():
+        np_ = nl.execute("SELECT * FROM awg_peers WHERE sub_id = ? AND server_code = ?", (fp["sub_id"], fp["server_code"])).fetchone()
+        if np_ is None:
+            insert_row(nl, "awg_peers", fp, dry_run=dry_run)
+            stats.inc("awg_peers_merged")
+            continue
+        sets, params = [], []
+        for col in ("bytes_used", "last_rx", "last_tx", "monthly_bytes", "last_handshake_at", "updated_at"):
+            if col in nl_cols and col in fp.keys():
+                sets.append(f"{col} = MAX(COALESCE({col}, 0), ?)"); params.append(int(fp[col] or 0))
+        if "active" in nl_cols and "active" in fp.keys():
+            # a suspension (quota / abuse) on either node sticks
+            sets.append("active = MIN(COALESCE(active, 1), ?)"); params.append(int(fp["active"] if fp["active"] is not None else 1))
+        if "inactive_reason" in nl_cols and "inactive_reason" in fp.keys():
+            sets.append("inactive_reason = COALESCE(inactive_reason, ?)"); params.append(fp["inactive_reason"])
+        if sets and not dry_run:
+            nl.execute(f"UPDATE awg_peers SET {', '.join(sets)} WHERE sub_id = ? AND server_code = ?", [*params, fp["sub_id"], fp["server_code"]])
+        stats.inc("awg_peers_merged")
+
+
+def merge_vpn_shop(nl_db_path: str, fi_db_path: str, baseline_db_path: Optional[str] = None, dry_run: bool = False, allow_two_way: bool = False) -> Dict[str, Any]:
+    log("=== vpn_shop.db merge ===")
+    log(f"NL: {nl_db_path}\n           FI: {fi_db_path}\n           BASE: {baseline_db_path or '-'}")
+    for p in (nl_db_path, fi_db_path):
+        if not os.path.exists(p):
+            raise FileNotFoundError(p)
     if not dry_run:
         make_backup(nl_db_path)
-
-    nl_conn = sqlite3.connect(nl_db_path)
-    nl_conn.row_factory = sqlite3.Row
-    fi_conn = sqlite3.connect(fi_db_path)
-    fi_conn.row_factory = sqlite3.Row
-
-    baseline_traffics: Dict[str, Dict[str, int]] = {}
-    if baseline_db_path and os.path.exists(baseline_db_path):
-        base_conn = sqlite3.connect(baseline_db_path)
-        base_conn.row_factory = sqlite3.Row
-        base_cur = base_conn.cursor()
-        base_cur.execute("SELECT email, up, down FROM client_traffics;")
-        for row in base_cur.fetchall():
-            baseline_traffics[row["email"]] = {
-                "up": row["up"] or 0,
-                "down": row["down"] or 0,
-            }
-        base_conn.close()
-
-    check_integrity(nl_conn, "NL x-ui.db")
-    check_integrity(fi_conn, "FI x-ui.db")
-
-    nl_cur = nl_conn.cursor()
-    fi_cur = fi_conn.cursor()
-
+    stats = Stats()
+    nl = open_rw(nl_db_path)
+    fi = open_ro(fi_db_path)
+    base = open_ro(baseline_db_path) if baseline_db_path and os.path.exists(baseline_db_path) else None
     try:
-        if not dry_run:
-            nl_cur.execute("BEGIN IMMEDIATE;")
+        check_integrity(fi, "FI vpn_shop.db")
+        nl.execute("BEGIN IMMEDIATE;")
+        try:
+            # 1. users
+            merge_by_key_lww(nl, fi, base, table="telegram_users", key="user_id", ts_col="last_seen_at", stats=stats, dry_run=dry_run)
+            # 2. referrers (by user_id)
+            ref_map: dict[int, int] = {}
+            if table_exists(fi, "referrers"):
+                for r in fi.execute("SELECT * FROM referrers").fetchall():
+                    nl_r = nl.execute("SELECT id FROM referrers WHERE user_id = ? OR code = ?", (r["user_id"], r["code"])).fetchone()
+                    if nl_r is None:
+                        insert_row(nl, "referrers", r, dry_run=dry_run)
+                        stats.inc("referrers_inserted")
+                        nl_r = nl.execute("SELECT id FROM referrers WHERE user_id = ?", (r["user_id"],)).fetchone() if not dry_run else None
+                    if nl_r is not None:
+                        ref_map[int(r["id"])] = int(nl_r["id"])
+            # 3. counters
+            promo_map = merge_counter_table(nl, fi, base, table="promo_codes", key="code_hash", counter="used_count", extra_max=("last_used_at",), stats=stats, dry_run=dry_run, allow_two_way=allow_two_way)
+            invite_map = merge_counter_table(nl, fi, base, table="invite_tokens", key="code_hash", counter="used_count", extra_max=(), stats=stats, dry_run=dry_run, allow_two_way=allow_two_way)
+            # 4. profiles / orders
+            prof_map = merge_profiles(nl, fi, base, stats, dry_run)
+            merge_orders(nl, fi, base, stats, dry_run, prof_map, promo_map, invite_map)
+            # 5. ownership & redemptions
+            merge_by_key_lww(nl, fi, base, table="profile_owners", key="profile_public_id", ts_col="updated_at", stats=stats, dry_run=dry_run)
+            merge_by_key_lww(nl, fi, base, table="trial_redemptions", key="user_id", ts_col="updated_at", stats=stats, dry_run=dry_run)
+            merge_by_key_lww(nl, fi, base, table="referral_attributions", key="referred_user_id", ts_col="created_at", stats=stats, dry_run=dry_run, remap={"referrer_id": ref_map})
+            # 6. append-only ledgers
+            before_ledger = stats.counters.get("referral_ledger_inserted", 0)
+            merge_append_only(nl, fi, table="referral_ledger", keys=("order_public_id",), stats=stats, dry_run=dry_run, remap={"referrer_id": ref_map})
+            stats.counters["referral_ledger_merged"] = stats.counters.get("referral_ledger_inserted", 0) - before_ledger
+            merge_append_only(nl, fi, table="referral_payouts", keys=("referrer_id", "created_at"), stats=stats, dry_run=dry_run, remap={"referrer_id": ref_map})
+            merge_append_only(nl, fi, table="webhook_events", keys=("gateway", "event_id"), stats=stats, dry_run=dry_run)
+            merge_append_only(nl, fi, table="payment_confirmations", keys=("order_public_id",), stats=stats, dry_run=dry_run)
+            merge_append_only(nl, fi, table="order_state_log", keys=("order_public_id", "to_status", "created_at"), stats=stats, dry_run=dry_run)
+            merge_append_only(nl, fi, table="admin_actions", keys=("action_type", "target_public_id", "created_at"), stats=stats, dry_run=dry_run)
+            merge_append_only(nl, fi, table="profile_reminders", keys=("profile_public_id", "reminder_kind"), stats=stats, dry_run=dry_run)
+            merge_awg_peers(nl, fi, stats, dry_run)
+            # 7. verify BEFORE commit (D-05)
+            if not dry_run:
+                check_integrity(nl, "NL vpn_shop.db (pre-commit)")
+                nl.execute("COMMIT;")
+                nl.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                log("vpn_shop.db merge COMMITTED")
+            else:
+                nl.execute("ROLLBACK;")
+                log("[DRY-RUN] vpn_shop.db merge computed, nothing written")
+        except Exception:
+            if nl.in_transaction:
+                nl.execute("ROLLBACK;")
+            raise
+    finally:
+        nl.close()
+        fi.close()
+        if base is not None:
+            base.close()
+    log(f"vpn_shop.db stats: {stats.counters}; conflicts: {len(stats.conflicts)}")
+    return {**stats.counters, "conflicts": stats.conflicts}
 
-        # ----------------------------------------------------------------------
-        # 1. Merge inbounds.settings JSON
-        # ----------------------------------------------------------------------
-        fi_cur.execute("SELECT id, settings FROM inbounds;")
-        for fi_inbound in fi_cur.fetchall():
-            inbound_id = fi_inbound["id"]
-            nl_cur.execute("SELECT id, settings FROM inbounds WHERE id = ?;", (inbound_id,))
-            nl_inbound = nl_cur.fetchone()
-            if not nl_inbound:
-                continue
 
+# ---------------------------------------------------------------------------
+# x-ui.db
+# ---------------------------------------------------------------------------
+
+def merge_xui(nl_db_path: str, fi_db_path: str, baseline_db_path: Optional[str] = None, dry_run: bool = False) -> Dict[str, Any]:
+    log("=== x-ui.db merge ===")
+    for p in (nl_db_path, fi_db_path):
+        if not os.path.exists(p):
+            raise FileNotFoundError(p)
+    if not dry_run:
+        make_backup(nl_db_path)
+    stats = Stats()
+    nl = open_rw(nl_db_path)
+    fi = open_ro(fi_db_path)
+    base = open_ro(baseline_db_path) if baseline_db_path and os.path.exists(baseline_db_path) else None
+
+    base_clients: dict[str, dict[str, Any]] = {}
+    base_traffic: dict[str, sqlite3.Row] = {}
+    if base is not None:
+        for r in base.execute("SELECT settings FROM inbounds").fetchall():
             try:
-                nl_settings = json.loads(nl_inbound["settings"] or "{}")
-                fi_settings = json.loads(fi_inbound["settings"] or "{}")
-            except Exception as e:
-                err(f"JSON decode failed on inbound {inbound_id}: {e}")
+                for c in json.loads(r["settings"] or "{}").get("clients", []):
+                    if c.get("email"):
+                        base_clients[str(c["email"])] = c
+            except json.JSONDecodeError:
                 continue
-
-            nl_clients = nl_settings.get("clients", [])
-            fi_clients = fi_settings.get("clients", [])
-
-            nl_clients_by_email = {c.get("email"): c for c in nl_clients if c.get("email")}
-
-            modified = False
-            for fi_c in fi_clients:
-                email = fi_c.get("email")
-                if not email:
+        if table_exists(base, "client_traffics"):
+            for r in base.execute("SELECT * FROM client_traffics").fetchall():
+                base_traffic[str(r["email"])] = r
+    try:
+        check_integrity(fi, "FI x-ui.db")
+        nl.execute("BEGIN IMMEDIATE;")
+        try:
+            # 1. inbounds.settings clients
+            for fi_in in fi.execute("SELECT id, settings FROM inbounds").fetchall():
+                nl_in = nl.execute("SELECT id, settings FROM inbounds WHERE id = ?", (fi_in["id"],)).fetchone()
+                if nl_in is None:
+                    stats.conflict(f"inbound {fi_in['id']} exists only on FI – skipped (inbounds are provisioned per node)")
                     continue
-
-                if email not in nl_clients_by_email:
-                    nl_clients.append(fi_c)
-                    stats["inbounds_clients_added"] += 1
-                    modified = True
-                else:
-                    nl_c = nl_clients_by_email[email]
-                    old_exp = int(nl_c.get("expiryTime") or 0)
-                    fi_exp = int(fi_c.get("expiryTime") or 0)
-                    if fi_exp > old_exp:
-                        nl_c["expiryTime"] = fi_exp
+                nl_s = json.loads(nl_in["settings"] or "{}")
+                fi_s = json.loads(fi_in["settings"] or "{}")
+                nl_clients = nl_s.get("clients", [])
+                by_email = {c.get("email"): c for c in nl_clients if c.get("email")}
+                modified = False
+                for fc in fi_s.get("clients", []):
+                    email = fc.get("email")
+                    if not email:
+                        continue
+                    if email not in by_email:
+                        nl_clients.append(fc)
+                        stats.inc("inbounds_clients_added")
                         modified = True
-
-                    if fi_c.get("enable") and not nl_c.get("enable"):
-                        nl_c["enable"] = True
+                        continue
+                    nc = by_email[email]
+                    bc = base_clients.get(email)
+                    # D-07 enable flag: only adopt FI's value if FI changed it vs baseline
+                    fi_en, nl_en = bool(fc.get("enable", True)), bool(nc.get("enable", True))
+                    if fi_en != nl_en:
+                        base_en = bool(bc.get("enable", True)) if bc else None
+                        if base_en is None:
+                            # unknown history: a renewal on FI (newer expiry) re-enables, otherwise primary wins
+                            winner = True if (fi_en and int(fc.get("expiryTime") or 0) > int(nc.get("expiryTime") or 0)) else nl_en
+                        elif fi_en != base_en and nl_en == base_en:
+                            winner = fi_en
+                        elif nl_en != base_en and fi_en == base_en:
+                            winner = nl_en
+                        else:
+                            winner = False  # both changed: fail safe (disabled)
+                            stats.conflict(f"client {email}: enable changed on both sides -> disabled")
+                        if winner != nl_en:
+                            nc["enable"] = winner
+                            modified = True
+                    if int(fc.get("limitIp") or 0) != int(nc.get("limitIp") or 0):
+                        base_lim = int(bc.get("limitIp") or 0) if bc else None
+                        fi_renewed = int(fc.get("expiryTime") or 0) > int(nc.get("expiryTime") or 0)
+                        if base_lim is None:
+                            adopt = fi_renewed  # no history: the side that renewed set the limit
+                        else:
+                            adopt = int(fc.get("limitIp") or 0) != base_lim and int(nc.get("limitIp") or 0) == base_lim
+                        if adopt:
+                            nc["limitIp"] = int(fc.get("limitIp") or 0)
+                            modified = True
+                    new_exp = max(int(nc.get("expiryTime") or 0), int(fc.get("expiryTime") or 0))
+                    if new_exp != int(nc.get("expiryTime") or 0):
+                        nc["expiryTime"] = new_exp
                         modified = True
-
-                    if int(fi_c.get("limitIp") or 0) > int(nl_c.get("limitIp") or 0):
-                        nl_c["limitIp"] = int(fi_c.get("limitIp"))
-                        modified = True
-
-                    stats["inbounds_clients_updated"] += 1
-
-            if modified and not dry_run:
-                nl_settings["clients"] = nl_clients
-                new_settings_json = json.dumps(nl_settings, ensure_ascii=False)
-                nl_cur.execute("UPDATE inbounds SET settings = ? WHERE id = ?;", (new_settings_json, inbound_id))
-
-        # ----------------------------------------------------------------------
-        # 2. Merge client_traffics (Delta Calculation)
-        # ----------------------------------------------------------------------
-        fi_cur.execute("SELECT * FROM client_traffics;")
-        for fi_ct in fi_cur.fetchall():
-            email = fi_ct["email"]
-            nl_cur.execute("SELECT * FROM client_traffics WHERE email = ?;", (email,))
-            nl_ct = nl_cur.fetchone()
-
-            fi_up = fi_ct["up"] or 0
-            fi_down = fi_ct["down"] or 0
-
-            # Determine baseline for delta computation
-            if email in baseline_traffics:
-                base_up = baseline_traffics[email]["up"]
-                base_down = baseline_traffics[email]["down"]
-            elif nl_ct:
-                base_up = nl_ct["up"] or 0
-                base_down = nl_ct["down"] or 0
+                    stats.inc("inbounds_clients_updated")
+                if modified and not dry_run:
+                    nl_s["clients"] = nl_clients
+                    nl.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(nl_s, ensure_ascii=False), fi_in["id"]))
+            # 2. client_traffics deltas
+            if table_exists(fi, "client_traffics") and table_exists(nl, "client_traffics"):
+                for ft in fi.execute("SELECT * FROM client_traffics").fetchall():
+                    email = str(ft["email"])
+                    nt = nl.execute("SELECT * FROM client_traffics WHERE email = ?", (email,)).fetchone()
+                    bt = base_traffic.get(email)
+                    if bt is not None:
+                        base_up, base_down = int(bt["up"] or 0), int(bt["down"] or 0)
+                    elif nt is not None:
+                        base_up, base_down = int(nt["up"] or 0), int(nt["down"] or 0)
+                    else:
+                        base_up = base_down = 0
+                    d_up = max(0, int(ft["up"] or 0) - base_up)
+                    d_down = max(0, int(ft["down"] or 0) - base_down)
+                    stats.inc("total_up_delta_bytes", d_up)
+                    stats.inc("total_down_delta_bytes", d_down)
+                    if nt is None:
+                        insert_row(nl, "client_traffics", ft, dry_run=dry_run)
+                        stats.inc("traffic_clients_added")
+                        continue
+                    enable = bool(nt["enable"])
+                    if bool(ft["enable"]) != enable:
+                        base_en = bool(bt["enable"]) if bt is not None else None
+                        if base_en is not None and bool(ft["enable"]) != base_en and enable == base_en:
+                            enable = bool(ft["enable"])
+                    if not dry_run:
+                        nl.execute(
+                            "UPDATE client_traffics SET up = up + ?, down = down + ?, expiry_time = MAX(expiry_time, ?), last_online = MAX(COALESCE(last_online,0), ?), enable = ? WHERE email = ?",
+                            (d_up, d_down, int(ft["expiry_time"] or 0), int(ft["last_online"] or 0), int(enable), email),
+                        )
+                    stats.inc("traffic_deltas_applied")
+            if not dry_run:
+                check_integrity(nl, "NL x-ui.db (pre-commit)")
+                nl.execute("COMMIT;")
+                nl.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                log("x-ui.db merge COMMITTED")
             else:
-                base_up = 0
-                base_down = 0
-
-            delta_up = max(0, fi_up - base_up)
-            delta_down = max(0, fi_down - base_down)
-
-            stats["total_up_delta_bytes"] += delta_up
-            stats["total_down_delta_bytes"] += delta_down
-
-            if nl_ct is None:
-                cols = [k for k in fi_ct.keys() if k != "id"]
-                vals = [fi_ct[k] for k in cols]
-                placeholders = ", ".join(["?"] * len(cols))
-                col_names = ", ".join(cols)
-                if not dry_run:
-                    nl_cur.execute(f"INSERT INTO client_traffics ({col_names}) VALUES ({placeholders});", vals)
-                stats["traffic_clients_added"] += 1
-            else:
-                new_up = (nl_ct["up"] or 0) + delta_up
-                new_down = (nl_ct["down"] or 0) + delta_down
-                max_exp = max(nl_ct["expiry_time"] or 0, fi_ct["expiry_time"] or 0)
-                max_online = max(nl_ct["last_online"] or 0, fi_ct["last_online"] or 0)
-                new_enable = bool(nl_ct["enable"] or fi_ct["enable"])
-
-                if not dry_run:
-                    nl_cur.execute("""
-                        UPDATE client_traffics SET
-                            up = ?,
-                            down = ?,
-                            expiry_time = ?,
-                            last_online = ?,
-                            enable = ?
-                        WHERE email = ?;
-                    """, (new_up, new_down, max_exp, max_online, new_enable, email))
-                stats["traffic_deltas_applied"] += 1
-
-        if not dry_run:
-            nl_conn.commit()
-            nl_cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
-            check_integrity(nl_conn, "Merged NL x-ui.db")
-            log("✅ Successfully committed x-ui.db merge")
-        else:
-            log("🔍 [DRY-RUN] x-ui.db merge calculated successfully without modifications")
-
-    except Exception as e:
-        if not dry_run:
-            nl_conn.rollback()
-        err(f"x-ui.db merge failed: {e}")
-        raise
+                nl.execute("ROLLBACK;")
+                log("[DRY-RUN] x-ui.db merge computed, nothing written")
+        except Exception:
+            if nl.in_transaction:
+                nl.execute("ROLLBACK;")
+            raise
     finally:
-        nl_conn.close()
-        fi_conn.close()
+        nl.close()
+        fi.close()
+        if base is not None:
+            base.close()
+    log(f"x-ui.db stats: {stats.counters}; conflicts: {len(stats.conflicts)}")
+    return {**stats.counters, "conflicts": stats.conflicts}
 
-    log(f"Merge statistics for x-ui.db: {stats}")
-    return stats
 
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
-# ==============================================================================
-# Main Orchestration CLI
-# ==============================================================================
-
-def main():
-    parser = argparse.ArgumentParser(description="Failback 3-Way SQLite Merger for SilentConnect")
-    parser.add_argument("--nl-vpn", default="/root/vpn-shop/data-silentconnect/vpn_shop.db", help="Path to NL vpn_shop.db")
-    parser.add_argument("--fi-vpn", default="/root/vpn-shop/data-silentconnect/vpn_shop.db", help="Path to FI vpn_shop.db")
-    parser.add_argument("--baseline-vpn", default="/var/lib/litestream/baseline_vpn_shop.db", help="Baseline vpn_shop.db snapshot")
-    parser.add_argument("--nl-xui", default="/etc/x-ui/x-ui.db", help="Path to NL x-ui.db")
-    parser.add_argument("--fi-xui", default="/etc/x-ui/x-ui.db", help="Path to FI x-ui.db")
-    parser.add_argument("--baseline-xui", default="/var/lib/litestream/baseline_xui.db", help="Baseline x-ui.db snapshot")
-    parser.add_argument("--dry-run", action="store_true", help="Calculate merge without writing changes")
-    parser.add_argument("--skip-xui", action="store_true", help="Skip merging x-ui.db")
-    parser.add_argument("--skip-vpn", action="store_true", help="Skip merging vpn_shop.db")
-
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Failback 3-Way SQLite Merger for SilentConnect (v2)")
+    parser.add_argument("--nl-vpn", default="/root/vpn-shop/data-silentconnect/vpn_shop.db")
+    parser.add_argument("--fi-vpn", default="/root/vpn-shop/data-silentconnect/vpn_shop.db")
+    parser.add_argument("--baseline-vpn", default="/var/lib/litestream/baseline_vpn_shop.db")
+    parser.add_argument("--nl-xui", default="/etc/x-ui/x-ui.db")
+    parser.add_argument("--fi-xui", default="/etc/x-ui/x-ui.db")
+    parser.add_argument("--baseline-xui", default="/var/lib/litestream/baseline_xui.db")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--skip-xui", action="store_true")
+    parser.add_argument("--skip-vpn", action="store_true")
+    parser.add_argument("--allow-two-way", action="store_true", help="Permit counter merges without a baseline (lossy; logged as conflicts)")
+    parser.add_argument("--report", default="", help="Write a JSON merge report to this path")
     args = parser.parse_args()
 
-    log("=== Starting Safe 3-Way Failback Merge Pipeline ===")
+    log("=== Starting Safe 3-Way Failback Merge Pipeline (v2) ===")
     if args.dry_run:
-        log("DRY-RUN MODE ENABLED: No database records will be modified")
-
-    overall_success = True
-
+        log("DRY-RUN MODE: no database records will be modified")
+    report: dict[str, Any] = {"dry_run": args.dry_run}
+    ok = True
     if not args.skip_vpn:
         try:
-            vpn_stats = merge_vpn_shop(
-                nl_db_path=args.nl_vpn,
-                fi_db_path=args.fi_vpn,
-                baseline_db_path=args.baseline_vpn if os.path.exists(args.baseline_vpn) else None,
-                dry_run=args.dry_run
-            )
-            log("vpn_shop.db merge completed successfully.")
-        except Exception as e:
-            err(f"vpn_shop.db merge failed: {e}")
-            overall_success = False
-
+            report["vpn_shop"] = merge_vpn_shop(args.nl_vpn, args.fi_vpn, args.baseline_vpn if os.path.exists(args.baseline_vpn) else None, args.dry_run, args.allow_two_way)
+        except Exception as exc:  # noqa: BLE001
+            err(f"vpn_shop.db merge failed: {exc}")
+            report["vpn_shop_error"] = str(exc)
+            ok = False
     if not args.skip_xui:
         try:
-            xui_stats = merge_xui(
-                nl_db_path=args.nl_xui,
-                fi_db_path=args.fi_xui,
-                baseline_db_path=args.baseline_xui if os.path.exists(args.baseline_xui) else None,
-                dry_run=args.dry_run
-            )
-            log("x-ui.db merge completed successfully.")
-        except Exception as e:
-            err(f"x-ui.db merge failed: {e}")
-            overall_success = False
-
-    if overall_success:
-        log("🎉 [SUCCESS] 3-Way Failback Merge Pipeline finished with ZERO errors.")
+            report["xui"] = merge_xui(args.nl_xui, args.fi_xui, args.baseline_xui if os.path.exists(args.baseline_xui) else None, args.dry_run)
+        except Exception as exc:  # noqa: BLE001
+            err(f"x-ui.db merge failed: {exc}")
+            report["xui_error"] = str(exc)
+            ok = False
+    if args.report:
+        with open(args.report, "w", encoding="utf-8") as fh:
+            json.dump(report, fh, ensure_ascii=False, indent=2)
+    if ok:
+        log("[SUCCESS] 3-Way Failback Merge Pipeline finished with zero errors.")
         sys.exit(0)
-    else:
-        err("💥 [FATAL] 3-Way Failback Merge Pipeline encountered errors.")
-        sys.exit(1)
+    err("[FATAL] 3-Way Failback Merge Pipeline encountered errors – NL databases were rolled back.")
+    sys.exit(1)
 
 
 if __name__ == "__main__":

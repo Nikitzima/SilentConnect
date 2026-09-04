@@ -4,7 +4,7 @@ from contextlib import contextmanager
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 from .security import hash_secret, masked_code, now_ts, public_id, random_code
 
@@ -225,9 +225,87 @@ CREATE TABLE IF NOT EXISTS webhook_events (
   event_type TEXT NOT NULL,
   order_public_id TEXT,
   processed_at INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'processed',
+  payload_sha256 TEXT,
+  attempts INTEGER NOT NULL DEFAULT 1,
+  last_error TEXT,
+  updated_at INTEGER,
   UNIQUE(gateway, event_id)
 );
+
+-- Append-only journal of every order state transition (who / when / why).
+CREATE TABLE IF NOT EXISTS order_state_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_public_id TEXT NOT NULL,
+  from_status TEXT,
+  to_status TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  reason TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_order_state_log_order ON order_state_log(order_public_id, id);
+
+-- Ledger of *manual* payment confirmations. One row per order (UNIQUE) gives
+-- hard idempotency: a second confirm can never provision twice.
+CREATE TABLE IF NOT EXISTS payment_confirmations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_public_id TEXT NOT NULL UNIQUE,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  confirmed_by TEXT NOT NULL,
+  confirmed_by_id TEXT,
+  amount_rub INTEGER NOT NULL,
+  expected_amount_rub INTEGER NOT NULL,
+  method TEXT NOT NULL DEFAULT 'manual_sbp',
+  reference TEXT,
+  status TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  finalized_at INTEGER,
+  error TEXT,
+  meta_json TEXT NOT NULL DEFAULT '{}'
+);
+
+-- Hashed single-use magic links for the self-service cabinet.
+CREATE TABLE IF NOT EXISTS magic_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  token_hash TEXT NOT NULL UNIQUE,
+  email TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER,
+  request_ip TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_magic_links_email ON magic_links(email, created_at);
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version INTEGER PRIMARY KEY,
+  applied_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_orders_customer_status ON orders(customer_chat_id, status);
+CREATE INDEX IF NOT EXISTS ix_orders_status_created ON orders(status, created_at);
+CREATE INDEX IF NOT EXISTS ix_profiles_status_expires ON profiles(status, expires_at);
+CREATE INDEX IF NOT EXISTS ix_orders_customer_email ON orders(customer_email);
 """
+
+SCHEMA_VERSION = 2
+
+# Order finite-state machine. Any transition not listed here is rejected at the
+# storage layer, regardless of what the caller asks for.
+ORDER_TRANSITIONS: dict[str, frozenset[str]] = {
+    "waiting_payment": frozenset({"provisioning", "cancelled", "expired", "auto_provision"}),
+    "auto_provision": frozenset({"provisioning", "delivered", "failed", "cancelled"}),
+    "provisioning": frozenset({"delivered", "failed", "waiting_payment"}),
+    "failed": frozenset({"provisioning", "cancelled"}),
+    # terminal states
+    "delivered": frozenset(),
+    "cancelled": frozenset(),
+    "expired": frozenset(),
+}
+TERMINAL_ORDER_STATES = frozenset({"delivered", "cancelled", "expired"})
+
+
+class OrderStateError(RuntimeError):
+    """Raised when an order transition violates the FSM or a precondition."""
 
 
 class Store:
@@ -243,6 +321,17 @@ class Store:
             self._ensure_column(conn, "promo_codes", "duration_months", "INTEGER")
             self._ensure_column(conn, "promo_codes", "fixed_price_rub", "INTEGER")
             self._ensure_column(conn, "orders", "customer_email", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "orders", "web_token_hash", "TEXT")
+            self._ensure_column(conn, "orders", "version", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "webhook_events", "status", "TEXT NOT NULL DEFAULT 'processed'")
+            self._ensure_column(conn, "webhook_events", "payload_sha256", "TEXT")
+            self._ensure_column(conn, "webhook_events", "attempts", "INTEGER NOT NULL DEFAULT 1")
+            self._ensure_column(conn, "webhook_events", "last_error", "TEXT")
+            self._ensure_column(conn, "webhook_events", "updated_at", "INTEGER")
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)",
+                (SCHEMA_VERSION, now_ts()),
+            )
 
     @staticmethod
     def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -257,19 +346,445 @@ class Store:
                 if "duplicate column name" not in str(exc).lower():
                     raise
 
+    def _open(self) -> sqlite3.Connection:
+        # isolation_level=None => Python does not inject implicit BEGINs; we
+        # control transaction boundaries explicitly (autocommit otherwise).
+        conn = sqlite3.connect(self.database_path, timeout=30.0, isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 30000;")
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA synchronous = NORMAL;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        return conn
+
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.database_path, timeout=30.0)
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.row_factory = sqlite3.Row
+        """Legacy helper: a DEFERRED transaction around the block.
+
+        Prefer :meth:`transaction` (BEGIN IMMEDIATE) for any read-modify-write.
+        """
+        conn = self._open()
         try:
+            conn.execute("BEGIN;")
             yield conn
-            conn.commit()
+            if conn.in_transaction:  # executescript() may have auto-committed
+                conn.execute("COMMIT;")
         except Exception:
-            conn.rollback()
+            try:
+                conn.execute("ROLLBACK;")
+            except sqlite3.Error:
+                pass
             raise
         finally:
             conn.close()
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Serialising write transaction (BEGIN IMMEDIATE).
+
+        Acquires the RESERVED lock up-front so concurrent writers queue on
+        ``busy_timeout`` instead of failing with SQLITE_BUSY mid-transaction,
+        and so SELECT-then-UPDATE sequences are free of TOCTOU races.
+        """
+        conn = self._open()
+        try:
+            conn.execute("BEGIN IMMEDIATE;")
+            yield conn
+            if conn.in_transaction:
+                conn.execute("COMMIT;")
+        except Exception:
+            try:
+                conn.execute("ROLLBACK;")
+            except sqlite3.Error:
+                pass
+            raise
+        finally:
+            conn.close()
+
+    def online_backup(self, destination: Path | str, *, pages: int = 256) -> Path:
+        """Consistent snapshot using the SQLite online-backup API (safe under WAL)."""
+        destination = Path(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        tmp = destination.with_suffix(destination.suffix + ".tmp")
+        src = self._open()
+        try:
+            dst = sqlite3.connect(tmp)
+            try:
+                src.backup(dst, pages=pages)
+                dst.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            finally:
+                dst.close()
+        finally:
+            src.close()
+        tmp.replace(destination)
+        return destination
+
+    # ------------------------------------------------------------------
+    # Order finite-state machine
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _log_transition(
+        conn: sqlite3.Connection,
+        order_public_id: str,
+        from_status: str | None,
+        to_status: str,
+        actor: str,
+        reason: str | None,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO order_state_log(order_public_id, from_status, to_status, actor, reason, created_at)
+            VALUES(?, ?, ?, ?, ?, ?)
+            """,
+            (order_public_id, from_status, to_status, actor, reason, now_ts()),
+        )
+
+    def transition_order(
+        self,
+        public_id_value: str,
+        to_status: str,
+        *,
+        expected_from: Iterable[str] | None = None,
+        actor: str = "system",
+        reason: str | None = None,
+        conn: sqlite3.Connection | None = None,
+    ) -> dict[str, Any]:
+        """Atomically move an order along the FSM.
+
+        ``UPDATE ... WHERE status IN (allowed)`` is the compare-and-swap that
+        makes concurrent confirm/cancel/expire requests safe: exactly one wins.
+        Raises :class:`OrderStateError` on any illegal transition.
+        """
+        if to_status not in ORDER_TRANSITIONS:
+            raise OrderStateError(f"Unknown order status {to_status!r}")
+        allowed_from = {s for s, targets in ORDER_TRANSITIONS.items() if to_status in targets}
+        if expected_from is not None:
+            allowed_from &= set(expected_from)
+        if not allowed_from:
+            raise OrderStateError(f"No legal transition into {to_status!r}")
+
+        def _run(c: sqlite3.Connection) -> dict[str, Any]:
+            current = c.execute(
+                "SELECT status FROM orders WHERE public_id = ?", (public_id_value,)
+            ).fetchone()
+            if current is None:
+                raise OrderStateError(f"Order {public_id_value} not found")
+            from_status = str(current["status"])
+            placeholders = ",".join("?" for _ in allowed_from)
+            now = now_ts()
+            closed = to_status in TERMINAL_ORDER_STATES
+            cur = c.execute(
+                f"""
+                UPDATE orders
+                SET status = ?, updated_at = ?, version = version + 1,
+                    closed_at = CASE WHEN ? THEN COALESCE(closed_at, ?) ELSE closed_at END
+                WHERE public_id = ? AND status IN ({placeholders})
+                """,
+                (to_status, now, int(closed), now, public_id_value, *sorted(allowed_from)),
+            )
+            if cur.rowcount != 1:
+                raise OrderStateError(
+                    f"Illegal transition for {public_id_value}: {from_status} -> {to_status}"
+                )
+            self._log_transition(c, public_id_value, from_status, to_status, actor, reason)
+            row = c.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
+            return self._row_to_dict(row) or {}
+
+        if conn is not None:
+            return _run(conn)
+        with self.transaction() as c:
+            return _run(c)
+
+    def list_order_state_log(self, public_id_value: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM order_state_log WHERE order_public_id = ? ORDER BY id",
+                (public_id_value,),
+            ).fetchall()
+        return [self._row_to_dict(r) or {} for r in rows]
+
+    def claim_order_for_provisioning(
+        self,
+        public_id_value: str,
+        *,
+        actor: str,
+        idempotency_key: str,
+        amount_rub: int,
+        confirmed_by_id: str | None = None,
+        method: str = "manual_sbp",
+        reference: str | None = None,
+    ) -> dict[str, Any]:
+        """Phase 1 of manual payment confirmation (single BEGIN IMMEDIATE).
+
+        In one transaction: CAS order waiting_payment->provisioning, consume
+        promo / invite (if any) and write a ``payment_confirmations`` row with
+        status ``claimed``. If anything fails, everything rolls back.
+        """
+        with self.transaction() as conn:
+            order_row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
+            order = self._row_to_dict(order_row)
+            if not order:
+                raise OrderStateError(f"Order {public_id_value} not found")
+            existing = conn.execute(
+                "SELECT * FROM payment_confirmations WHERE order_public_id = ?", (public_id_value,)
+            ).fetchone()
+            if existing is not None:
+                raise OrderStateError(
+                    f"Order {public_id_value} already has a payment confirmation "
+                    f"(status={existing['status']}, key={existing['idempotency_key']})"
+                )
+            expected = int(order.get("final_price_rub") or 0)
+            if int(amount_rub) < expected:
+                raise OrderStateError(
+                    f"Amount mismatch for {public_id_value}: paid {amount_rub} < expected {expected}"
+                )
+            self.transition_order(
+                public_id_value,
+                "provisioning",
+                expected_from=("waiting_payment", "auto_provision", "failed"),
+                actor=actor,
+                reason="payment_confirmed",
+                conn=conn,
+            )
+            now = now_ts()
+            promo_id = order.get("promo_id")
+            if promo_id and order.get("kind") in {"purchase", "renewal"}:
+                cur = conn.execute(
+                    """
+                    UPDATE promo_codes
+                    SET used_count = used_count + 1, last_used_at = ?
+                    WHERE id = ? AND enabled = 1 AND used_count < max_uses
+                      AND (expires_at IS NULL OR expires_at > ?)
+                    """,
+                    (now, int(promo_id), now),
+                )
+                if cur.rowcount != 1:
+                    raise OrderStateError(f"Promo code for order {public_id_value} is exhausted or disabled")
+            invite_id = order.get("invite_id")
+            if invite_id and not (order.get("meta_json") or {}).get("invite_consumed"):
+                cur = conn.execute(
+                    """
+                    UPDATE invite_tokens
+                    SET used_count = used_count + 1
+                    WHERE id = ? AND enabled = 1 AND used_count < max_uses
+                      AND (expires_at IS NULL OR expires_at > ?)
+                    """,
+                    (int(invite_id), now),
+                )
+                if cur.rowcount != 1:
+                    raise OrderStateError(f"Invite for order {public_id_value} is exhausted or disabled")
+            conn.execute(
+                """
+                INSERT INTO payment_confirmations(
+                  order_public_id, idempotency_key, confirmed_by, confirmed_by_id, amount_rub,
+                  expected_amount_rub, method, reference, status, created_at, meta_json
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'claimed', ?, '{}')
+                """,
+                (
+                    public_id_value,
+                    idempotency_key,
+                    actor,
+                    str(confirmed_by_id) if confirmed_by_id is not None else None,
+                    int(amount_rub),
+                    expected,
+                    method,
+                    reference,
+                    now,
+                ),
+            )
+            row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
+            return self._row_to_dict(row) or {}
+
+    def finalize_order_delivered(
+        self,
+        public_id_value: str,
+        *,
+        profile_public_id: str | None,
+        actor: str,
+        meta_update: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Phase 3: provisioning succeeded – mark delivered + close confirmation."""
+        with self.transaction() as conn:
+            if profile_public_id:
+                profile_row = conn.execute(
+                    "SELECT id FROM profiles WHERE public_id = ?", (profile_public_id,)
+                ).fetchone()
+                if profile_row is None:
+                    raise KeyError(profile_public_id)
+                conn.execute(
+                    "UPDATE orders SET provisioned_profile_id = ? WHERE public_id = ?",
+                    (profile_row["id"], public_id_value),
+                )
+            if meta_update:
+                current = conn.execute(
+                    "SELECT meta_json FROM orders WHERE public_id = ?", (public_id_value,)
+                ).fetchone()
+                meta = {}
+                if current and current["meta_json"]:
+                    try:
+                        meta = json.loads(current["meta_json"])
+                    except json.JSONDecodeError:
+                        meta = {}
+                meta.update(meta_update)
+                conn.execute(
+                    "UPDATE orders SET meta_json = ? WHERE public_id = ?",
+                    (json.dumps(meta, ensure_ascii=False, separators=(",", ":")), public_id_value),
+                )
+            order = self.transition_order(
+                public_id_value,
+                "delivered",
+                expected_from=("provisioning", "auto_provision"),
+                actor=actor,
+                reason="provisioned",
+                conn=conn,
+            )
+            conn.execute(
+                """
+                UPDATE payment_confirmations
+                SET status = 'finalized', finalized_at = ?
+                WHERE order_public_id = ? AND status = 'claimed'
+                """,
+                (now_ts(), public_id_value),
+            )
+            return order
+
+    def fail_order_provisioning(
+        self,
+        public_id_value: str,
+        *,
+        actor: str,
+        error: str,
+        release_reservations: bool = True,
+    ) -> dict[str, Any]:
+        """Compensation path: provisioning failed after the claim.
+
+        Moves the order to ``failed`` (admin can retry) and, when requested,
+        returns the promo/invite usage and removes the claimed confirmation so
+        that a later confirm starts from a clean slate. All in one transaction.
+        """
+        with self.transaction() as conn:
+            order_row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
+            order = self._row_to_dict(order_row) or {}
+            result = self.transition_order(
+                public_id_value,
+                "failed",
+                expected_from=("provisioning", "auto_provision"),
+                actor=actor,
+                reason=error[:500],
+                conn=conn,
+            )
+            if release_reservations:
+                if order.get("promo_id"):
+                    conn.execute(
+                        "UPDATE promo_codes SET used_count = MAX(0, used_count - 1) WHERE id = ?",
+                        (int(order["promo_id"]),),
+                    )
+                if order.get("invite_id") and not (order.get("meta_json") or {}).get("invite_consumed"):
+                    conn.execute(
+                        "UPDATE invite_tokens SET used_count = MAX(0, used_count - 1) WHERE id = ?",
+                        (int(order["invite_id"]),),
+                    )
+                conn.execute(
+                    "DELETE FROM payment_confirmations WHERE order_public_id = ? AND status = 'claimed'",
+                    (public_id_value,),
+                )
+            else:
+                conn.execute(
+                    "UPDATE payment_confirmations SET status = 'failed', error = ? WHERE order_public_id = ?",
+                    (error[:1000], public_id_value),
+                )
+            return result
+
+    def get_payment_confirmation(self, public_id_value: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM payment_confirmations WHERE order_public_id = ?", (public_id_value,)
+            ).fetchone()
+        return self._row_to_dict(row)
+
+    def list_stale_provisioning_orders(self, older_than_seconds: int = 600) -> list[dict[str, Any]]:
+        """Orders stuck in ``provisioning`` (process crashed mid-flight)."""
+        cutoff = now_ts() - int(older_than_seconds)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM orders WHERE status = 'provisioning' AND updated_at < ? ORDER BY updated_at",
+                (cutoff,),
+            ).fetchall()
+        return [self._row_to_dict(r) or {} for r in rows]
+
+    # ------------------------------------------------------------------
+    # Web order tokens (hashed at rest) & magic links
+    # ------------------------------------------------------------------
+    def set_order_web_token(self, public_id_value: str, token: str) -> None:
+        from .security import hash_token
+
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE orders SET web_token_hash = ?, updated_at = ? WHERE public_id = ?",
+                (hash_token(token, purpose="order_web"), now_ts(), public_id_value),
+            )
+
+    def get_order_by_web_token(self, public_id_value: str, token: str) -> dict[str, Any] | None:
+        from .security import constant_time_equals, hash_token
+
+        order = self.get_order(public_id_value)
+        if not order:
+            return None
+        stored = str(order.get("web_token_hash") or "")
+        if not stored:
+            # Legacy orders created before v2 kept the token in meta_json.
+            legacy = str((order.get("meta_json") or {}).get("web_token") or "")
+            if legacy and constant_time_equals(legacy, token):
+                return order
+            return None
+        if constant_time_equals(stored, hash_token(token, purpose="order_web")):
+            return order
+        return None
+
+    def create_magic_link(self, *, email: str, token: str, ttl_seconds: int, request_ip: str | None) -> None:
+        from .security import hash_token
+
+        now = now_ts()
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO magic_links(token_hash, email, created_at, expires_at, used_at, request_ip)
+                VALUES(?, ?, ?, ?, NULL, ?)
+                """,
+                (hash_token(token, purpose="magic_link"), email.lower(), now, now + int(ttl_seconds), request_ip),
+            )
+            # Housekeeping: drop expired links older than a day.
+            conn.execute("DELETE FROM magic_links WHERE expires_at < ?", (now - 86400,))
+
+    def consume_magic_link(self, token: str) -> str | None:
+        """Single-use redemption; returns the e-mail or None."""
+        from .security import hash_token
+
+        now = now_ts()
+        with self.transaction() as conn:
+            cur = conn.execute(
+                """
+                UPDATE magic_links SET used_at = ?
+                WHERE token_hash = ? AND used_at IS NULL AND expires_at >= ?
+                RETURNING email
+                """,
+                (now, hash_token(token, purpose="magic_link"), now),
+            )
+            row = cur.fetchone()
+        return str(row["email"]) if row else None
+
+    def count_recent_magic_links(self, *, email: str, request_ip: str | None, window_seconds: int) -> int:
+        since = now_ts() - int(window_seconds)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS n FROM magic_links
+                WHERE created_at >= ? AND (email = ? OR (request_ip IS NOT NULL AND request_ip = ?))
+                """,
+                (since, email.lower(), request_ip),
+            ).fetchone()
+        return int(row["n"] if row else 0)
 
     @staticmethod
     def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -666,8 +1181,11 @@ class Store:
         return self._row_to_dict(row) or {}
 
     def update_order_meta(self, public_id_value: str, meta: dict[str, Any]) -> None:
+        meta = dict(meta)
+        # Never persist the plaintext web bearer token (kept in-memory only).
+        meta.pop("web_token", None)
         payload = json.dumps(meta, ensure_ascii=False, separators=(",", ":"))
-        with self._connect() as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 UPDATE orders
@@ -688,20 +1206,60 @@ class Store:
         event_id: str,
         event_type: str,
         order_public_id: str | None = None,
+        *,
+        payload_sha256: str | None = None,
     ) -> bool:
-        """Idempotent webhook event recording. Returns True if recorded, False if duplicate."""
-        with self._connect() as conn:
-            try:
+        """Idempotent *reservation* of an inbound event (returns False on duplicate).
+
+        v1 committed the event as processed *before* any business logic ran, so
+        a crash after INSERT lost the event forever (audit A-03). The row is now
+        created with status='pending' and must be closed with
+        :meth:`finish_webhook_event`. A duplicate whose previous attempt failed
+        is allowed to retry (status != processed) – at-least-once semantics with
+        exactly-once side effects guaranteed by the order FSM.
+        """
+        now = now_ts()
+        with self.transaction() as conn:
+            existing = conn.execute(
+                "SELECT status, payload_sha256 FROM webhook_events WHERE gateway = ? AND event_id = ?",
+                (gateway, event_id),
+            ).fetchone()
+            if existing is None:
                 conn.execute(
                     """
-                    INSERT INTO webhook_events(gateway, event_id, event_type, order_public_id, processed_at)
-                    VALUES(?, ?, ?, ?, ?)
+                    INSERT INTO webhook_events(
+                      gateway, event_id, event_type, order_public_id, processed_at,
+                      status, payload_sha256, attempts, updated_at
+                    ) VALUES(?, ?, ?, ?, ?, 'pending', ?, 1, ?)
                     """,
-                    (gateway, event_id, event_type, order_public_id, now_ts()),
+                    (gateway, event_id, event_type, order_public_id, now, payload_sha256, now),
                 )
                 return True
-            except sqlite3.IntegrityError:
-                return False  # Duplicate event
+            if existing["status"] == "processed":
+                return False
+            if payload_sha256 and existing["payload_sha256"] and existing["payload_sha256"] != payload_sha256:
+                # Same event id, different body: replay/tampering attempt.
+                return False
+            conn.execute(
+                """
+                UPDATE webhook_events
+                SET status = 'pending', attempts = attempts + 1, updated_at = ?
+                WHERE gateway = ? AND event_id = ? AND status != 'processed'
+                """,
+                (now, gateway, event_id),
+            )
+            return True
+
+    def finish_webhook_event(self, gateway: str, event_id: str, *, ok: bool, error: str | None = None) -> None:
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE webhook_events
+                SET status = ?, last_error = ?, processed_at = ?, updated_at = ?
+                WHERE gateway = ? AND event_id = ?
+                """,
+                ("processed" if ok else "failed", (error or "")[:1000] or None, now_ts(), now_ts(), gateway, event_id),
+            )
 
     def get_latest_order_for_chat(
         self,
@@ -928,17 +1486,22 @@ class Store:
             row = conn.execute(query, params).fetchone()
         return self._row_to_dict(row)
 
-    def update_order_status(self, public_id_value: str, status: str, *, closed: bool = False) -> None:
-        now = now_ts()
-        with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE orders
-                SET status = ?, updated_at = ?, closed_at = CASE WHEN ? THEN ? ELSE closed_at END
-                WHERE public_id = ?
-                """,
-                (status, now, int(closed), now, public_id_value),
-            )
+    def update_order_status(
+        self,
+        public_id_value: str,
+        status: str,
+        *,
+        closed: bool = False,
+        actor: str = "legacy",
+        reason: str | None = None,
+    ) -> None:
+        """Backwards-compatible wrapper that now enforces the order FSM.
+
+        v1 blindly overwrote ``status`` (audit C-01): a cancelled/expired order
+        could be flipped back to delivered, and two concurrent confirms both
+        succeeded. All writes now go through :meth:`transition_order`.
+        """
+        self.transition_order(public_id_value, status, actor=actor, reason=reason)
 
     def attach_manager_message(self, public_id_value: str, manager_chat_id: int | str, manager_message_id: int) -> None:
         with self._connect() as conn:
@@ -1209,37 +1772,35 @@ class Store:
         chat_id: int | str,
         transport: str = "tcp",
     ) -> tuple[bool, dict[str, Any]]:
+        """Exactly-once trial claim.
+
+        v1 did SELECT-then-INSERT under a deferred transaction, so two parallel
+        /start taps from the same user could both pass the check (audit C-04).
+        Now a single ``INSERT ... ON CONFLICT DO UPDATE ... WHERE status NOT IN``
+        executed under BEGIN IMMEDIATE decides the winner in the database.
+        """
         now = now_ts()
-        with self._connect() as conn:
-            existing = conn.execute(
-                "SELECT * FROM trial_redemptions WHERE user_id = ?",
-                (str(user_id),),
-            ).fetchone()
-            if existing is not None:
-                redemption = self._row_to_dict(existing) or {}
-                if redemption.get("status") in {"claimed", "delivered"}:
-                    return False, redemption
-                conn.execute(
-                    """
-                    UPDATE trial_redemptions
-                    SET chat_id = ?, status = 'claimed', transport = ?, updated_at = ?, meta_json = '{}'
-                    WHERE user_id = ?
-                    """,
-                    (str(chat_id), transport, now, str(user_id)),
-                )
-            else:
-                conn.execute(
-                    """
-                    INSERT INTO trial_redemptions(user_id, chat_id, status, transport, created_at, updated_at)
-                    VALUES(?, ?, 'claimed', ?, ?, ?)
-                    """,
-                    (str(user_id), str(chat_id), transport, now, now),
-                )
+        with self.transaction() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO trial_redemptions(user_id, chat_id, status, transport, created_at, updated_at)
+                VALUES(?, ?, 'claimed', ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                  chat_id = excluded.chat_id,
+                  status = 'claimed',
+                  transport = excluded.transport,
+                  updated_at = excluded.updated_at,
+                  meta_json = '{}'
+                WHERE trial_redemptions.status NOT IN ('claimed', 'delivered')
+                """,
+                (str(user_id), str(chat_id), transport, now, now),
+            )
+            claimed = cur.rowcount == 1
             row = conn.execute(
                 "SELECT * FROM trial_redemptions WHERE user_id = ?",
                 (str(user_id),),
             ).fetchone()
-        return True, self._row_to_dict(row) or {}
+        return claimed, self._row_to_dict(row) or {}
 
     def mark_trial_delivered(self, *, user_id: int | str, profile_public_id: str, order_public_id: str | None = None) -> None:
         now = now_ts()
