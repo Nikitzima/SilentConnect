@@ -265,11 +265,14 @@ class SingboxChallengerM1Test(unittest.TestCase):
         ob = next(o for o in cfg["outbounds"] if o.get("tag") == "nl-speed-hysteria2")
         self.assertEqual(ob.get("type"), "hysteria2")
         self.assertEqual(ob.get("server"), "sub.example.com")
-        self.assertEqual(ob.get("server_port"), 443)
+        self.assertEqual(ob.get("server_ports"), ["30000:40000"])
+        self.assertEqual(ob.get("hop_interval"), "30s")
         self.assertEqual(ob["tls"].get("alpn"), ["h3"])
         self.assertEqual(ob["tls"].get("server_name"), "sub.example.com")
-        self.assertEqual(ob.get("obfs", {}).get("type"), "salamander")
+        self.assertEqual(ob.get("obfs", {}).get("type"), "gecko")
         self.assertEqual(ob.get("obfs", {}).get("password"), "485a96779d1ad79d0fa80ca0")
+        self.assertEqual(ob.get("obfs", {}).get("min_packet_size"), 512)
+        self.assertEqual(ob.get("obfs", {}).get("max_packet_size"), 1000)
         self.assertTrue(UUID_REGEX.match(ob.get("password", "")))
 
     def test_07_nl_grpc_properties(self):
@@ -323,10 +326,14 @@ class SingboxChallengerM1Test(unittest.TestCase):
         ob = next(o for o in cfg["outbounds"] if o.get("tag") == "fi-speed-hysteria2")
         self.assertEqual(ob.get("type"), "hysteria2")
         self.assertEqual(ob.get("server"), "fi.example.com")
-        self.assertEqual(ob.get("server_port"), 443)
+        self.assertEqual(ob.get("server_ports"), ["30000:40000"])
+        self.assertEqual(ob.get("hop_interval"), "30s")
         self.assertEqual(ob["tls"].get("alpn"), ["h3"])
         self.assertEqual(ob["tls"].get("server_name"), "fi.example.com")
-        self.assertEqual(ob.get("obfs", {}).get("type"), "salamander")
+        self.assertEqual(ob.get("obfs", {}).get("type"), "gecko")
+        self.assertEqual(ob.get("obfs", {}).get("password"), "485a96779d1ad79d0fa80ca0")
+        self.assertEqual(ob.get("obfs", {}).get("min_packet_size"), 512)
+        self.assertEqual(ob.get("obfs", {}).get("max_packet_size"), 1000)
         self.assertTrue(UUID_REGEX.match(ob.get("password", "")))
 
     def test_12_fi_grpc_properties(self):
@@ -408,7 +415,12 @@ class SingboxChallengerM1Test(unittest.TestCase):
                     "listen_port": 20808
                 }
             ],
-            "outbounds": [ob for ob in cfg["outbounds"] if ob.get("type") != "dns"],
+            "outbounds": [
+                {**ob, "obfs": {"type": "salamander", "password": ob["obfs"]["password"]}}
+                if ob.get("type") == "hysteria2" and ob.get("obfs", {}).get("type") == "gecko"
+                else ob
+                for ob in cfg["outbounds"] if ob.get("type") != "dns"
+            ],
             "route": {
                 "auto_detect_interface": True,
                 "default_domain_resolver": "dns-remote",
