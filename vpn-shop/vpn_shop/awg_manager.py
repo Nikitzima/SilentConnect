@@ -66,14 +66,14 @@ SERVERS: dict[str, dict[str, Any]] = {
         "flag": "🇵🇱",
         "mode": "ssh",
         "exec_mode": "ssh",
-        "host": os.environ.get("AWG_PL_HOST", "2.56.125.177"),
-        "ssh_host": os.environ.get("AWG_PL_HOST", "2.56.125.177"),
+        "host": os.environ.get("AWG_PL_HOST", "2.56.125.177"),  # PLACEHOLDER
+        "ssh_host": os.environ.get("AWG_PL_HOST", "2.56.125.177"),  # PLACEHOLDER
         "ssh_user": os.environ.get("AWG_PL_SSH_USER", "root"),
         "ssh_port": int(os.environ.get("AWG_PL_SSH_PORT", "22")),
         "container": os.environ.get("AWG_PL_CONTAINER", "amnezia-awg2"),
         "conf_path": "/opt/amnezia/awg/awg0.conf",
         "subnet": os.environ.get("AWG_PL_SUBNET", "10.8.3"),
-        "endpoint_host": os.environ.get("AWG_PL_ENDPOINT_HOST", "pl.silentconnect.net"),
+        "endpoint_host": os.environ.get("AWG_PL_ENDPOINT_HOST", "pl.silentconnect.net"),  # PLACEHOLDER
         "endpoint_port": os.environ.get("AWG_PL_ENDPOINT_PORT", "44121"),
         "allowed_ips_file": os.environ.get("AWG_PL_ALLOWED_IPS_FILE", os.environ.get("AWG_ALLOWED_IPS_FILE", "/root/vpn-shop/awg/allowed-ips.txt")),
         "client_dns": os.environ.get("AWG_CLIENT_DNS", "1.1.1.1, 1.0.0.1"),
