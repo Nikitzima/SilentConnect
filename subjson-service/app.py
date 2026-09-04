@@ -199,12 +199,12 @@ GRPC_SERVICE_NAME = os.environ.get("GRPC_SERVICE_NAME", "grpc-maxru").strip()
 
 FI_REALITY_SNI_CLASSIC = os.environ.get("FI_REALITY_SNI_CLASSIC", "sber.ru").strip()
 FI_REALITY_SNI_FAST = os.environ.get("FI_REALITY_SNI_FAST", "sber.ru").strip()
-FI_GRPC_REALITY_SNI = os.environ.get("FI_GRPC_REALITY_SNI", "vk.com").strip()
+FI_GRPC_REALITY_SNI = os.environ.get("FI_GRPC_REALITY_SNI", "sbercloud.ru").strip()
 FI_XHTTP_REALITY_PUBLIC_KEY = os.environ.get("FI_XHTTP_REALITY_PUBLIC_KEY", "ASvvjJ4dOcHst5FWDJ9D562UQ0nN1pAw0l13Z58RNQA").strip()
 FI_XHTTP_REALITY_SHORT_ID = os.environ.get("FI_XHTTP_REALITY_SHORT_ID", "a1b2c3d4e5f60718").strip()
-FI_XHTTP_REALITY_SNI = os.environ.get("FI_XHTTP_REALITY_SNI", "speed.cloudflare.com").strip()
+FI_XHTTP_REALITY_SNI = os.environ.get("FI_XHTTP_REALITY_SNI", "sberauto.com").strip()
 FI_XHTTP_REALITY_PORT = int(os.environ.get("FI_XHTTP_REALITY_PORT", "443"))
-HYSTERIA_PORT = int(os.environ.get("HYSTERIA_PORT", "38443"))
+HYSTERIA_PORT = int(os.environ.get("HYSTERIA_PORT", "443"))
 
 PL_STANDBY_HOST = os.environ.get("PL_STANDBY_HOST", "").strip()
 PL_REALITY_PUBLIC_KEY = os.environ.get("PL_REALITY_PUBLIC_KEY", "hgj4G9HOJ_6OVYTkeha0vVdEcyuLVzR4Op2BV7CeIW8").strip()
@@ -1950,7 +1950,7 @@ def build_singbox_smart_config(
             "type": "hysteria2",
             "tag": "nl-speed-hysteria2",
             "server": nl_sub,
-            "server_port": HYSTERIA_PORT,
+            "server_port": 443,
             "password": client_uuid,
             "tls": {
                 "enabled": True,
@@ -1958,10 +1958,8 @@ def build_singbox_smart_config(
                 "alpn": ["h3"],
             },
             "obfs": {
-                "type": "gecko",
+                "type": "salamander",
                 "password": HYSTERIA_SALAMANDER_PASSWORD,
-                "min_packet_size": 512,
-                "max_packet_size": 1000,
             },
         },
         {
@@ -2051,7 +2049,7 @@ def build_singbox_smart_config(
             "type": "hysteria2",
             "tag": "fi-speed-hysteria2",
             "server": fi_edge,
-            "server_port": HYSTERIA_PORT,
+            "server_port": 443,
             "password": client_uuid,
             "tls": {
                 "enabled": True,
@@ -2059,17 +2057,15 @@ def build_singbox_smart_config(
                 "alpn": ["h3"],
             },
             "obfs": {
-                "type": "gecko",
+                "type": "salamander",
                 "password": HYSTERIA_SALAMANDER_PASSWORD,
-                "min_packet_size": 512,
-                "max_packet_size": 1000,
             },
         },
         {
             "type": "vless",
             "tag": "fi-backup-grpc",
             "server": fi_edge,
-            "server_port": 29443,
+            "server_port": 443,
             "uuid": client_uuid,
             "transport": {
                 "type": "grpc",
@@ -2079,7 +2075,7 @@ def build_singbox_smart_config(
             },
             "tls": {
                 "enabled": True,
-                "server_name": GRPC_REALITY_SNI,
+                "server_name": FI_GRPC_REALITY_SNI,
                 "utls": {"enabled": True, "fingerprint": "chrome"},
                 "reality": {
                     "enabled": True,
@@ -2245,7 +2241,7 @@ def build_singbox_smart_config(
                 "type": "hysteria2",
                 "tag": "pl-speed-hysteria2",
                 "server": pl_edge,
-                "server_port": HYSTERIA_PORT,
+                "server_port": 443,
                 "password": client_uuid,
                 "tls": {
                     "enabled": True,
@@ -2253,10 +2249,8 @@ def build_singbox_smart_config(
                     "alpn": ["h3"],
                 },
                 "obfs": {
-                    "type": "gecko",
+                    "type": "salamander",
                     "password": HYSTERIA_SALAMANDER_PASSWORD,
-                    "min_packet_size": 512,
-                    "max_packet_size": 1000,
                 },
             },
             {
@@ -2782,13 +2776,13 @@ def build_streisand_bundle(
     uris = [
         f"vless://{client_uuid}@{nl_edge}:443?type=tcp&security=reality&pbk={tcp_pk}&fp=chrome&sni={TCP_REALITY_SNI_CLASSIC}&sid={tcp_sid}&flow=xtls-rprx-vision#{urllib.parse.quote('🇳🇱 1. Классический TCP (NL)')}",
         f"vless://{client_uuid}@{nl_edge}:443?type=tcp&security=reality&pbk={tcp_pk}&fp=chrome&sni={TCP_REALITY_SNI_FAST}&sid={tcp_sid}&flow=xtls-rprx-vision#{urllib.parse.quote('🇳🇱 2. Быстрый TCP (NL)')}",
-        f"hysteria2://{client_uuid}@{nl_sub}:{HYSTERIA_PORT}/?sni={nl_sub}&obfs=gecko&obfs-password={salamander_pwd}#{urllib.parse.quote('🇳🇱 3. Скоростной Hysteria2 Gecko (NL)')}",
+        f"hy2://{client_uuid}@{nl_sub}:443?sni={nl_sub}&alpn=h3&obfs=salamander&obfs-password={salamander_pwd}#{urllib.parse.quote('🇳🇱 3. Скоростной Hysteria2 (NL)')}",
         f"vless://{client_uuid}@{nl_edge}:29443?type=grpc&security=reality&pbk={grpc_pk}&fp=chrome&sni={GRPC_REALITY_SNI}&sid={grpc_sid}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇳🇱 4. Запасной gRPC (NL)')}",
         f"vless://{client_uuid}@{nl_edge}:443?type=xhttp&security=tls&sni={nl_edge}&alpn=h2,http/1.1&path=%2Fxh-mx-d1f7c0429d6a&mode=packet-up#{urllib.parse.quote('🇳🇱 5. Незаметный XHTTP (NL)')}",
         f"vless://{client_uuid}@{fi_edge}:443?type=tcp&security=reality&pbk={tcp_pk}&fp=chrome&sni={TCP_REALITY_SNI_CLASSIC}&sid={tcp_sid}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 6. Классический TCP (FI)')}",
         f"vless://{client_uuid}@{fi_edge}:443?type=tcp&security=reality&pbk={tcp_pk}&fp=chrome&sni={TCP_REALITY_SNI_FAST}&sid={tcp_sid}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 7. Быстрый TCP (FI)')}",
-        f"hysteria2://{client_uuid}@{fi_edge}:{HYSTERIA_PORT}/?sni={fi_edge}&obfs=gecko&obfs-password={salamander_pwd}&min_packet_size=512&max_packet_size=1000#{urllib.parse.quote('🇫🇮 8. Скоростной Hysteria2 (FI)')}",
-        f"vless://{client_uuid}@{fi_edge}:29443?type=grpc&security=reality&pbk={grpc_pk}&fp=chrome&sni={GRPC_REALITY_SNI}&sid={grpc_sid}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇫🇮 9. Запасной gRPC (FI)')}",
+        f"hy2://{client_uuid}@{fi_edge}:443?sni={fi_edge}&alpn=h3&obfs=salamander&obfs-password={salamander_pwd}#{urllib.parse.quote('🇫🇮 8. Скоростной Hysteria2 (FI)')}",
+        f"vless://{client_uuid}@{fi_edge}:443?type=grpc&security=reality&pbk={grpc_pk}&fp=chrome&sni={FI_GRPC_REALITY_SNI}&sid={grpc_sid}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇫🇮 9. Запасной gRPC (FI)')}",
         f"vless://{client_uuid}@{fi_edge}:{FI_XHTTP_REALITY_PORT}?type=xhttp&security=reality&pbk={fi_xhttp_pk}&fp=chrome&sni={FI_XHTTP_REALITY_SNI}&sid={fi_xhttp_sid}&path=%2Fxh-mx-d1f7c0429d6a&mode=packet-up#{urllib.parse.quote('🇫🇮 10. Незаметный XHTTP Reality (FI)')}",
     ]
     pl_edge = os.environ.get("PL_STANDBY_HOST", PL_STANDBY_HOST).strip()
@@ -2796,7 +2790,7 @@ def build_streisand_bundle(
         uris.extend([
             f"vless://{client_uuid}@{pl_edge}:443?type=tcp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇵🇱 11. Классический TCP (PL)')}",
             f"vless://{client_uuid}@{pl_edge}:443?type=tcp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_FAST}&sid={PL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇵🇱 12. Быстрый TCP (PL)')}",
-            f"hysteria2://{client_uuid}@{pl_edge}:{HYSTERIA_PORT}/?sni={pl_edge}&obfs=gecko&obfs-password={salamander_pwd}&min_packet_size=512&max_packet_size=1000#{urllib.parse.quote('🇵🇱 13. Скоростной Hysteria2 (PL)')}",
+            f"hy2://{client_uuid}@{pl_edge}:443?sni={pl_edge}&alpn=h3&obfs=salamander&obfs-password={salamander_pwd}#{urllib.parse.quote('🇵🇱 13. Скоростной Hysteria2 (PL)')}",
             f"vless://{client_uuid}@{pl_edge}:29443?type=grpc&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇵🇱 14. Запасной gRPC (PL)')}",
             f"vless://{client_uuid}@{pl_edge}:{PL_XHTTP_REALITY_PORT}?type=xhttp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&path=%2Fxh-7m2q9r4k1v8p3s6&mode=packet-up#{urllib.parse.quote('🇵🇱 15. Незаметный XHTTP Reality (PL)')}",
         ])
@@ -3089,42 +3083,45 @@ def build_four_profiles(
                 "protocol": "hysteria",
                 "tag": "proxy",
                 "obfs": {
-                    "type": "gecko",
+                    "type": "salamander",
                     "password": HYSTERIA_SALAMANDER_PASSWORD,
-                    "min_packet_size": 512,
-                    "max_packet_size": 1000
                 },
                 "streamSettings": {
+                    "finalmask": {
+                        "udp": [
+                            {"settings": {"password": HYSTERIA_SALAMANDER_PASSWORD}, "type": "salamander"}
+                        ]
+                    },
                     "hysteriaSettings": {
                         "auth": client_uuid,
                         "auth_str": client_uuid,
                         "authStr": client_uuid,
                         "password": client_uuid,
                         "obfs": {
-                            "type": "gecko",
-                            "password": HYSTERIA_SALAMANDER_PASSWORD
+                            "type": "salamander",
+                            "password": HYSTERIA_SALAMANDER_PASSWORD,
                         },
                         "udpIdleTimeout": 60,
-                        "version": 2
+                        "version": 2,
                     },
                     "network": "hysteria",
                     "security": "tls",
                     "tlsSettings": {
                         "alpn": ["h3"],
-                        "serverName": public_host
-                    }
+                        "serverName": public_host,
+                    },
                 },
                 "settings": {
                     "address": public_host,
-                    "port": HYSTERIA_PORT,
+                    "port": 443,
                     "version": 2,
                     "auth": client_uuid,
                     "auth_str": client_uuid,
                     "obfs": {
-                        "type": "gecko",
-                        "password": HYSTERIA_SALAMANDER_PASSWORD
-                    }
-                }
+                        "type": "salamander",
+                        "password": HYSTERIA_SALAMANDER_PASSWORD,
+                    },
+                },
             },
             {"protocol": "freedom", "tag": "direct"},
             {"protocol": "blackhole", "tag": "block"}
@@ -6366,7 +6363,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     return
                 public_host = resolve_public_host(self.headers)
 
-                if path[1] in {"json-global", "sub-global", "singbox-global", "happ-global"}:
+                if path[1] in {"json-global", "sub-global", "happ-global"}:
                     payload = build_four_profiles(path[2], public_host, "global")
                     self._send_subscription_json(payload, include_body, subscription_route=path[1], subscription_id=path[2])
                     return

@@ -335,24 +335,24 @@ class SingboxChallengerM1Test(unittest.TestCase):
         ob = next(o for o in cfg["outbounds"] if o.get("tag") == "fi-backup-grpc")
         self.assertEqual(ob.get("type"), "vless")
         self.assertEqual(ob.get("server"), "fi.example.com")
-        self.assertEqual(ob.get("server_port"), 29443)
+        self.assertEqual(ob.get("server_port"), 443)
         self.assertEqual(ob["transport"].get("service_name"), "grpc-maxru")
-        self.assertEqual(ob["tls"].get("server_name"), "vk.com")
+        self.assertEqual(ob["tls"].get("server_name"), subjson_app.FI_GRPC_REALITY_SNI)
         self.assertTrue(UUID_REGEX.match(ob.get("uuid", "")))
 
-    def test_13_fi_xhttp_reality_port_39443_properties(self):
-        """Verify FI XHTTP Reality on Port 39443 (Hetzner TSPU Bypass)."""
+    def test_13_fi_xhttp_reality_properties(self):
+        """Verify FI XHTTP Reality on Port 443."""
         cfg = subjson_app.build_singbox_smart_config(self.active_sub_id)
         ob = next(o for o in cfg["outbounds"] if o.get("tag") == "fi-stealth-xhttp")
         self.assertEqual(ob.get("type"), "vless")
         self.assertEqual(ob.get("server"), "fi.example.com")
-        self.assertEqual(ob.get("server_port"), 39443)
+        self.assertEqual(ob.get("server_port"), 443)
         self.assertEqual(ob.get("transport", {}).get("type"), "http")
         self.assertEqual(ob["transport"].get("path"), "/xh-mx-d1f7c0429d6a")
         self.assertTrue(ob.get("tls", {}).get("reality", {}).get("enabled"))
         self.assertEqual(ob["tls"]["reality"].get("public_key"), subjson_app.FI_XHTTP_REALITY_PUBLIC_KEY)
         self.assertEqual(ob["tls"]["reality"].get("short_id"), subjson_app.FI_XHTTP_REALITY_SHORT_ID)
-        self.assertEqual(ob["tls"].get("server_name"), "sber.ru")
+        self.assertEqual(ob["tls"].get("server_name"), subjson_app.FI_XHTTP_REALITY_SNI)
         self.assertTrue(UUID_REGEX.match(ob.get("uuid", "")))
 
     # =========================================================================
