@@ -854,6 +854,16 @@ class WebCheckout:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="SilentConnect">
+  <meta name="theme-color" content="#0e1317">
+  <meta property="og:title" content="SilentConnect — Безопасный VPN">
+  <meta property="og:description" content="Приватный VPN-сервис для персонального использования. Xray Reality, Hysteria 2, AmneziaWG. Без логирования активности.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://silentconnect.net">
+  <meta property="og:site_name" content="SilentConnect">
+  <meta property="og:image" content="https://silentconnect.net/assets/telegram/avatar.png">
   {refresh}
   <title>{html.escape(title)} · SilentConnect</title>
   <link rel="icon" type="image/png" href="/assets/telegram/avatar.png">
@@ -1227,6 +1237,39 @@ class WebCheckout:
       .navlinks a.span-6 {{ grid-column: span 6; color: #2fbf71 !important; font-size: 11px; padding: 3.5px 6px; }}
     }}
   </style>
+  <script type="application/ld+json">
+  {{
+    "@context": "https://schema.org",
+    "@graph": [
+      {{
+        "@type": "Organization",
+        "@id": "https://silentconnect.net/#organization",
+        "name": "SilentConnect",
+        "url": "https://silentconnect.net",
+        "description": "Приватный VPN-сервис для персонального использования без логирования веб-активности",
+        "contactPoint": {{
+          "@type": "ContactPoint",
+          "url": "https://t.me/silentconnect_bot",
+          "description": "Служба поддержки через Telegram-бот"
+        }}
+      }},
+      {{
+        "@type": "SoftwareApplication",
+        "@id": "https://silentconnect.net/#software",
+        "name": "SilentConnect VPN",
+        "applicationCategory": "SecurityApplication",
+        "operatingSystem": "iOS, Android, Windows, macOS, Linux",
+        "offers": {{
+          "@type": "Offer",
+          "price": "199",
+          "priceCurrency": "RUB",
+          "description": "Тарифы от 199 RUB/месяц с Xray Reality, Hysteria 2, AmneziaWG"
+        }},
+        "url": "https://silentconnect.net"
+      }}
+    ]
+  }}
+  </script>
 </head>
 <body>
   <header><nav class="wrap"><a href="/" class="brand"><img src="/assets/telegram/avatar.png" alt="SilentConnect" class="brand-logo"><span>SilentConnect</span></a><div class="navlinks"><a href="/#tariffs" class="span-2">Тарифы</a><a href="/about" class="span-2"><span class="desktop-nav-txt">О сервисе</span><span class="mobile-nav-txt">О нас</span></a><a href="/contact" class="span-2">Контакты</a><a href="{html.escape(self.bot_url)}" class="span-3">Telegram-бот</a><a href="{html.escape(self.support_url)}" class="span-3">Поддержка</a><a href="#cabinet" class="span-6" onclick="openCabinetModal(); return false;" style="color: #2fbf71; font-weight: 600;">🔑 Личный кабинет</a></div></nav></header>
@@ -1238,6 +1281,7 @@ class WebCheckout:
         <a href="/contact">Контакты &amp; Поддержка</a>
         <a href="/legal/privacy">Политика конфиденциальности</a>
         <a href="/legal/terms">Пользовательское соглашение</a>
+            <a href="/legal/refund">Политика возвратов</a>
       </div>
       <div class="footer-copy">© 2026 SilentConnect. Все права защищены.</div>
     </div>
@@ -1469,6 +1513,53 @@ class WebCheckout:
         </div>
         """
         return self.render_page("Пользовательское соглашение", body)
+
+
+    def render_legal_refund(self) -> bytes:
+        body = f"""
+        <div class="card" style="max-width: 860px; margin: 30px auto; line-height: 1.7; padding: 28px 32px;">
+          <div style="margin-bottom: 20px;">
+            <a class="btn secondary" href="/" style="display: inline-flex; width: auto; min-height: 38px; padding: 6px 14px; font-size: 14px;">← На главную к тарифам</a>
+          </div>
+          <h1 style="font-size: 30px; margin-top: 0; margin-bottom: 10px; background: linear-gradient(to right, #fff, #2fbf71); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Политика возвратов SilentConnect</h1>
+          <p class="muted" style="margin-bottom: 24px;">Редакция от 4 сентября 2026 г. · Ручной процессинг возвратов администратором</p>
+
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">1. Общие положения</h3>
+          <p class="muted">SilentConnect не использует автоматизированные платежные шлюзы с встроенным функционалом возврата средств. Все возвраты обрабатываются <strong>исключительно в ручном режиме</strong> администратором сервиса после рассмотрения обращения.</p>
+
+          <h3 style="color: #2fbf71; font-size: 19px; margin-top: 24px;">2. Основания для возврата</h3>
+          <p class="muted">Возврат возможен при одновременном соблюдении следующих условий:</p>
+          <ul class="muted" style="padding-left: 20px; line-height: 1.8;">
+            <li>Заказ был оформлен, но услуга не была предоставлена по техническим причинам на стороне сервиса (сервер недоступен, профиль не генерируется, оплата прошла, но ссылка не отправлена).</li>
+            <li>Услуга была предоставлена, но имеются <strong>неустранимые технические неполадки</strong>, препятствующие использованию VPN-доступа, которые не удалось решить при содействии службы поддержки в течение разумного срока.</li>
+          </ul>
+          <p class="muted" style="margin-top: 12px;"><strong>Важно:</strong> Невсовпадение ожидаемой скорости, незнание методов настройки клиентского приложения или отсутствие желания использовать сервис после успешной активации <strong>не являются</strong> достаточным основанием для возврата. Перед покупкой рекомендуем ознакомиться с доступными протоколами подключения и убедиться в технической совместимости.</p>
+
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">3. Порядок подачи обращения</h3>
+          <ol class="muted" style="padding-left: 20px; line-height: 1.8;">
+            <li>Напишите обращение на <a href="mailto:{html.escape(self.settings.support_email)}" style="color: var(--green); text-decoration: underline;">{html.escape(self.settings.support_email)}</a> или в <a href="{html.escape(self.support_url)}" style="color: var(--green); text-decoration: underline;" target="_blank">Telegram-боте поддержки</a>.</li>
+            <li>Укажите в обращении: номер заказа (#ord_...), email, на который оформлялся заказ, и описание проблемы.</li>
+            <li>Приложите скриншоты или логи, подтверждающие техническую неисправность (если применимо).</li>
+          </ol>
+
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">4. Сроки рассмотрения</h3>
+          <ul class="muted" style="padding-left: 20px; line-height: 1.8;">
+            <li><strong>Время ответа:</strong> до 48 часов с момента получения обращения.</li>
+            <li><strong>Решение о возврате:</strong> принимается администратором индивидуально на основе предоставленных данных.</li>
+            <li><strong>Зачисление средств:</strong> при одобрении возврата — в течение 1–3 банковских дней (в зависимости от банка получателя).</li>
+          </ul>
+
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">5. Способ возврата</h3>
+          <p class="muted">Возврат осуществляется переводом на банковскую карту или СБП-кошелёк, с которых была произведена оплата. Возврат на карту третьего лица невозможен.</p>
+
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">6. Контакты</h3>
+          <p class="muted">
+            Электронная почта: <a href="mailto:{html.escape(self.settings.support_email)}" style="color: var(--green); text-decoration: underline;">{html.escape(self.settings.support_email)}</a><br>
+            Telegram-бот поддержки: <a href="{html.escape(self.support_url)}" style="color: var(--green); text-decoration: underline;" target="_blank">{html.escape(self.support_url)}</a>
+          </p>
+        </div>
+        """
+        return self.render_page("Политика возвратов", body)
 
     def render_about(self) -> bytes:
         body = f"""
@@ -2133,6 +2224,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             if path == ["legal", "terms"]:
                 self._send(HTTPStatus.OK, self.checkout.render_legal_terms())
+            if path == ["legal", "refund"]:
+                self._send(HTTPStatus.OK, self.checkout.render_legal_refund())
                 return
             if path == ["about"]:
                 self._send(HTTPStatus.OK, self.checkout.render_about())
