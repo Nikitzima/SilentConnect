@@ -2016,7 +2016,7 @@ def build_singbox_smart_config(
             "flow": "xtls-rprx-vision",
             "tls": {
                 "enabled": True,
-                "server_name": TCP_REALITY_SNI_CLASSIC,
+                "server_name": FI_REALITY_SNI_CLASSIC,
                 "utls": {"enabled": True, "fingerprint": "chrome"},
                 "reality": {
                     "enabled": True,
@@ -2035,7 +2035,7 @@ def build_singbox_smart_config(
             "flow": "xtls-rprx-vision",
             "tls": {
                 "enabled": True,
-                "server_name": TCP_REALITY_SNI_FAST,
+                "server_name": FI_REALITY_SNI_FAST,
                 "utls": {"enabled": True, "fingerprint": "chrome"},
                 "reality": {
                     "enabled": True,
