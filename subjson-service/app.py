@@ -1950,7 +1950,8 @@ def build_singbox_smart_config(
             "type": "hysteria2",
             "tag": "nl-speed-hysteria2",
             "server": nl_sub,
-            "server_port": 443,
+            "server_ports": ["30000:40000"],
+            "hop_interval": "30s",
             "password": client_uuid,
             "tls": {
                 "enabled": True,
@@ -1958,8 +1959,10 @@ def build_singbox_smart_config(
                 "alpn": ["h3"],
             },
             "obfs": {
-                "type": "salamander",
+                "type": "gecko",
                 "password": HYSTERIA_SALAMANDER_PASSWORD,
+                "min_packet_size": 512,
+                "max_packet_size": 1000,
             },
         },
         {
@@ -2049,7 +2052,8 @@ def build_singbox_smart_config(
             "type": "hysteria2",
             "tag": "fi-speed-hysteria2",
             "server": fi_edge,
-            "server_port": 443,
+            "server_ports": ["30000:40000"],
+            "hop_interval": "30s",
             "password": client_uuid,
             "tls": {
                 "enabled": True,
@@ -2057,8 +2061,10 @@ def build_singbox_smart_config(
                 "alpn": ["h3"],
             },
             "obfs": {
-                "type": "salamander",
+                "type": "gecko",
                 "password": HYSTERIA_SALAMANDER_PASSWORD,
+                "min_packet_size": 512,
+                "max_packet_size": 1000,
             },
         },
         {
@@ -2241,7 +2247,8 @@ def build_singbox_smart_config(
                 "type": "hysteria2",
                 "tag": "pl-speed-hysteria2",
                 "server": pl_edge,
-                "server_port": 443,
+                "server_ports": ["30000:40000"],
+                "hop_interval": "30s",
                 "password": client_uuid,
                 "tls": {
                     "enabled": True,
@@ -2249,8 +2256,10 @@ def build_singbox_smart_config(
                     "alpn": ["h3"],
                 },
                 "obfs": {
-                    "type": "salamander",
+                    "type": "gecko",
                     "password": HYSTERIA_SALAMANDER_PASSWORD,
+                    "min_packet_size": 512,
+                    "max_packet_size": 1000,
                 },
             },
             {
