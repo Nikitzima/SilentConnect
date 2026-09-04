@@ -118,7 +118,7 @@ def build_authoritative_clash_meta_dict(
                 "password": client_uuid,
                 "sni": CONSTANTS["NL_SUB_HOST"],
                 "alpn": ["h3"],
-                "obfs": "salamander",
+                "obfs": "gecko",
                 "obfs-password": CONSTANTS["HYSTERIA_SALAMANDER_PASSWORD"],
                 "udp": True,
             },
@@ -197,7 +197,7 @@ def build_authoritative_clash_meta_dict(
                 "password": client_uuid,
                 "sni": CONSTANTS["FI_HOST"],
                 "alpn": ["h3"],
-                "obfs": "salamander",
+                "obfs": "gecko",
                 "obfs-password": CONSTANTS["HYSTERIA_SALAMANDER_PASSWORD"],
                 "udp": True,
             },
@@ -481,7 +481,7 @@ def parse_and_validate_streisand_bundle(encoded_bundle: str) -> Tuple[List[Dict[
                     if not params.get("sni"):
                         errors.append(f"Line {idx+1}: Missing 'sni' in Reality node")
             elif scheme in ("hy2", "hysteria2"):
-                if params.get("obfs", [""])[0] == "salamander":
+                if params.get("obfs", [""])[0] in ("salamander", "gecko"):
                     if not params.get("obfs-password"):
                         errors.append(f"Line {idx+1}: Missing 'obfs-password' for Salamander")
 
@@ -545,7 +545,7 @@ class TestClashMetaYamlSchema(unittest.TestCase):
         # NL Hysteria2
         nl_hy2 = proxies["🇳🇱 NL Speed Hysteria2"]
         self.assertEqual(nl_hy2["type"], "hysteria2")
-        self.assertEqual(nl_hy2["obfs"], "salamander")
+        self.assertEqual(nl_hy2["obfs"], "gecko")
         self.assertEqual(nl_hy2["obfs-password"], CONSTANTS["HYSTERIA_SALAMANDER_PASSWORD"])
 
     def test_fallback_group_priority_order(self):
