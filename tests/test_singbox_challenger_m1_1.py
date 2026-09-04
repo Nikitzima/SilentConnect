@@ -314,7 +314,7 @@ class SingboxChallengerM1Test(unittest.TestCase):
         self.assertEqual(ob.get("type"), "vless")
         self.assertEqual(ob.get("server"), "fi.example.com")
         self.assertEqual(ob.get("server_port"), 443)
-        self.assertEqual(ob["tls"].get("server_name"), "st.kinopoisk.ru")
+        self.assertEqual(ob["tls"].get("server_name"), subjson_app.FI_REALITY_SNI_FAST)
         self.assertTrue(UUID_REGEX.match(ob.get("uuid", "")))
 
     def test_11_fi_hysteria2_properties(self):
