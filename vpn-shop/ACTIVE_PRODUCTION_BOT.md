@@ -2,7 +2,7 @@
 
 ## 1. Действующий боевой бот
 - **Telegram Bot**: [@SilentConnectVPNBot](https://t.me/SilentConnectVPNBot)
-- **Token**: `8010600655:AAFBJVWLewer10FAJFSXOr-190mxRc6-Y78`
+- **Token**: `8010600655:AAFB...` (полный токен хранится в `.env.silentconnect`)
 - **Каталог данных**: `/root/vpn-shop/data-silentconnect/`
 - **База данных**: `/root/vpn-shop/data-silentconnect/vpn_shop.db`
 - **Конфигурация**: `/root/vpn-shop/.env.silentconnect` (и синхронизированный `/root/vpn-shop/.env`)
