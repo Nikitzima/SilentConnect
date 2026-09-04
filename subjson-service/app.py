@@ -84,6 +84,49 @@ SECRET_SEGMENT = get_env("SECRET_SEGMENT", "my-secret-sub").strip("/")  # PLACEH
 
 DEFAULT_SECRET_SEGMENTS = {"my-secret-sub", "secret-sub", ""}
 
+SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
+    ("Referrer-Policy", "no-referrer"),
+    ("X-Content-Type-Options", "nosniff"),
+    ("X-Frame-Options", "DENY"),
+    ("Strict-Transport-Security", "max-age=31536000; includeSubDomains"),
+    (
+        "Content-Security-Policy",
+        "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; "
+        "frame-src https://challenges.cloudflare.com; connect-src 'self'; "
+        "form-action 'self' https://t.me; base-uri 'self'; frame-ancestors 'none'",
+    ),
+)
+
+
+def _verify_order_web_token(order_row: Any, token: str | None) -> bool:
+    if not order_row or not token:
+        return False
+    # Check web_token_hash if column exists
+    stored_hash = None
+    try:
+        if "web_token_hash" in order_row.keys():
+            stored_hash = order_row["web_token_hash"]
+    except Exception:
+        pass
+    eff_pepper = os.environ.get("SERVER_PEPPER", "").encode("utf-8") or SERVER_PEPPER
+    if stored_hash:
+        msg = f"order_web\x00{token}".encode("utf-8")
+        expected_hash = hmac.new(eff_pepper, msg, hashlib.sha256).hexdigest()
+        if hmac.compare_digest(str(stored_hash), expected_hash):
+            return True
+    # Fallback to meta_json['web_token']
+    try:
+        raw_meta = order_row["meta_json"] if "meta_json" in order_row.keys() else None
+        if raw_meta:
+            meta = json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta
+            legacy = str(meta.get("web_token") or "")
+            if legacy and hmac.compare_digest(legacy, token):
+                return True
+    except Exception:
+        pass
+    return False
+
 
 def validate_production_secrets() -> None:
     is_prod = (
@@ -600,6 +643,10 @@ def render_payment_notice_html(order_data: Any, status_override: str | None = No
     device_limit = int(meta.get("device_limit") or 3)
     reported_at = meta.get("web_paid_reported_at")
 
+    token = str(meta.get("web_token") or "")
+    token_query = f"?token={html.escape(token, quote=True)}" if token else ""
+    token_input = f'<input type="hidden" name="web_token" value="{html.escape(token, quote=True)}"/>' if token else ""
+
     close_btn = f"""<button type="button" onclick="dismissPaymentNotice('{order_id}')" style="position:absolute; top:12px; right:12px; width:32px; height:32px; min-width:32px; min-height:32px; border-radius:50%; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.22); color:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:15px; font-weight:700; line-height:1; padding:0; outline:none; transition:all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.22)'; this.style.transform='scale(1.08)';" onmouseout="this.style.background='rgba(255,255,255,0.08)'; this.style.transform='scale(1)';" title="Закрыть">✕</button>"""
 
     if order_status in ("paid", "delivered"):
@@ -627,7 +674,8 @@ def render_payment_notice_html(order_data: Any, status_override: str | None = No
           <h2 id="noticeTitle" style="color:#f59e0b; margin:0 0 8px; font-size:18px; font-weight:700; display:flex; align-items:center; gap:8px;">⏳ Уведомление об оплате отправлено!</h2>
           <p id="noticeBody" style="color:#fff; font-size:14.5px; margin:0; line-height:1.5; padding-right:32px;">Мы получили ваше уведомление по заказу <strong>#{order_id}</strong>. Менеджер проверяет зачисление. Ваша подписка продлится автоматически без изменения ссылок!</p>
           <div style="margin-top:14px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-            <form method="post" action="/{SECRET_SEGMENT}/cancel/{order_id}" style="margin:0;">
+            <form method="post" action="/{SECRET_SEGMENT}/cancel/{order_id}{token_query}" style="margin:0;">
+              {token_input}
               <button type="submit" class="button secondary" style="min-height:36px; padding:6px 14px; font-size:13px; font-weight:600; background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.35); border-radius:8px; cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition:all 0.2s;" onmouseover="this.style.background='rgba(239,68,68,0.22)';" onmouseout="this.style.background='rgba(239,68,68,0.12)';">Отменить заказ ✖</button>
             </form>
             <span style="color:var(--muted); font-size:12.5px;">Если передумали или ошиблись</span>
@@ -654,11 +702,13 @@ def render_payment_notice_html(order_data: Any, status_override: str | None = No
           </div>
           <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
             <a href="{html.escape(pay_link, quote=True)}" target="_blank" rel="noopener" class="button" style="min-height:46px; font-weight:800; text-decoration:none; background:var(--green); color:#000; display:inline-flex; align-items:center; justify-content:center;">Оплатить переводом 💳</a>
-            <form method="post" action="/{SECRET_SEGMENT}/paid/{order_id}" style="margin:0;">
+            <form method="post" action="/{SECRET_SEGMENT}/paid/{order_id}{token_query}" style="margin:0;">
+              {token_input}
               <button type="submit" class="button success" style="min-height:46px; font-weight:800; background:rgba(255,255,255,0.12); color:#fff; border:1px solid var(--line);">Я оплатил(а) ✓</button>
             </form>
-            <a href="https://t.me/SilentConnectVPNBot?start=claim_{order_id}_{meta.get('web_token', '')}" target="_blank" class="button secondary" style="min-height:46px; font-weight:600; text-decoration:none; display:inline-flex; align-items:center;">Привязать в Telegram ✈️</a>
-            <form method="post" action="/{SECRET_SEGMENT}/cancel/{order_id}" style="margin:0;">
+            <a href="https://t.me/SilentConnectVPNBot?start=claim_{order_id}_{token}" target="_blank" class="button secondary" style="min-height:46px; font-weight:600; text-decoration:none; display:inline-flex; align-items:center;">Привязать в Telegram ✈️</a>
+            <form method="post" action="/{SECRET_SEGMENT}/cancel/{order_id}{token_query}" style="margin:0;">
+              {token_input}
               <button type="submit" class="button secondary" style="min-height:46px; font-weight:600; background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.3);">Отменить ✖</button>
             </form>
           </div>
@@ -700,7 +750,7 @@ def check_pending_payment_card(sub_id: str) -> str:
 
 
 
-def handle_inline_order_paid(order_public_id: str) -> bool:
+def handle_inline_order_paid(order_public_id: str, web_token: str | None = None) -> bool:
     db_path = find_store_db_path()
     if not Path(db_path).exists():
         return False
@@ -711,6 +761,10 @@ def handle_inline_order_paid(order_public_id: str) -> bool:
     try:
         row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (order_public_id,)).fetchone()
         if not row:
+            return False
+
+        if web_token is not None and not _verify_order_web_token(row, web_token):
+            LOGGER.warning("Unauthorized /paid attempt for order %s (invalid web token)", order_public_id)
             return False
 
         # Idempotent CAS: skip if already delivered or cancelled
@@ -819,7 +873,7 @@ def handle_inline_order_paid(order_public_id: str) -> bool:
         conn.close()
 
 
-def handle_inline_order_cancel(order_public_id: str) -> str:
+def handle_inline_order_cancel(order_public_id: str, web_token: str | None = None) -> str:
     db_path = find_store_db_path()
     if not Path(db_path).exists():
         return ""
@@ -829,16 +883,21 @@ def handle_inline_order_cancel(order_public_id: str) -> str:
     conn.row_factory = sqlite3.Row
     try:
         row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (order_public_id,)).fetchone()
+        if not row:
+            return ""
+
+        if web_token is not None and not _verify_order_web_token(row, web_token):
+            LOGGER.warning("Unauthorized /cancel attempt for order %s (invalid web token)", order_public_id)
+            return ""
+
         sub_id = ""
-        profile_id = None
-        if row:
-            profile_id = row["provisioned_profile_id"]
-            if row["meta_json"]:
-                try:
-                    meta = json.loads(row["meta_json"])
-                    sub_id = str(meta.get("sub_id") or "")
-                except Exception:
-                    pass
+        profile_id = row["provisioned_profile_id"]
+        if row["meta_json"]:
+            try:
+                meta = json.loads(row["meta_json"])
+                sub_id = str(meta.get("sub_id") or "")
+            except Exception:
+                pass
 
         now = int(time.time())
         if profile_id:
@@ -6222,9 +6281,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send_html(HTTPStatus.OK, generic_html, include_body=True)
                 return
 
-            if len(path) == 3 and path[0] == SECRET_SEGMENT and path[1] == "paid":
+            if len(path) == 3 and path[0] == SECRET_SEGMENT and path[1] in ("paid", "cancel"):
                 order_public_id = path[2]
-                handle_inline_order_paid(order_public_id)
+                form = self._read_form()
+                req_token = query.get("token", [""])[0].strip() or form.get("web_token", "").strip() or self.headers.get("X-Web-Token", "").strip()
+                if not req_token:
+                    auth = self.headers.get("Authorization", "").strip()
+                    if auth.startswith("Bearer "):
+                        req_token = auth[7:].strip()
 
                 db_path = find_store_db_path()
                 order_row = None
@@ -6240,53 +6304,41 @@ class RequestHandler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
 
-                if order_row:
-                    payment_card = render_payment_notice_html(order_row, status_override="reported")
-                else:
-                    payment_card = f"""
-                    <section id="paymentNoticeCard" class="install" data-order-id="{order_public_id}" data-order-status="reported" style="position:relative; margin-bottom:24px; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.4); border-radius:14px; padding:18px 20px; transition: all 0.3s ease;">
-                      <button type="button" onclick="dismissPaymentNotice('{order_public_id}')" style="position:absolute; top:12px; right:12px; width:32px; height:32px; min-width:32px; min-height:32px; border-radius:50%; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.22); color:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:15px; font-weight:700; line-height:1; padding:0; outline:none; transition:all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.22)'; this.style.transform='scale(1.08)';" onmouseout="this.style.background='rgba(255,255,255,0.08)'; this.style.transform='scale(1)';" title="Закрыть">✕</button>
-                      <h2 id="noticeTitle" style="color:#f59e0b; margin:0 0 8px; font-size:18px; font-weight:700; display:flex; align-items:center; gap:8px;">⏳ Уведомление об оплате отправлено!</h2>
-                      <p id="noticeBody" style="color:#fff; font-size:14.5px; margin:0; line-height:1.5; padding-right:32px;">Мы получили ваше уведомление по заказу <strong>#{order_public_id}</strong>. Менеджер проверяет зачисление. Ваша подписка продлится автоматически без изменения ссылок!</p>
-                      <div style="margin-top:14px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-                        <form method="post" action="/{SECRET_SEGMENT}/cancel/{order_public_id}" style="margin:0;">
-                          <button type="submit" class="button secondary" style="min-height:36px; padding:6px 14px; font-size:13px; font-weight:600; background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.35); border-radius:8px; cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition:all 0.2s;" onmouseover="this.style.background='rgba(239,68,68,0.22)';" onmouseout="this.style.background='rgba(239,68,68,0.12)';">Отменить заказ ✖</button>
-                        </form>
-                        <span style="color:var(--muted); font-size:12.5px;">Если передумали или ошиблись</span>
-                      </div>
-                    </section>
-                    """
-
-                if is_ajax:
-                    self._send_json(HTTPStatus.OK, {"ok": True, "html": payment_card, "order_public_id": order_public_id}, include_body=True)
+                if not order_row or not _verify_order_web_token(order_row, req_token):
+                    self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "forbidden", "detail": "invalid_order_token"}, include_body=True)
                     return
 
-                sub_id = "default"
-                source_url = public_subscription_url(self.headers, "json", sub_id)
-                quoted_sub_id = urllib.parse.quote(sub_id, safe="")
-                import_query = urllib.parse.urlencode({"url": source_url})
+                if path[1] == "paid":
+                    handle_inline_order_paid(order_public_id, req_token)
+                    payment_card = render_payment_notice_html(order_row, status_override="reported") if order_row else ""
+                    if is_ajax:
+                        self._send_json(HTTPStatus.OK, {"ok": True, "html": payment_card, "order_public_id": order_public_id}, include_body=True)
+                        return
 
-                generic_html = setup_page_html(
-                    subscription_url=source_url,
-                    subscription_id=sub_id,
-                    quoted_sub_id=quoted_sub_id,
-                    import_query=import_query,
-                    payment_card_html=payment_card,
-                )
-                self._send_html(HTTPStatus.OK, generic_html, include_body=True)
-                return
+                    sub_id = "default"
+                    source_url = public_subscription_url(self.headers, "json", sub_id)
+                    quoted_sub_id = urllib.parse.quote(sub_id, safe="")
+                    import_query = urllib.parse.urlencode({"url": source_url})
 
-            if len(path) == 3 and path[0] == SECRET_SEGMENT and path[1] == "cancel":
-                order_public_id = path[2]
-                sub_id = handle_inline_order_cancel(order_public_id)
-
-                if is_ajax:
-                    self._send_json(HTTPStatus.OK, {"ok": True, "html": ""}, include_body=True)
+                    generic_html = setup_page_html(
+                        subscription_url=source_url,
+                        subscription_id=sub_id,
+                        quoted_sub_id=quoted_sub_id,
+                        import_query=import_query,
+                        payment_card_html=payment_card,
+                    )
+                    self._send_html(HTTPStatus.OK, generic_html, include_body=True)
                     return
 
-                target_sub = sub_id or "default"
-                self._redirect(f"/{SECRET_SEGMENT}/import/{target_sub}", include_body=True)
-                return
+                if path[1] == "cancel":
+                    sub_id = handle_inline_order_cancel(order_public_id, req_token)
+                    if is_ajax:
+                        self._send_json(HTTPStatus.OK, {"ok": True, "html": ""}, include_body=True)
+                        return
+
+                    target_sub = sub_id or "default"
+                    self._redirect(f"/{SECRET_SEGMENT}/import/{target_sub}", include_body=True)
+                    return
 
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False}, include_body=True)
         except ValueError as exc:
@@ -6693,13 +6745,23 @@ class RequestHandler(BaseHTTPRequestHandler):
                             if order_row:
                                 meta = json.loads(order_row["meta_json"]) if order_row["meta_json"] else {}
                                 customer_email = str(order_row["customer_email"] or meta.get("customer_email") or "").strip()
+                                def mask_email(e: str) -> str:
+                                    if not e or "@" not in e:
+                                        return ""
+                                    loc, dom = e.split("@", 1)
+                                    if len(loc) <= 2:
+                                        m_loc = loc[:1] + "***"
+                                    else:
+                                        m_loc = loc[:2] + "***"
+                                    return f"{m_loc}@{dom}"
+
                                 data = {
                                     "ok": True,
                                     "public_id": order_row["public_id"],
                                     "status": order_row["status"],
                                     "duration_days": int(order_row["duration_days"] or 30),
                                     "device_limit": int(meta.get("device_limit") or 3),
-                                    "customer_email": customer_email,
+                                    "customer_email": mask_email(customer_email),
                                     "final_price_rub": int(order_row["final_price_rub"] or 0),
                                     "web_paid_reported_at": meta.get("web_paid_reported_at", 0),
                                 }
@@ -6940,9 +7002,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
-        self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Robots-Tag", "noindex, nofollow, noarchive")
+        for name, value in SECURITY_HEADERS:
+            self.send_header(name, value)
         if subscription_id:
             summary = subscription_summary(subscription_id)
             user_info = f"upload=0; download=0; total={summary.get('traffic_total_bytes', 0)}; expire={int(time.time() + 86400 * 30)}"
@@ -6973,9 +7035,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
-        self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Robots-Tag", "noindex, nofollow, noarchive")
+        for name, value in SECURITY_HEADERS:
+            self.send_header(name, value)
         if subscription_id:
             summary = subscription_summary(subscription_id)
             user_info = f"upload=0; download=0; total={summary.get('traffic_total_bytes', 0)}; expire={int(time.time() + 86400 * 30)}"
@@ -7041,9 +7103,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
-        self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Robots-Tag", "noindex, nofollow, noarchive")
+        for name, value in SECURITY_HEADERS:
+            self.send_header(name, value)
         for name, value in build_happ_response_headers(
             payload,
             subscription_id=subscription_id,
@@ -7067,9 +7129,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
-        self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Robots-Tag", "noindex, nofollow, noarchive")
+        for name, value in SECURITY_HEADERS:
+            self.send_header(name, value)
         self.end_headers()
         if include_body:
             self.wfile.write(body)
@@ -7082,9 +7144,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
-        self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Robots-Tag", "noindex, nofollow, noarchive")
+        for name, value in SECURITY_HEADERS:
+            self.send_header(name, value)
         self.end_headers()
         if include_body and body_bytes:
             self.wfile.write(body_bytes)
@@ -7095,7 +7157,8 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Location", location)
         self.send_header("Content-Length", "0")
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-        self.send_header("Referrer-Policy", "no-referrer")
+        for name, value in SECURITY_HEADERS:
+            self.send_header(name, value)
         self.end_headers()
         if include_body:
             self.wfile.write(body)

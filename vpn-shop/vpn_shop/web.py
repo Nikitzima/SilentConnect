@@ -19,7 +19,7 @@ from .catalog import Offer, build_offers
 from .config import Settings, load_settings
 from .mailer import send_subscription_email_async, send_cabinet_access_email_async
 from .provisioning import Provisioner
-from .security import now_ts
+from .security import client_ip_from_headers, hash_token, is_allowed_host, random_web_token, sign_token, verify_token,  now_ts
 from .store import Store
 from .telegram_api import TelegramBotClient, TelegramApiError
 
@@ -28,6 +28,22 @@ LOGGER = logging.getLogger("vpn-shop-web")
 PAYMENT_REPORT_REPEAT_SECONDS = 10 * 60
 TEMP_NETWORK_NOTICE = ""
 WEB_RATE_LIMIT_MAX_ENTRIES = 10000
+MAX_JSON_BODY_BYTES = 16 * 1024
+SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
+    ("Referrer-Policy", "no-referrer"),
+    ("X-Content-Type-Options", "nosniff"),
+    ("X-Frame-Options", "DENY"),
+    ("Strict-Transport-Security", "max-age=31536000; includeSubDomains"),
+    ("Permissions-Policy", "camera=(), microphone=(), geolocation=()"),
+    ("Cross-Origin-Opener-Policy", "same-origin"),
+    (
+        "Content-Security-Policy",
+        "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; "
+        "frame-src https://challenges.cloudflare.com; connect-src 'self'; "
+        "form-action 'self' https://t.me; base-uri 'self'; frame-ancestors 'none'",
+    ),
+)
 
 
 def money(value: int | str | None) -> str:
@@ -82,12 +98,29 @@ def verify_cf_turnstile(secret_key: str, response_token: str, client_ip: str = "
         return False
 
 
-def public_origin(headers: Any, fallback: str) -> str:
-    host = headers.get("X-Forwarded-Host") or headers.get("Host")
-    if host:
-        proto = headers.get("X-Forwarded-Proto") or "https"
-        return f"{proto}://{host}".rstrip("/")
-    return fallback.rstrip("/")
+def public_origin(headers: Any, fallback: str, allowed_hosts: tuple[str, ...] = ()) -> str:
+    """Build the public origin *without* trusting an arbitrary Host header.
+
+    v1 reflected X-Forwarded-Host/Host verbatim into links that are e-mailed to
+    customers and pushed to admins (Host header injection / link poisoning,
+    audit S-03). We now only accept hosts from ALLOWED_HOSTS (or the host of
+    WEB_PUBLIC_BASE_URL) and otherwise fall back to the configured base URL.
+    """
+    fallback = fallback.rstrip("/")
+    allow = set(h.lower() for h in allowed_hosts if h)
+    try:
+        fallback_host = urlsplit(fallback).hostname or ""
+    except ValueError:
+        fallback_host = ""
+    if fallback_host:
+        allow.add(fallback_host.lower())
+    host = str(headers.get("X-Forwarded-Host") or headers.get("Host") or "").split(",")[0].strip()
+    if host and is_allowed_host(host, allow):
+        proto = str(headers.get("X-Forwarded-Proto") or "https").split(",")[0].strip().lower()
+        if proto not in {"http", "https"}:
+            proto = "https"
+        return f"{proto}://{host.lower()}"
+    return fallback
 
 
 def subscription_import_url(subscription_url: str, target: str) -> str:
@@ -165,7 +198,7 @@ class WebCheckout:
 
     def order_url(self, headers: Any, order: dict[str, Any]) -> str:
         token = str((order.get("meta_json") or {}).get("web_token") or "")
-        return f"{public_origin(headers, self.settings.web_public_base_url)}/order/{quote(str(order['public_id']))}/{quote(token)}"
+        return f"{public_origin(headers, self.settings.web_public_base_url, getattr(self.settings, 'allowed_hosts', ()))}/order/{quote(str(order['public_id']))}/{quote(token)}"
 
     def claim_url(self, order: dict[str, Any]) -> str:
         username = self.settings.telegram_bot_username or "SilentConnectVPNBot"
@@ -324,12 +357,12 @@ class WebCheckout:
             self.ensure_promo_not_reserved(promo)
         discount_percent = int(promo["discount_percent"]) if promo else 0
         final_price = max(offer.price_rub * (100 - discount_percent) // 100, 0)
-        token = secrets.token_hex(12)  # FIX 2026-08-24: was missing - NameError broke web checkout
+        token = random_web_token()
         meta = {
             "source": offer.code,
             "device_limit": offer.device_limit,
             "web": True,
-            "web_token": token,
+            "web_token": "",  # persisted as web_token_hash (audit S-02)
             "customer_email": customer_email.strip(),
         }
         if promo:
@@ -352,6 +385,7 @@ class WebCheckout:
             customer_email=customer_email.strip(),
             meta=meta,
         )
+        order = self._attach_web_token(order, token)
         return self.maybe_auto_deliver_free_web_order(order)
 
     def create_promo_order(self, promo_code: str, customer_email: str = "") -> dict[str, Any]:
@@ -359,7 +393,7 @@ class WebCheckout:
         if self.promo_type(promo) == "discount":
             raise ValueError("Промокод принят как скидка. Выберите тариф ниже, и цена пересчитается.")
         self.ensure_promo_not_reserved(promo)
-        token = secrets.token_hex(12)
+        token = random_web_token()
         duration_days = int(promo["duration_days"])
         device_limit = self.promo_device_limit(promo)
         base_price = self.base_price_for_duration(str(promo["transport"]), duration_days, device_limit=device_limit)
@@ -369,7 +403,7 @@ class WebCheckout:
             "promo_type": "fixed",
             "device_limit": device_limit,
             "web": True,
-            "web_token": token,
+            "web_token": "",  # persisted as web_token_hash (audit S-02)
             "customer_email": customer_email.strip(),
         }
         if promo.get("duration_months"):
@@ -394,6 +428,7 @@ class WebCheckout:
             customer_email=customer_email.strip(),
             meta=meta,
         )
+        order = self._attach_web_token(order, token)
         return self.maybe_auto_deliver_free_web_order(order)
 
     def create_web_renewal_order(
@@ -423,7 +458,7 @@ class WebCheckout:
 
         base_price = self.base_price_for_duration(transport, duration_days, device_limit=device_limit)
         final_price = max(base_price * (100 - discount_percent) // 100, 0)
-        token = secrets.token_hex(12)
+        token = random_web_token()
 
         final_email = customer_email.strip() or str((order_for_profile or {}).get("customer_email") or "")
 
@@ -431,7 +466,7 @@ class WebCheckout:
             "source": f"web_renewal_{sub_id}",
             "device_limit": device_limit,
             "web": True,
-            "web_token": token,
+            "web_token": "",  # persisted as web_token_hash (audit S-02)
             "customer_email": final_email,
             "renewal_profile_public_id": str(profile["public_id"]),
             "sub_id": sub_id,
@@ -456,6 +491,7 @@ class WebCheckout:
             customer_email=final_email,
             meta=meta,
         )
+        order = self._attach_web_token(order, token)
         return self.maybe_auto_deliver_free_web_order(order)
 
     def check_and_send_expiration_reminders(self) -> None:
@@ -489,7 +525,16 @@ class WebCheckout:
             LOGGER.exception("Error running check_and_send_expiration_reminders")
 
     def load_web_order(self, order_public_id: str, token: str) -> dict[str, Any] | None:
-        order = self.store.get_order(order_public_id)
+        """Resolve an order page by (public_id, bearer token).
+
+        Token is compared in constant time against its HMAC hash stored in
+        ``orders.web_token_hash`` (audit S-02: previously plaintext in meta_json
+        and compared with ``!=``). The presented token is attached to the
+        in-memory order only, so templates can build self-links.
+        """
+        if not token or len(token) > 128:
+            return None
+        order = self.store.get_order_by_web_token(order_public_id, token)
         if not order:
             return None
         meta = order.get("meta_json") or {}
@@ -498,8 +543,17 @@ class WebCheckout:
                 meta = json.loads(meta)
             except Exception:
                 meta = {}
-        if not meta.get("web") or str(meta.get("web_token") or "") != token:
+        if not meta.get("web"):
             return None
+        meta = dict(meta)
+        meta["web_token"] = token
+        order["meta_json"] = meta
+        return order
+
+    def _attach_web_token(self, order: dict[str, Any], token: str) -> dict[str, Any]:
+        self.store.set_order_web_token(str(order["public_id"]), token)
+        meta = dict(order.get("meta_json") or {})
+        meta["web_token"] = token
         order["meta_json"] = meta
         return order
 
@@ -634,35 +688,34 @@ class WebCheckout:
         if not clean_email or "@" not in clean_email:
             return {"ok": False, "message": "Пожалуйста, введите корректный адрес электронной почты."}
 
-        client_ip = str(headers.get("CF-Connecting-IP") or headers.get("X-Forwarded-For") or "unknown").split(",")[0].strip()
+        client_ip = client_ip_from_headers(headers, getattr(headers, "peer_ip", None))
 
         # Turnstile CAPTCHA check
         if self.settings.cf_turnstile_secret_key:
             if not verify_cf_turnstile(self.settings.cf_turnstile_secret_key, turnstile_token, client_ip):
                 return {"ok": False, "message": "Пожалуйста, подтвердите, что вы человек (поставьте галочку Cloudflare)."}
 
-        # Rate limit check (120 seconds cooldown per email/IP)
-        now = time.time()
-        rate_key = f"{clean_email}:{client_ip}"
-        
-        with self._rate_limit_lock:
-            last_sent = self._cabinet_rate_limits.get(rate_key, 0.0)
-            if now - last_sent < 120:
-                wait_sec = int(120 - (now - last_sent))
-                return {
-                    "ok": False,
-                    "message": f"Вы недавно уже запрашивали доступ. Пожалуйста, проверьте почту или подождите {wait_sec} сек.",
-                }
+        # Rate limit *before* any lookup, keyed by e-mail and by IP separately,
+        # and always answer with the same message: v1 returned "not found" for
+        # unknown e-mails and only throttled successful lookups, i.e. an
+        # unlimited customer e-mail enumeration oracle (audit S-04).
+        ttl = int(getattr(self.settings, "magic_link_ttl_seconds", 900) or 900)
+        recent = self.store.count_recent_magic_links(email=clean_email, request_ip=client_ip, window_seconds=120)
+        generic_ok = {
+            "ok": True,
+            "message": (
+                "Если на этот адрес оформлены активные подписки, мы отправили письмо со ссылкой для входа "
+                f"(действует {max(ttl // 60, 1)} мин). Проверьте почту и папку «Спам»."
+            ),
+        }
+        if recent >= 1:
+            return generic_ok
+        magic_token = sign_token({"email": clean_email}, purpose="magic_link", ttl_seconds=ttl)
+        self.store.create_magic_link(email=clean_email, token=magic_token, ttl_seconds=ttl, request_ip=client_ip)
 
         profiles = self.store.get_active_profiles_by_customer_email(clean_email)
         if not profiles:
-            return {"ok": False, "message": "Активных подписок на этот Email не найдено. Проверьте адрес или оформите новую подписку."}
-
-        with self._rate_limit_lock:
-            self._cabinet_rate_limits[rate_key] = now
-            self._cabinet_rate_limits.move_to_end(rate_key)
-            while len(self._cabinet_rate_limits) > WEB_RATE_LIMIT_MAX_ENTRIES:
-                self._cabinet_rate_limits.popitem(last=False)
+            return generic_ok
 
         profiles_data = []
         for p in profiles:
@@ -686,25 +739,61 @@ class WebCheckout:
                 "setup_url": setup_url,
             })
 
+        cabinet_origin = public_origin(headers, self.settings.web_public_base_url, getattr(self.settings, "allowed_hosts", ()))
+        cabinet_url = f"{cabinet_origin}/cabinet/{quote(magic_token, safe='')}"
+        # The e-mail carries only the short-lived single-use link; the permanent
+        # subscription URLs are revealed after redemption (audit S-05).
         send_cabinet_access_email_async(
             self.settings,
             customer_email=clean_email,
-            profiles_data=profiles_data,
+            profiles_data=[{**p, "setup_url": cabinet_url} for p in profiles_data],
         )
 
-        cnt = len(profiles_data)
-        word = "подписку" if cnt == 1 else ("подписки" if 2 <= cnt <= 4 else "подписок")
-        return {
-            "ok": True,
-            "message": f"Мы нашли {cnt} {word} и прислали все прямые ссылки доступа на <b>{html.escape(clean_email)}</b>. Проверьте Вашу почту!",
-        }
+        return generic_ok
+
+    def cabinet_profiles_for_email(self, email: str) -> list[dict[str, Any]]:
+        profiles = self.store.get_active_profiles_by_customer_email(email)
+        items: list[dict[str, Any]] = []
+        for p in profiles:
+            xui_email = str(p.get("xui_email") or "")
+            found = self.provisioner.xui_db.find_client_by_email(xui_email)
+            sub_id = str((found.get("client") or {}).get("subId") or "") if found else ""
+            if sub_id:
+                transport = str(p.get("transport") or "tcp")
+                kind = "json-hybrid" if "hybrid" in transport or p.get("profile_mode") == "hybrid" else ("json" if transport == "tcp" else "xhttp-json")
+                sub_url = subscription_url_for_route(self.settings.subscription_base_url, kind, sub_id)
+                setup_url = subscription_setup_url(sub_url)
+            else:
+                setup_url = self.settings.subscription_base_url or f"{self.settings.web_public_base_url}/"
+            items.append({
+                "public_id": str(p.get("public_id") or ""),
+                "expires_at": p.get("expires_at"),
+                "setup_url": setup_url,
+            })
+        return items
+
+    def render_cabinet(self, email: str, profiles: list[dict[str, Any]]) -> bytes:
+        rows = "".join(
+            f'<li><a class="btn" href="{html.escape(str(p["setup_url"]))}">Подписка {html.escape(str(p["public_id"]))}'
+            f' · до {time.strftime("%d.%m.%Y", time.localtime(int(p.get("expires_at") or 0)))}</a></li>'
+            for p in profiles
+        ) or "<li class='muted'>Активных подписок не найдено.</li>"
+        body = f"""
+        <section class="section">
+          <h2>Личный кабинет</h2>
+          <p class="muted">{html.escape(email)}</p>
+          <ul class="cabinet-list">{rows}</ul>
+          <p class="muted">Ссылка входа одноразовая. Для повторного входа запросите новую на главной странице.</p>
+        </section>
+        """
+        return self.render_page("Личный кабинет", body)
 
     def check_promo_code(self, headers: Any, code: str) -> dict[str, Any]:
         clean_code = (code or "").strip().upper()
         if not clean_code:
             return {"ok": False, "message": "Пожалуйста, введите промокод."}
 
-        client_ip = str(headers.get("CF-Connecting-IP") or headers.get("X-Forwarded-For") or "unknown").split(",")[0].strip()
+        client_ip = client_ip_from_headers(headers, getattr(headers, "peer_ip", None))
         now = time.time()
         rate_key = f"promo:{client_ip}"
         
@@ -1958,7 +2047,8 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Referrer-Policy", "no-referrer")
+        for name, value in SECURITY_HEADERS:
+            self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if self.command != "HEAD":
@@ -1970,7 +2060,8 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _redirect(self, location: str) -> None:
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", location)
-        self.send_header("Referrer-Policy", "no-referrer")
+        for name, value in SECURITY_HEADERS:
+            self.send_header(name, value)
         self.end_headers()
 
     def _read_form(self) -> dict[str, str]:
@@ -2019,6 +2110,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         try:
+            self.headers.peer_ip = self.client_address[0] if self.client_address else None
             parsed = urlsplit(self.path)
             path = [segment for segment in parsed.path.split("/") if segment]
             if not path:
@@ -2064,6 +2156,19 @@ class RequestHandler(BaseHTTPRequestHandler):
                     return
                 self._send(HTTPStatus.OK, self.checkout.render_order(self.headers, order))
                 return
+            if len(path) == 2 and path[0] == "cabinet":
+                token = path[1]
+                payload = verify_token(token, purpose="magic_link")
+                email = self.checkout.store.consume_magic_link(token) if payload else None
+                if not payload or not email or email != str(payload.get("email") or ""):
+                    self._send(HTTPStatus.NOT_FOUND, self.checkout.render_page(
+                        "Ссылка недействительна",
+                        '<section class="section"><h2>Ссылка недействительна или устарела</h2>'
+                        '<p class="muted">Запросите новую ссылку входа на главной странице.</p></section>',
+                    ))
+                    return
+                self._send(HTTPStatus.OK, self.checkout.render_cabinet(email, self.checkout.cabinet_profiles_for_email(email)))
+                return
             self._send(HTTPStatus.NOT_FOUND, self.checkout.render_not_found())
         except Exception:
             LOGGER.exception("GET failed")
@@ -2075,13 +2180,14 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         try:
+            self.headers.peer_ip = self.client_address[0] if self.client_address else None
             parsed = urlsplit(self.path)
             path = [segment for segment in parsed.path.split("/") if segment]
             if path == ["order"]:
                 form = self._read_form()
                 customer_email = form.get("customer_email", "").strip()
                 turnstile_token = form.get("cf-turnstile-response", "")
-                client_ip = str(self.headers.get("CF-Connecting-IP") or self.headers.get("X-Forwarded-For") or "unknown").split(",")[0].strip()
+                client_ip = client_ip_from_headers(self.headers, self.client_address[0] if self.client_address else None)
                 if self.checkout.settings.cf_turnstile_secret_key:
                     if not verify_cf_turnstile(self.checkout.settings.cf_turnstile_secret_key, turnstile_token, client_ip):
                         self._send(
@@ -2133,7 +2239,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send(HTTPStatus.OK, self.checkout.render_order(self.headers, order, flash=flash))
                 return
             if path == ["api", "check-promo"]:
-                length = int(self.headers.get("Content-Length", 0))
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                if length > MAX_JSON_BODY_BYTES:
+                    self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, b'{"ok":false,"error":"body_too_large"}')
+                    return
                 raw = self.rfile.read(length) if length > 0 else b""
                 try:
                     payload = json.loads(raw.decode("utf-8")) if raw else {}
@@ -2144,7 +2253,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, json.dumps(res, ensure_ascii=False).encode("utf-8"))
                 return
             if path == ["api", "cabinet", "request-link"]:
-                length = int(self.headers.get("Content-Length", 0))
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                if length > MAX_JSON_BODY_BYTES:
+                    self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, b'{"ok":false,"error":"body_too_large"}')
+                    return
                 raw = self.rfile.read(length) if length > 0 else b""
                 try:
                     payload = json.loads(raw.decode("utf-8")) if raw else {}
