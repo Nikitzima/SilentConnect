@@ -2544,11 +2544,11 @@ def build_clash_meta_config(
             "name": "🇫🇮 FI Backup Reality gRPC",
             "type": "vless",
             "server": fi_edge,
-            "port": 29443,
+            "port": 443,
             "uuid": client_uuid,
             "network": "grpc",
             "tls": True,
-            "servername": GRPC_REALITY_SNI,
+            "servername": FI_GRPC_REALITY_SNI,
             "reality-opts": {
                 "public-key": grpc_pk,
                 "short-id": grpc_sid,
