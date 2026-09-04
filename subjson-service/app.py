@@ -202,8 +202,8 @@ FI_REALITY_SNI_FAST = os.environ.get("FI_REALITY_SNI_FAST", "sber.ru").strip()
 FI_GRPC_REALITY_SNI = os.environ.get("FI_GRPC_REALITY_SNI", "vk.com").strip()
 FI_XHTTP_REALITY_PUBLIC_KEY = os.environ.get("FI_XHTTP_REALITY_PUBLIC_KEY", "ASvvjJ4dOcHst5FWDJ9D562UQ0nN1pAw0l13Z58RNQA").strip()
 FI_XHTTP_REALITY_SHORT_ID = os.environ.get("FI_XHTTP_REALITY_SHORT_ID", "a1b2c3d4e5f60718").strip()
-FI_XHTTP_REALITY_SNI = os.environ.get("FI_XHTTP_REALITY_SNI", "sber.ru").strip()
-FI_XHTTP_REALITY_PORT = int(os.environ.get("FI_XHTTP_REALITY_PORT", "39443"))
+FI_XHTTP_REALITY_SNI = os.environ.get("FI_XHTTP_REALITY_SNI", "speed.cloudflare.com").strip()
+FI_XHTTP_REALITY_PORT = int(os.environ.get("FI_XHTTP_REALITY_PORT", "443"))
 HYSTERIA_PORT = int(os.environ.get("HYSTERIA_PORT", "38443"))
 
 PL_STANDBY_HOST = os.environ.get("PL_STANDBY_HOST", "").strip()
@@ -3212,6 +3212,7 @@ def build_four_profiles(
     fi_hyst = copy.deepcopy(hyst_cfg)
     fi_hyst["remarks"] = f"🇫🇮 🚀 Скоростной ({email})"
     fi_hyst["outbounds"][0]["settings"]["address"] = fi_edge
+    fi_hyst["outbounds"][0]["settings"]["port"] = 443
     fi_hyst["outbounds"][0]["streamSettings"]["tlsSettings"]["serverName"] = fi_edge
     fi_hyst["meta"] = build_happ_config_meta(subscription_id)
     if fi_hyst["meta"]:
@@ -3221,6 +3222,7 @@ def build_four_profiles(
     fi_grpc = copy.deepcopy(grpc_cfg)
     fi_grpc["remarks"] = f"🇫🇮 🔐 Запасной ({email})"
     fi_grpc["outbounds"][0]["settings"]["address"] = fi_edge
+    fi_grpc["outbounds"][0]["settings"]["port"] = 443
     fi_grpc["outbounds"][0]["streamSettings"]["realitySettings"]["serverName"] = FI_GRPC_REALITY_SNI
     fi_grpc["outbounds"][0]["streamSettings"]["realitySettings"]["shortId"] = "9a2f7c6d1e4b8a30"
     fi_grpc["meta"] = build_happ_config_meta(subscription_id)
