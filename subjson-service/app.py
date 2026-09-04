@@ -2457,7 +2457,7 @@ def build_clash_meta_config(
             "password": client_uuid,
             "sni": nl_sub,
             "alpn": ["h3"],
-            "obfs": "salamander",
+            "obfs": "gecko",
             "obfs-password": salamander_pwd,
             "udp": True,
         },
@@ -2536,7 +2536,7 @@ def build_clash_meta_config(
             "password": client_uuid,
             "sni": fi_edge,
             "alpn": ["h3"],
-            "obfs": "salamander",
+            "obfs": "gecko",
             "obfs-password": salamander_pwd,
             "udp": True,
         },
@@ -2619,7 +2619,7 @@ def build_clash_meta_config(
                 "server": pl_edge,
                 "port": 443,
                 "auth": client_uuid,
-                "obfs": "salamander",
+                "obfs": "gecko",
                 "obfs-password": salamander_pwd,
                 "sni": pl_edge,
                 "skip-cert-verify": False,
@@ -2785,12 +2785,12 @@ def build_streisand_bundle(
     uris = [
         f"vless://{client_uuid}@{nl_edge}:443?type=tcp&security=reality&pbk={tcp_pk}&fp=chrome&sni={TCP_REALITY_SNI_CLASSIC}&sid={tcp_sid}&flow=xtls-rprx-vision#{urllib.parse.quote('🇳🇱 1. Классический TCP (NL)')}",
         f"vless://{client_uuid}@{nl_edge}:443?type=tcp&security=reality&pbk={tcp_pk}&fp=chrome&sni={TCP_REALITY_SNI_FAST}&sid={tcp_sid}&flow=xtls-rprx-vision#{urllib.parse.quote('🇳🇱 2. Быстрый TCP (NL)')}",
-        f"hy2://{client_uuid}@{nl_sub}:443?sni={nl_sub}&alpn=h3&obfs=salamander&obfs-password={salamander_pwd}#{urllib.parse.quote('🇳🇱 3. Скоростной Hysteria2 (NL)')}",
+        f"hy2://{client_uuid}@{nl_sub}:443?sni={nl_sub}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}#{urllib.parse.quote('🇳🇱 3. Скоростной Hysteria2 (NL)')}",
         f"vless://{client_uuid}@{nl_edge}:29443?type=grpc&security=reality&pbk={grpc_pk}&fp=chrome&sni={GRPC_REALITY_SNI}&sid={grpc_sid}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇳🇱 4. Запасной gRPC (NL)')}",
         f"vless://{client_uuid}@{nl_edge}:443?type=xhttp&security=tls&sni={nl_edge}&alpn=h2,http/1.1&path=%2Fxh-mx-d1f7c0429d6a&mode=packet-up#{urllib.parse.quote('🇳🇱 5. Незаметный XHTTP (NL)')}",
         f"vless://{client_uuid}@{fi_edge}:443?type=tcp&security=reality&pbk={tcp_pk}&fp=chrome&sni={TCP_REALITY_SNI_CLASSIC}&sid={tcp_sid}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 6. Классический TCP (FI)')}",
         f"vless://{client_uuid}@{fi_edge}:443?type=tcp&security=reality&pbk={tcp_pk}&fp=chrome&sni={TCP_REALITY_SNI_FAST}&sid={tcp_sid}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 7. Быстрый TCP (FI)')}",
-        f"hy2://{client_uuid}@{fi_edge}:443?sni={fi_edge}&alpn=h3&obfs=salamander&obfs-password={salamander_pwd}#{urllib.parse.quote('🇫🇮 8. Скоростной Hysteria2 (FI)')}",
+        f"hy2://{client_uuid}@{fi_edge}:443?sni={fi_edge}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}#{urllib.parse.quote('🇫🇮 8. Скоростной Hysteria2 (FI)')}",
         f"vless://{client_uuid}@{fi_edge}:443?type=grpc&security=reality&pbk={grpc_pk}&fp=chrome&sni={FI_GRPC_REALITY_SNI}&sid={grpc_sid}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇫🇮 9. Запасной gRPC (FI)')}",
         f"vless://{client_uuid}@{fi_edge}:{FI_XHTTP_REALITY_PORT}?type=xhttp&security=reality&pbk={fi_xhttp_pk}&fp=chrome&sni={FI_XHTTP_REALITY_SNI}&sid={fi_xhttp_sid}&path=%2Fxh-mx-d1f7c0429d6a&mode=packet-up#{urllib.parse.quote('🇫🇮 10. Незаметный XHTTP Reality (FI)')}",
     ]
@@ -2799,7 +2799,7 @@ def build_streisand_bundle(
         uris.extend([
             f"vless://{client_uuid}@{pl_edge}:443?type=tcp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇵🇱 11. Классический TCP (PL)')}",
             f"vless://{client_uuid}@{pl_edge}:443?type=tcp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_FAST}&sid={PL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇵🇱 12. Быстрый TCP (PL)')}",
-            f"hy2://{client_uuid}@{pl_edge}:443?sni={pl_edge}&alpn=h3&obfs=salamander&obfs-password={salamander_pwd}#{urllib.parse.quote('🇵🇱 13. Скоростной Hysteria2 (PL)')}",
+            f"hy2://{client_uuid}@{pl_edge}:443?sni={pl_edge}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}#{urllib.parse.quote('🇵🇱 13. Скоростной Hysteria2 (PL)')}",
             f"vless://{client_uuid}@{pl_edge}:29443?type=grpc&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇵🇱 14. Запасной gRPC (PL)')}",
             f"vless://{client_uuid}@{pl_edge}:{PL_XHTTP_REALITY_PORT}?type=xhttp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&path=%2Fxh-7m2q9r4k1v8p3s6&mode=packet-up#{urllib.parse.quote('🇵🇱 15. Незаметный XHTTP Reality (PL)')}",
         ])
@@ -3092,13 +3092,13 @@ def build_four_profiles(
                 "protocol": "hysteria",
                 "tag": "proxy",
                 "obfs": {
-                    "type": "salamander",
+                    "type": "gecko",
                     "password": HYSTERIA_SALAMANDER_PASSWORD,
                 },
                 "streamSettings": {
                     "finalmask": {
                         "udp": [
-                            {"settings": {"password": HYSTERIA_SALAMANDER_PASSWORD}, "type": "salamander"}
+                            {"settings": {"password": HYSTERIA_SALAMANDER_PASSWORD}, "type": "gecko"}
                         ]
                     },
                     "hysteriaSettings": {
@@ -3107,7 +3107,7 @@ def build_four_profiles(
                         "authStr": client_uuid,
                         "password": client_uuid,
                         "obfs": {
-                            "type": "salamander",
+                            "type": "gecko",
                             "password": HYSTERIA_SALAMANDER_PASSWORD,
                         },
                         "udpIdleTimeout": 60,
@@ -3127,7 +3127,7 @@ def build_four_profiles(
                     "auth": client_uuid,
                     "auth_str": client_uuid,
                     "obfs": {
-                        "type": "salamander",
+                        "type": "gecko",
                         "password": HYSTERIA_SALAMANDER_PASSWORD,
                     },
                 },
@@ -5893,7 +5893,7 @@ def build_sosproxy_client_config(subscription_id: str, public_host: str) -> list
           "streamSettings": {
             "finalmask": {
               "udp": [
-                {"settings": {"password": HYSTERIA_SALAMANDER_PASSWORD}, "type": "salamander"}
+                {"settings": {"password": HYSTERIA_SALAMANDER_PASSWORD}, "type": "gecko"}
               ]
             },
             "hysteriaSettings": {
