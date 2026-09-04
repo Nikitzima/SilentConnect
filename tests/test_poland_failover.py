@@ -415,7 +415,7 @@ class TestPolandArgvInterface(unittest.TestCase):
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
     def test_standby_vpn_arg_accepted(self):
-        """failback_merge.py --standby-vpn / --standby-xui arguments are accepted."""
+        """failback_merge.py --standby-vpn / --standby-xui arguments are accepted and aliased."""
         import subprocess
         code = (
             f"import sys; sys.path.insert(0, {SCRIPTS_DIR!r})\n"
@@ -423,9 +423,12 @@ class TestPolandArgvInterface(unittest.TestCase):
             f"p = failback_merge.build_parser() if hasattr(failback_merge, 'build_parser') else failback_merge.ArgumentParser()\n"
             f"args = p.parse_args(['--nl-vpn', {self.nl_vpn!r}, '--standby-vpn', {self.pl_vpn!r}, '--dry-run'])\n"
             f"assert args.standby_vpn == {self.pl_vpn!r}\n"
+            f"assert args.fi_vpn == {self.pl_vpn!r}\n"
             f"assert args.standby_xui == '/etc/x-ui/x-ui.db'  # default\n"
+            f"assert args.fi_xui == '/etc/x-ui/x-ui.db'  # default\n"
             f"args_fi = p.parse_args(['--nl-vpn', {self.nl_vpn!r}, '--fi-vpn', {self.pl_vpn!r}, '--dry-run'])\n"
-            f"assert getattr(args_fi, 'standby_vpn', None) == {self.pl_vpn!r} or getattr(args_fi, 'fi_vpn', None) == {self.pl_vpn!r}\n"
+            f"assert args_fi.standby_vpn == {self.pl_vpn!r}\n"
+            f"assert args_fi.fi_vpn == {self.pl_vpn!r}\n"
             f"print('OK')\n"
         )
         result = subprocess.run(
@@ -434,6 +437,17 @@ class TestPolandArgvInterface(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, f"stderr: {result.stderr}\nstdout: {result.stdout}")
         self.assertIn("OK", result.stdout)
+
+    def test_standby_xui_arg_accepted(self):
+        """failback_merge.py --standby-xui and --fi-xui arguments are accepted and aliased."""
+        p = failback_merge.build_parser()
+        args = p.parse_args(["--nl-xui", self.nl_xui, "--standby-xui", self.pl_xui, "--dry-run"])
+        self.assertEqual(args.standby_xui, self.pl_xui)
+        self.assertEqual(args.fi_xui, self.pl_xui)
+
+        args_fi = p.parse_args(["--nl-xui", self.nl_xui, "--fi-xui", self.pl_xui, "--dry-run"])
+        self.assertEqual(args_fi.standby_xui, self.pl_xui)
+        self.assertEqual(args_fi.fi_xui, self.pl_xui)
 
 
 class TestFailbackMergePLSpecific(unittest.TestCase):
@@ -550,8 +564,9 @@ class TestCloudflareDNSPLStub(unittest.TestCase):
         import subprocess
         # Run with no args — should print usage listing all commands
         script_path = os.path.join(SCRIPTS_DIR, "cf-failover-dns.sh")
+        script_sh = script_path.replace("\\", "/")
         result = subprocess.run(
-            [BASH_BIN, script_path],
+            [BASH_BIN, script_sh],
             capture_output=True, text=True, timeout=5
         )
         # Should exit 1 with usage (no args given)
@@ -578,59 +593,89 @@ class TestPromoteDemoteScripts(unittest.TestCase):
     """Verify promote.sh and demote.sh handle --node pl correctly."""
 
     def test_promote_sh_node_pl_recognized(self):
-        """promote.sh --node pl does not error on argument parsing."""
+        """promote.sh --node pl does not error on argument parsing and targets PL."""
         if not shutil.which(BASH_BIN):
             self.skipTest("bash not available on this environment")
         script_path = os.path.join(SCRIPTS_DIR, "promote.sh")
         script_sh = script_path.replace("\\", "/")
-        # Run with --help-like usage (just check the script doesn't error on --node pl)
-        # We can't actually run the full script (needs root/systemctl), but we can
-        # check the argument parsing by sourcing it in bash with set -u
+        # Sourcing with --node pl parses the node argument
         result = __import__('subprocess').run(
-            [BASH_BIN, "-c", f"source '{script_sh}' 2>&1 || true; echo 'done'"],
+            [BASH_BIN, "-c", f"source '{script_sh}' --node pl 2>&1 || true; echo 'done'"],
             capture_output=True, text=True, timeout=5,
             env={**__import__('os').environ, "NODE_IP": "2.56.125.177"}  # PLACEHOLDER
         )
-        # Should not crash on argument parsing
-        # The script will exit early (needs root), but that's fine
-        self.assertNotIn("Unknown argument", result.stderr)
-        self.assertNotIn("must be 'fi' or 'pl'", result.stderr)
+        combined = result.stdout + result.stderr
+        self.assertNotIn("Unknown argument", combined)
+        self.assertNotIn("must be 'fi' or 'pl'", combined)
+        self.assertIn("promote_pl", combined)
 
     def test_demote_sh_node_pl_recognized(self):
-        """demote.sh --node pl does not error on argument parsing."""
+        """demote.sh --node pl does not error on argument parsing and targets PL."""
         if not shutil.which(BASH_BIN):
             self.skipTest("bash not available on this environment")
         script_path = os.path.join(SCRIPTS_DIR, "demote.sh")
         script_sh = script_path.replace("\\", "/")
         result = __import__('subprocess').run(
-            [BASH_BIN, "-c", f"source '{script_sh}' 2>&1 || true; echo 'done'"],
+            [BASH_BIN, "-c", f"source '{script_sh}' --node pl 2>&1 || true; echo 'done'"],
             capture_output=True, text=True, timeout=5,
             env={**__import__('os').environ, "NL_IP": "193.233.210.189", "NODE_IP": "2.56.125.177"}  # PLACEHOLDER
         )
-        self.assertNotIn("Unknown argument", result.stderr)
-        self.assertNotIn("must be 'fi' or 'pl'", result.stderr)
+        combined = result.stdout + result.stderr
+        self.assertNotIn("Unknown argument", combined)
+        self.assertNotIn("must be 'fi' or 'pl'", combined)
+        self.assertIn("demote_pl", combined)
+
+    def test_promote_sh_syntax_valid(self):
+        """promote.sh has valid bash syntax."""
+        if not shutil.which(BASH_BIN):
+            self.skipTest("bash not available on this environment")
+        script_path = os.path.join(SCRIPTS_DIR, "promote.sh")
+        script_sh = script_path.replace("\\", "/")
+        result = __import__('subprocess').run(
+            [BASH_BIN, "-n", script_sh],  # -n = syntax check only
+            capture_output=True, text=True, timeout=5
+        )
+        self.assertEqual(result.returncode, 0, f"syntax error: {result.stderr}")
 
     def test_promote_sh_invalid_node_rejected(self):
         """promote.sh rejects invalid --node values."""
         if not shutil.which(BASH_BIN):
             self.skipTest("bash not available on this environment")
         script_path = os.path.join(SCRIPTS_DIR, "promote.sh")
+        script_sh = script_path.replace("\\", "/")
         result = __import__('subprocess').run(
-            [BASH_BIN, "-n", script_path],  # -n = syntax check only
+            [BASH_BIN, script_sh, "--node", "invalid"],
             capture_output=True, text=True, timeout=5
         )
-        self.assertEqual(result.returncode, 0, f"syntax error: {result.stderr}")
+        self.assertNotEqual(result.returncode, 0)
+        output = result.stdout + result.stderr
+        self.assertIn("must be 'fi' or 'pl'", output)
 
     def test_demote_sh_syntax_valid(self):
         """demote.sh has valid bash syntax."""
         if not shutil.which(BASH_BIN):
             self.skipTest("bash not available on this environment")
         script_path = os.path.join(SCRIPTS_DIR, "demote.sh")
+        script_sh = script_path.replace("\\", "/")
         result = __import__('subprocess').run(
-            [BASH_BIN, "-n", script_path],
+            [BASH_BIN, "-n", script_sh],
             capture_output=True, text=True, timeout=5
         )
         self.assertEqual(result.returncode, 0, f"syntax error: {result.stderr}")
+
+    def test_demote_sh_invalid_node_rejected(self):
+        """demote.sh rejects invalid --node values."""
+        if not shutil.which(BASH_BIN):
+            self.skipTest("bash not available on this environment")
+        script_path = os.path.join(SCRIPTS_DIR, "demote.sh")
+        script_sh = script_path.replace("\\", "/")
+        result = __import__('subprocess').run(
+            [BASH_BIN, script_sh, "--node", "invalid"],
+            capture_output=True, text=True, timeout=5
+        )
+        self.assertNotEqual(result.returncode, 0)
+        output = result.stdout + result.stderr
+        self.assertIn("must be 'fi' or 'pl'", output)
 
 
 # ==============================================================================

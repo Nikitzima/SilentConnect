@@ -446,8 +446,9 @@ def merge_vpn_shop(
     allow_two_way: bool = False,
     *,
     standby_db_path: Optional[str] = None,
+    standby_vpn_path: Optional[str] = None,
 ) -> Dict[str, Any]:
-    standby_path = standby_db_path or fi_db_path
+    standby_path = standby_db_path or standby_vpn_path or fi_db_path
     if not standby_path:
         raise ValueError("Standby database path is required")
     log("=== vpn_shop.db merge ===")
@@ -523,8 +524,21 @@ def merge_vpn_shop(
     stats.counters["trial_redemptions_merged"] = stats.counters.get("trial_redemptions_inserted", 0) + stats.counters.get("trial_redemptions_updated", 0)
     stats.counters["profiles_merged"] = stats.counters.get("profiles_merged", 0) + stats.counters.get("profiles_inserted", 0)
     stats.counters["orders_merged"] = stats.counters.get("orders_merged", 0) + stats.counters.get("orders_inserted", 0)
-    log(f"vpn_shop.db stats: {stats.counters}; conflicts: {len(stats.conflicts)}")
-    return {**stats.counters, "conflicts": stats.conflicts}
+    default_vpn_stats = {
+        "profiles_merged": 0,
+        "profiles_inserted": 0,
+        "orders_merged": 0,
+        "orders_inserted": 0,
+        "profile_owners_merged": 0,
+        "telegram_users_merged": 0,
+        "trial_redemptions_merged": 0,
+        "referrers_merged": 0,
+        "referral_ledger_merged": 0,
+        "awg_peers_merged": 0,
+    }
+    merged_stats = {**default_vpn_stats, **stats.counters, "conflicts": stats.conflicts}
+    log(f"vpn_shop.db stats: {merged_stats}; conflicts: {len(stats.conflicts)}")
+    return merged_stats
 
 
 # ---------------------------------------------------------------------------
@@ -538,8 +552,9 @@ def merge_xui(
     dry_run: bool = False,
     *,
     standby_db_path: Optional[str] = None,
+    standby_xui_path: Optional[str] = None,
 ) -> Dict[str, Any]:
-    standby_path = standby_db_path or fi_db_path
+    standby_path = standby_db_path or standby_xui_path or fi_db_path
     if not standby_path:
         raise ValueError("Standby database path is required")
     log("=== x-ui.db merge ===")
@@ -567,7 +582,7 @@ def merge_xui(
             for r in base.execute("SELECT * FROM client_traffics").fetchall():
                 base_traffic[str(r["email"])] = r
     try:
-        check_integrity(fi, "FI x-ui.db")
+        check_integrity(fi, "Standby x-ui.db")
         nl.execute("BEGIN IMMEDIATE;")
         try:
             # 1. inbounds.settings clients
@@ -675,16 +690,36 @@ def merge_xui(
         fi.close()
         if base is not None:
             base.close()
-    log(f"x-ui.db stats: {stats.counters}; conflicts: {len(stats.conflicts)}")
-    return {**stats.counters, "conflicts": stats.conflicts}
+    default_xui_stats = {
+        "inbounds_clients_updated": 0,
+        "inbounds_clients_added": 0,
+        "total_up_delta_bytes": 0,
+        "total_down_delta_bytes": 0,
+        "traffic_deltas_applied": 0,
+    }
+    merged_stats = {**default_xui_stats, **stats.counters, "conflicts": stats.conflicts}
+    log(f"x-ui.db stats: {merged_stats}; conflicts: {len(stats.conflicts)}")
+    return merged_stats
 
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
+class FailbackArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser ensuring backward-compatibility aliases (fi_vpn, fi_xui) are always set on the parsed Namespace."""
+
+    def parse_args(self, args: Optional[Sequence[str]] = None, namespace: Optional[argparse.Namespace] = None) -> argparse.Namespace:
+        ns = super().parse_args(args=args, namespace=namespace)
+        if hasattr(ns, "standby_vpn") and not hasattr(ns, "fi_vpn"):
+            setattr(ns, "fi_vpn", ns.standby_vpn)
+        if hasattr(ns, "standby_xui") and not hasattr(ns, "fi_xui"):
+            setattr(ns, "fi_xui", ns.standby_xui)
+        return ns
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Failback 3-Way SQLite Merger for SilentConnect (v2)")
+    parser = FailbackArgumentParser(description="Failback 3-Way SQLite Merger for SilentConnect (v2)")
     parser.add_argument("--nl-vpn", default="/root/vpn-shop/data-silentconnect/vpn_shop.db", help="Path to NL primary vpn_shop.db")
     parser.add_argument("--standby-vpn", "--fi-vpn", dest="standby_vpn", default="/root/vpn-shop/data-silentconnect/vpn_shop.db", help="Path to standby node vpn_shop.db (FI or PL)")
     parser.add_argument("--baseline-vpn", default="/var/lib/litestream/baseline_vpn_shop.db", help="Baseline vpn_shop.db snapshot taken at promotion time")
