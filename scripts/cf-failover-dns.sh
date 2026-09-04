@@ -9,6 +9,14 @@
 
 set -eo pipefail
 
+NL_IP="${NL_IP:-${NL_MASTER_IP:-193.233.210.189}}"
+FI_IP="${FI_IP:-${FI_STANDBY_IP:-198.51.100.1}}"
+PL_IP="${PL_IP:-${PL_STANDBY_IP:-2.56.125.177}}"
+DOMAIN_MAIN="${DOMAIN_MAIN:-example.com}"
+DOMAIN_SUB="${DOMAIN_SUB:-sub.${DOMAIN_MAIN}}"
+DOMAIN_EDGE="${DOMAIN_EDGE:-edge.${DOMAIN_MAIN}}"
+DOMAINS=("${DOMAIN_MAIN}" "${DOMAIN_SUB}" "${DOMAIN_EDGE}")
+
 # Load environment configuration if available
 if [ -f "/etc/cf-failover-dns.env" ]; then
     # shellcheck source=/dev/null
@@ -25,13 +33,6 @@ if [ -z "${CF_API_TOKEN:-}" ] && [ -f "/root/vpn-shop/.env" ]; then
         CF_API_TOKEN="$CF_API_TOKEN_ENV"
     fi
 fi
-
-NL_IP="${NL_IP:-${NL_MASTER_IP:-193.233.210.189}}"
-FI_IP="${FI_IP:-${FI_STANDBY_IP:-95.217.178.48}}"
-DOMAIN_MAIN="${DOMAIN_MAIN:-silentconnect.net}"
-DOMAIN_SUB="${DOMAIN_SUB:-sub.${DOMAIN_MAIN}}"
-DOMAIN_EDGE="${DOMAIN_EDGE:-edge.${DOMAIN_MAIN}}"
-DOMAINS=("${DOMAIN_MAIN}" "${DOMAIN_SUB}" "${DOMAIN_EDGE}")
 
 CF_API_TOKEN="${CF_API_TOKEN:-${CLOUDFLARE_API_TOKEN:-}}"
 CF_ZONE_ID="${CF_ZONE_ID:-${CLOUDFLARE_ZONE_ID:-}}"
@@ -220,12 +221,32 @@ cmd_demote_fi() {
     log "=== Demote to NL Complete ==="
 }
 
+cmd_promote_pl() {
+    log "=== Promoting DNS to Standby Node PL (${PL_IP}) ==="
+    require_token
+    for d in "${DOMAINS[@]}"; do
+        update_record "$d" "$PL_IP"
+    done
+    log "=== Promote to PL Complete ==="
+}
+
+cmd_demote_pl() {
+    log "=== Demoting DNS to Primary Node NL (${NL_IP}) ==="
+    require_token
+    for d in "${DOMAINS[@]}"; do
+        update_record "$d" "$NL_IP"
+    done
+    log "=== Demote to NL Complete ==="
+}
+
 usage() {
-    echo "Usage: $0 {promote-fi|demote-fi|status|health}"
+    echo "Usage: $0 {promote-fi|demote-fi|promote-pl|demote-pl|status|health}"
     echo ""
     echo "Commands:"
     echo "  promote-fi  Switch A records for ${DOMAIN_MAIN}, sub, edge to FI IP (${FI_IP})"
     echo "  demote-fi   Switch A records back to NL IP (${NL_IP})"
+    echo "  promote-pl  Switch A records for ${DOMAIN_MAIN}, sub, edge to PL IP (${PL_IP})"
+    echo "  demote-pl   Switch A records back to NL IP (${NL_IP})"
     echo "  status      Query and show current Cloudflare A records"
     echo "  health      Perform DNS and connectivity health checks"
     exit 1
@@ -237,6 +258,12 @@ case "${1:-}" in
         ;;
     demote-fi)
         cmd_demote_fi
+        ;;
+    promote-pl)
+        cmd_promote_pl
+        ;;
+    demote-pl)
+        cmd_demote_pl
         ;;
     status)
         cmd_status

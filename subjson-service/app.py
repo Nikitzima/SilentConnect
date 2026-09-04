@@ -161,7 +161,7 @@ RELAY_XHTTP_PORT = int(os.environ.get("RELAY_XHTTP_PORT", "8443"))
 HAPP_PROVIDER_ID = os.environ.get("HAPP_PROVIDER_ID", "").strip()
 HAPP_PROFILE_TITLE = os.environ.get("HAPP_PROFILE_TITLE", "SilentConnect").strip()[:25]
 HAPP_SUPPORT_URL = os.environ.get("HAPP_SUPPORT_URL", "https://t.me/your_vpn_bot").strip()
-HAPP_WEB_PAGE_URL = os.environ.get("HAPP_WEB_PAGE_URL", "https://silentconnect.net").strip()
+HAPP_WEB_PAGE_URL = os.environ.get("HAPP_WEB_PAGE_URL", "https://silentconnect.net").strip()  # PLACEHOLDER
 HAPP_RENEW_URL = os.environ.get("HAPP_RENEW_URL", "https://t.me/your_vpn_bot?start=open").strip()
 HAPP_PROFILE_UPDATE_INTERVAL = os.environ.get("HAPP_PROFILE_UPDATE_INTERVAL", "1").strip()
 HAPP_SERVER_DESCRIPTION = os.environ.get("HAPP_SERVER_DESCRIPTION", "Основной сервер").strip()[:30]
@@ -1530,7 +1530,7 @@ DNS_PRESETS: dict[str, list[Any]] = {
         {
             "address": "localhost",
             "domains": [
-                "domain:silentconnect.net",
+                "domain:silentconnect.net",  # PLACEHOLDER
                 "domain:max.ru",
                 "domain:kernel.org",
             ],
@@ -1815,7 +1815,7 @@ def build_dual_auto_wifi_first_test_client_config(
 def fetch_fi_internal_fragment(subscription_id: str) -> list[dict[str, Any]]:
     import urllib.request
     import json
-    fi_host = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")
+    fi_host = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")  # PLACEHOLDER
     secret_segment = os.environ.get("SECRET_SEGMENT", "secret-sub")  # PLACEHOLDER
     url = f"https://{fi_host}/{secret_segment}/internal-fragment/{subscription_id}"
     ctx = ssl.create_default_context()
@@ -1917,9 +1917,9 @@ def build_singbox_smart_config(
 
     fi_xhttp_pbk = FI_XHTTP_REALITY_PUBLIC_KEY
     fi_xhttp_sid = FI_XHTTP_REALITY_SHORT_ID
-    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.silentconnect.net")
+    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.silentconnect.net")  # PLACEHOLDER
     nl_sub = os.environ.get("PUBLIC_HOST", "sub.example.com")
-    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")
+    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")  # PLACEHOLDER
 
     outbounds = [
         # --- Tier 1: Parent Selector ---
@@ -2219,9 +2219,9 @@ def build_singbox_smart_config(
         {"protocol": "dns", "action": "hijack-dns"},
         {
             "domain": [
-                "sub.silentconnect.net",
-                "edge.silentconnect.net",
-                "fi.silentconnect.net",
+                "sub.silentconnect.net",  # PLACEHOLDER
+                "edge.silentconnect.net",  # PLACEHOLDER
+                "fi.silentconnect.net",  # PLACEHOLDER
             ],
             "outbound": "direct",
         },
@@ -2235,7 +2235,7 @@ def build_singbox_smart_config(
                     "ru", "su", "xn--p1ai", "gosuslugi.ru", "sberbank.ru",
                     "tinkoff.ru", "yandex.ru", "vk.com", "avito.ru", "ozon.ru",
                     "wildberries.ru", "railnation.ru", "railnation-game.ru",
-                    "silentconnect.net",
+                    "silentconnect.net",  # PLACEHOLDER
                 ],
                 "outbound": "direct",
             },
@@ -2392,15 +2392,15 @@ def build_singbox_smart_config(
             "rules": [
                 {
                     "domain": [
-                        "sub.silentconnect.net",
-                        "edge.silentconnect.net",
-                        "fi.silentconnect.net",
+                        "sub.silentconnect.net",  # PLACEHOLDER
+                        "edge.silentconnect.net",  # PLACEHOLDER
+                        "fi.silentconnect.net",  # PLACEHOLDER
                     ],
                     "server": "dns-direct",
                 },
                 {
                     "domain_suffix": [
-                        "ru", "su", "xn--p1ai", "yandex.ru", "vk.com", "gosuslugi.ru", "silentconnect.net",
+                        "ru", "su", "xn--p1ai", "yandex.ru", "vk.com", "gosuslugi.ru", "silentconnect.net",  # PLACEHOLDER
                     ],
                     "server": "dns-direct",
                 },
@@ -2461,9 +2461,9 @@ def build_clash_meta_config(
         }
         return dump_clash_yaml(expired_doc)
 
-    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.silentconnect.net")
+    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.silentconnect.net")  # PLACEHOLDER
     nl_sub = os.environ.get("PUBLIC_HOST", "sub.example.com")
-    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")
+    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")  # PLACEHOLDER
 
     tcp_pk = TCP_REALITY_PUBLIC_KEY
     tcp_sid = TCP_REALITY_SHORT_ID
@@ -2829,9 +2829,9 @@ def build_streisand_bundle(
     if summary.get("status_kind") != "active":
         return base64.b64encode(b"").decode("ascii")
 
-    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.silentconnect.net")
+    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.silentconnect.net")  # PLACEHOLDER
     nl_sub = os.environ.get("PUBLIC_HOST", "sub.example.com")
-    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")
+    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")  # PLACEHOLDER
 
     tcp_pk = TCP_REALITY_PUBLIC_KEY
     tcp_sid = TCP_REALITY_SHORT_ID
@@ -2886,8 +2886,8 @@ def build_xray_auto_balancer_profile(
         expired_dummy = build_expired_dummy_profile(email)
         return expired_dummy[0] if isinstance(expired_dummy, list) else expired_dummy
 
-    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.silentconnect.net")
-    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")
+    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.silentconnect.net")  # PLACEHOLDER
+    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")  # PLACEHOLDER
 
     nl_classic = {
         "protocol": "vless",
@@ -3039,8 +3039,8 @@ def build_four_profiles(
 
     smart_cfg = build_xray_auto_balancer_profile(subscription_id, public_host, route_mode, dns_preset)
 
-    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.silentconnect.net")
-    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")
+    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.silentconnect.net")  # PLACEHOLDER
+    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")  # PLACEHOLDER
 
     # --- Profile 1: NL Sber.ru (Classic) ---
     sber_cfg = {
@@ -5968,7 +5968,7 @@ def build_sosproxy_client_config(subscription_id: str, public_host: str) -> list
             "tlsSettings": {
               "alpn": ["h3"],
               "fingerprint": "qq",
-              "serverName": public_host or os.environ.get("DOMAIN_EDGE", "edge.silentconnect.net")
+              "serverName": public_host or os.environ.get("DOMAIN_EDGE", "edge.silentconnect.net")  # PLACEHOLDER
             }
           },
           "settings": {

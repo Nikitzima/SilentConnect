@@ -438,20 +438,31 @@ def merge_awg_peers(nl, fi, stats: Stats, dry_run: bool) -> None:
         stats.inc("awg_peers_merged")
 
 
-def merge_vpn_shop(nl_db_path: str, fi_db_path: str, baseline_db_path: Optional[str] = None, dry_run: bool = False, allow_two_way: bool = False) -> Dict[str, Any]:
+def merge_vpn_shop(
+    nl_db_path: str,
+    fi_db_path: Optional[str] = None,
+    baseline_db_path: Optional[str] = None,
+    dry_run: bool = False,
+    allow_two_way: bool = False,
+    *,
+    standby_db_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    standby_path = standby_db_path or fi_db_path
+    if not standby_path:
+        raise ValueError("Standby database path is required")
     log("=== vpn_shop.db merge ===")
-    log(f"NL: {nl_db_path}\n           FI: {fi_db_path}\n           BASE: {baseline_db_path or '-'}")
-    for p in (nl_db_path, fi_db_path):
+    log(f"NL: {nl_db_path}\n           Standby: {standby_path}\n           BASE: {baseline_db_path or '-'}")
+    for p in (nl_db_path, standby_path):
         if not os.path.exists(p):
             raise FileNotFoundError(p)
     if not dry_run:
         make_backup(nl_db_path)
     stats = Stats()
     nl = open_rw(nl_db_path)
-    fi = open_ro(fi_db_path)
+    fi = open_ro(standby_path)
     base = open_ro(baseline_db_path) if baseline_db_path and os.path.exists(baseline_db_path) else None
     try:
-        check_integrity(fi, "FI vpn_shop.db")
+        check_integrity(fi, "Standby vpn_shop.db")
         nl.execute("BEGIN IMMEDIATE;")
         try:
             # 1. users
@@ -506,6 +517,12 @@ def merge_vpn_shop(nl_db_path: str, fi_db_path: str, baseline_db_path: Optional[
         fi.close()
         if base is not None:
             base.close()
+    stats.counters["telegram_users_merged"] = stats.counters.get("telegram_users_inserted", 0) + stats.counters.get("telegram_users_updated", 0)
+    stats.counters["referrers_merged"] = stats.counters.get("referrers_inserted", 0) + stats.counters.get("referrers_updated", 0)
+    stats.counters["profile_owners_merged"] = stats.counters.get("profile_owners_inserted", 0) + stats.counters.get("profile_owners_updated", 0)
+    stats.counters["trial_redemptions_merged"] = stats.counters.get("trial_redemptions_inserted", 0) + stats.counters.get("trial_redemptions_updated", 0)
+    stats.counters["profiles_merged"] = stats.counters.get("profiles_merged", 0) + stats.counters.get("profiles_inserted", 0)
+    stats.counters["orders_merged"] = stats.counters.get("orders_merged", 0) + stats.counters.get("orders_inserted", 0)
     log(f"vpn_shop.db stats: {stats.counters}; conflicts: {len(stats.conflicts)}")
     return {**stats.counters, "conflicts": stats.conflicts}
 
@@ -514,16 +531,26 @@ def merge_vpn_shop(nl_db_path: str, fi_db_path: str, baseline_db_path: Optional[
 # x-ui.db
 # ---------------------------------------------------------------------------
 
-def merge_xui(nl_db_path: str, fi_db_path: str, baseline_db_path: Optional[str] = None, dry_run: bool = False) -> Dict[str, Any]:
+def merge_xui(
+    nl_db_path: str,
+    fi_db_path: Optional[str] = None,
+    baseline_db_path: Optional[str] = None,
+    dry_run: bool = False,
+    *,
+    standby_db_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    standby_path = standby_db_path or fi_db_path
+    if not standby_path:
+        raise ValueError("Standby database path is required")
     log("=== x-ui.db merge ===")
-    for p in (nl_db_path, fi_db_path):
+    for p in (nl_db_path, standby_path):
         if not os.path.exists(p):
             raise FileNotFoundError(p)
     if not dry_run:
         make_backup(nl_db_path)
     stats = Stats()
     nl = open_rw(nl_db_path)
-    fi = open_ro(fi_db_path)
+    fi = open_ro(standby_path)
     base = open_ro(baseline_db_path) if baseline_db_path and os.path.exists(baseline_db_path) else None
 
     base_clients: dict[str, dict[str, Any]] = {}
@@ -656,20 +683,30 @@ def merge_xui(nl_db_path: str, fi_db_path: str, baseline_db_path: Optional[str] 
 # CLI
 # ---------------------------------------------------------------------------
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Failback 3-Way SQLite Merger for SilentConnect (v2)")
-    parser.add_argument("--nl-vpn", default="/root/vpn-shop/data-silentconnect/vpn_shop.db")
-    parser.add_argument("--fi-vpn", default="/root/vpn-shop/data-silentconnect/vpn_shop.db")
-    parser.add_argument("--baseline-vpn", default="/var/lib/litestream/baseline_vpn_shop.db")
-    parser.add_argument("--nl-xui", default="/etc/x-ui/x-ui.db")
-    parser.add_argument("--fi-xui", default="/etc/x-ui/x-ui.db")
-    parser.add_argument("--baseline-xui", default="/var/lib/litestream/baseline_xui.db")
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--skip-xui", action="store_true")
-    parser.add_argument("--skip-vpn", action="store_true")
+    parser.add_argument("--nl-vpn", default="/root/vpn-shop/data-silentconnect/vpn_shop.db", help="Path to NL primary vpn_shop.db")
+    parser.add_argument("--standby-vpn", "--fi-vpn", dest="standby_vpn", default="/root/vpn-shop/data-silentconnect/vpn_shop.db", help="Path to standby node vpn_shop.db (FI or PL)")
+    parser.add_argument("--baseline-vpn", default="/var/lib/litestream/baseline_vpn_shop.db", help="Baseline vpn_shop.db snapshot taken at promotion time")
+    parser.add_argument("--nl-xui", default="/etc/x-ui/x-ui.db", help="Path to NL primary x-ui.db")
+    parser.add_argument("--standby-xui", "--fi-xui", dest="standby_xui", default="/etc/x-ui/x-ui.db", help="Path to standby node x-ui.db (FI or PL)")
+    parser.add_argument("--baseline-xui", default="/var/lib/litestream/baseline_xui.db", help="Baseline x-ui.db snapshot taken at promotion time")
+    parser.add_argument("--dry-run", action="store_true", help="Calculate merge without writing changes")
+    parser.add_argument("--skip-xui", action="store_true", help="Skip merging x-ui.db")
+    parser.add_argument("--skip-vpn", action="store_true", help="Skip merging vpn_shop.db")
     parser.add_argument("--allow-two-way", action="store_true", help="Permit counter merges without a baseline (lossy; logged as conflicts)")
     parser.add_argument("--report", default="", help="Write a JSON merge report to this path")
+    return parser
+
+
+ArgumentParser = build_parser
+
+
+def main() -> None:
+    parser = build_parser()
     args = parser.parse_args()
+    args.fi_vpn = args.standby_vpn
+    args.fi_xui = args.standby_xui
 
     log("=== Starting Safe 3-Way Failback Merge Pipeline (v2) ===")
     if args.dry_run:
@@ -678,14 +715,25 @@ def main() -> None:
     ok = True
     if not args.skip_vpn:
         try:
-            report["vpn_shop"] = merge_vpn_shop(args.nl_vpn, args.fi_vpn, args.baseline_vpn if os.path.exists(args.baseline_vpn) else None, args.dry_run, args.allow_two_way)
+            report["vpn_shop"] = merge_vpn_shop(
+                args.nl_vpn,
+                args.standby_vpn,
+                args.baseline_vpn if os.path.exists(args.baseline_vpn) else None,
+                args.dry_run,
+                args.allow_two_way,
+            )
         except Exception as exc:  # noqa: BLE001
             err(f"vpn_shop.db merge failed: {exc}")
             report["vpn_shop_error"] = str(exc)
             ok = False
     if not args.skip_xui:
         try:
-            report["xui"] = merge_xui(args.nl_xui, args.fi_xui, args.baseline_xui if os.path.exists(args.baseline_xui) else None, args.dry_run)
+            report["xui"] = merge_xui(
+                args.nl_xui,
+                args.standby_xui,
+                args.baseline_xui if os.path.exists(args.baseline_xui) else None,
+                args.dry_run,
+            )
         except Exception as exc:  # noqa: BLE001
             err(f"x-ui.db merge failed: {exc}")
             report["xui_error"] = str(exc)

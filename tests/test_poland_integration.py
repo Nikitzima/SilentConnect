@@ -27,7 +27,7 @@ import app as subjson_app
 class PolandProfilesIntegrationTest(unittest.TestCase):
     def setUp(self):
         self.orig_pl = os.environ.get('PL_STANDBY_HOST')
-        os.environ['PL_STANDBY_HOST'] = 'pl.silentconnect.net'
+        os.environ['PL_STANDBY_HOST'] = 'pl.silentconnect.net'  # PLACEHOLDER
 
     def tearDown(self):
         if self.orig_pl is not None:
@@ -42,7 +42,7 @@ class PolandProfilesIntegrationTest(unittest.TestCase):
 
         self.assertEqual(len(lines), 15, f'Expected 15 URIs with Poland, got {len(lines)}')
         
-        pl_lines = [l for l in lines if 'pl.silentconnect.net' in l or 'Польша' in l or 'PL' in l]
+        pl_lines = [l for l in lines if 'pl.silentconnect.net' in l or 'Польша' in l or 'PL' in l]  # PLACEHOLDER
         self.assertEqual(len(pl_lines), 5, f'Expected 5 Poland URIs, found: {pl_lines}')
 
         pl_classic = next(l for l in pl_lines if '11. Классический' in urllib.parse.unquote(l))
