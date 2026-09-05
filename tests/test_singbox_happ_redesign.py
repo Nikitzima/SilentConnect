@@ -86,9 +86,15 @@ class TestSingboxHappRedesign(unittest.TestCase):
             self.assertIn("🇫🇮 Скоростной (Hysteria 2)", tags)
             self.assertIn("🇵🇱 Classic (TCP Reality)", tags)
             self.assertIn("🇵🇱 Скоростной (Hysteria 2)", tags)
+            self.assertIn("🇳🇱 Резерв (WebSocket)", tags)
+            self.assertIn("🇫🇮 Резерв (WebSocket)", tags)
             self.assertIn("🎯 Прямой трафик (Direct)", tags)
             self.assertNotIn("auto-urltest", tags)
             self.assertNotIn("nl-classic-tcp", tags)
+            self.assertNotIn("nl-ws443", tags)
+            self.assertNotIn("fi-ws443", tags)
+            self.assertNotIn("🇳🇱 CDN WebSocket (Резерв)", tags)
+            self.assertNotIn("🇫🇮 CDN WebSocket (Резерв)", tags)
             self.assertNotIn("direct", tags)
 
             # Check selector outbounds list
