@@ -149,7 +149,7 @@ class TestSingboxHappRedesign(unittest.TestCase):
         self.assertEqual(len(keyboard), 4)
 
         button_texts = [btn["text"] for row in keyboard for btn in row]
-        self.assertIn("🚀 Подключить VPN / Выбрать тариф", button_texts)
+        self.assertIn("🚀 Подключить доступ / Выбрать тариф", button_texts)
         self.assertIn("🔄 Продлить подписку", button_texts)
         self.assertIn("🎁 Пробный период", button_texts)
         self.assertIn("🎟 Промокод", button_texts)

@@ -5203,7 +5203,7 @@ def setup_page_html(
       <div class="install-head" style="margin-bottom: 16px;">
         <div>
           <h2>Мастер подключения</h2>
-          <p style="margin: 4px 0 0; color: var(--muted); font-size: 14px;">Выберите ваше устройство и приложение для быстрой настройки VPN-доступа:</p>
+          <p style="margin: 4px 0 0; color: var(--muted); font-size: 14px;">Выберите ваше устройство и приложение для быстрой настройки защищенного доступа:</p>
         </div>
       </div>
 
@@ -5252,7 +5252,8 @@ def setup_page_html(
       <a href="__WEB_PAGE_URL__/about" target="_blank">О сервисе</a> · 
       <a href="__WEB_PAGE_URL__/contact" target="_blank">Контакты &amp; Поддержка</a> · 
       <a href="__WEB_PAGE_URL__/legal/privacy" target="_blank">Политика конфиденциальности</a> · 
-      <a href="__WEB_PAGE_URL__/legal/terms" target="_blank">Пользовательское соглашение</a>
+      <a href="__WEB_PAGE_URL__/legal/terms" target="_blank">Пользовательское соглашение</a> · 
+      <a href="__WEB_PAGE_URL__/legal/refund" target="_blank">Политика возвратов</a>
     </footer>
   </main>
   <script>
@@ -5379,7 +5380,7 @@ def setup_page_html(
       importLink.href = app.importUrl;
       installText.textContent = app.description + " Операционная система: " + (platformLabels[value] || value) + ".";
       const usageMap = {
-        happ: "Запустите Happ и нажмите большую центральную кнопку включения. При первом запуске разрешите системе добавление VPN-конфигурации.",
+        happ: "Запустите Happ и нажмите большую центральную кнопку включения. При первом запуске разрешите системе добавление сетевого профиля в появившемся запросе.",
         streisand: "Откройте Streisand, подтвердите добавление профиля SilentConnect и переключите верхний тумблер в активное состояние.",
         clash: "Откройте Clash / Mihomo, выберите профиль SilentConnect и включите системный прокси (System Proxy).",
         v2rayn: "Откройте v2rayN, вставьте ссылку подписки через «Подписка» → «Настройки подписок», нажмите «Обновить подписки» и выберите узел для подключения.",
