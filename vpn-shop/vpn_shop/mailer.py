@@ -395,6 +395,7 @@ def send_subscription_email_sync(
     bind_tg_url: str = "",
     expires_ts: int | float | None = None,
     expires_at_str: str = "",
+    subject: str | None = None,
 ) -> bool:
     if not customer_email or "@" not in customer_email:
         LOGGER.warning("Invalid target email for order %s: %r", order_public_id, customer_email)
@@ -415,7 +416,8 @@ def send_subscription_email_sync(
     password = (settings.smtp_password or "").strip()
     from_email = (settings.smtp_from_email or "SilentConnect <support@example.com>").strip()
 
-    subject = f"Ваша подписка SilentConnect готова! (#{order_public_id})"
+    if not subject:
+        subject = f"Ваша подписка SilentConnect готова! (#{order_public_id})"
 
     html_content = render_subscription_email_html(
         customer_email=customer_email,
@@ -510,6 +512,7 @@ def send_subscription_email_async(
     bind_tg_url: str = "",
     expires_ts: int | float | None = None,
     expires_at_str: str = "",
+    subject: str | None = None,
 ) -> None:
     enqueue_email_task(
         send_subscription_email_sync,
@@ -524,6 +527,7 @@ def send_subscription_email_async(
         bind_tg_url=bind_tg_url,
         expires_ts=expires_ts,
         expires_at_str=expires_at_str,
+        subject=subject,
     )
 
 
