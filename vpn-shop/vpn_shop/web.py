@@ -12,11 +12,12 @@ import secrets
 import threading
 import time
 from typing import Any
+from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, quote, urlencode, urlsplit, urlunsplit
 import urllib.request
 
 from .catalog import Offer, build_offers
-from .config import Settings, load_settings
+from .config import REFERRAL_COOKIE_MAX_AGE, REFERRAL_COOKIE_NAME, REFERRAL_INVITEE_DISCOUNT_PERCENT, Settings, load_settings
 from .mailer import send_subscription_email_async, send_cabinet_access_email_async
 from .provisioning import Provisioner
 from .security import client_ip_from_headers, hash_token, is_allowed_host, random_web_token, sign_token, verify_token,  now_ts
@@ -348,14 +349,33 @@ class WebCheckout:
                 LOGGER.exception("Failed to send auto free order email for %s", delivered["public_id"])
         return delivered
 
-    def create_order(self, offer_code: str, promo_code: str = "", customer_email: str = "") -> dict[str, Any]:
+    def create_order(
+        self,
+        offer_code: str,
+        promo_code: str = "",
+        customer_email: str = "",
+        ref_code: str = "",
+    ) -> dict[str, Any]:
         offer = self.offer_by_code(offer_code)
         promo = self.load_valid_promo(promo_code) if promo_code.strip() else None
         if promo and self.promo_type(promo) != "discount":
             return self.create_promo_order(promo_code, customer_email=customer_email)
         if promo:
             self.ensure_promo_not_reserved(promo)
-        discount_percent = int(promo["discount_percent"]) if promo else 0
+        promo_discount = int(promo["discount_percent"]) if promo else 0
+
+        ref_discount = 0
+        referrer = None
+        clean_ref = ref_code.strip()
+        clean_email = customer_email.strip()
+        if clean_ref:
+            referrer = self.store.get_referrer_by_code(clean_ref)
+            if referrer:
+                prior_paid = self.store.count_delivered_paid_orders(customer_email=clean_email) if clean_email else 0
+                if prior_paid == 0:
+                    ref_discount = REFERRAL_INVITEE_DISCOUNT_PERCENT
+
+        discount_percent = max(promo_discount, ref_discount)
         final_price = max(offer.price_rub * (100 - discount_percent) // 100, 0)
         token = random_web_token()
         meta = {
@@ -363,10 +383,21 @@ class WebCheckout:
             "device_limit": offer.device_limit,
             "web": True,
             "web_token": "",  # persisted as web_token_hash (audit S-02)
-            "customer_email": customer_email.strip(),
+            "customer_email": clean_email,
         }
         if promo:
             meta["promo_type"] = "discount"
+        if referrer and ref_discount > 0:
+            meta["referrer_id"] = int(referrer["id"])
+            meta["referrer_code"] = str(referrer["code"])
+            meta["referral_discount"] = ref_discount
+            if clean_email:
+                self.store.attach_referral(
+                    code=str(referrer["code"]),
+                    referred_user_id=clean_email,
+                    referred_chat_id=clean_email,
+                )
+
         order = self.store.create_order(
             kind="purchase",
             status="waiting_payment" if final_price > 0 else "auto_provision",
@@ -382,7 +413,7 @@ class WebCheckout:
             privacy_ack=True,
             loss_policy_ack=True,
             terms_version=self.settings.terms_version,
-            customer_email=customer_email.strip(),
+            customer_email=clean_email,
             meta=meta,
         )
         order = self._attach_web_token(order, token)
@@ -472,6 +503,10 @@ class WebCheckout:
             "sub_id": sub_id,
             "email_reminders": email_reminders,
         }
+        if source_meta.get("referrer_id"):
+            meta["referrer_id"] = source_meta["referrer_id"]
+        if source_meta.get("referrer_code"):
+            meta["referrer_code"] = source_meta["referrer_code"]
 
         order = self.store.create_order(
             kind="renewal",
@@ -484,7 +519,7 @@ class WebCheckout:
             final_price_rub=final_price,
             promo_id=int(promo["id"]) if promo else None,
             invite_id=None,
-            customer_chat_id=None,
+            customer_chat_id=(order_for_profile or {}).get("customer_chat_id"),
             privacy_ack=True,
             loss_policy_ack=True,
             terms_version=self.settings.terms_version,
@@ -1608,12 +1643,21 @@ class WebCheckout:
         active_discount: dict[str, Any] | None = None,
         promo_code: str = "",
         flash: str = "",
+        ref_code: str = "",
     ) -> bytes:
         discount_percent = int(active_discount["discount_percent"]) if active_discount else 0
+        ref_banner = ""
+        clean_ref = ref_code.strip()
+        if clean_ref:
+            ref_referrer = self.store.get_referrer_by_code(clean_ref)
+            if ref_referrer:
+                ref_banner = '<div class="notice" style="background: rgba(47, 191, 113, 0.15); border-color: rgba(47, 191, 113, 0.4); color: #2fbf71; font-weight: 600; margin-bottom: 12px;">🎁 Реферальный бонус: вам доступна скидка 10% на первую подписку!</div>'
+                discount_percent = max(discount_percent, REFERRAL_INVITEE_DISCOUNT_PERCENT)
         escaped_promo_code = html.escape(promo_code.strip())
         flash_html = f'<div class="notice">{html.escape(flash)}</div>' if flash else ""
         promo_hidden = f'<input type="hidden" name="promo_code" value="{escaped_promo_code}">' if active_discount else ""
-        discount_line = f" Активна скидка {discount_percent}%." if active_discount else ""
+        ref_hidden = f'<input type="hidden" name="ref_code" value="{html.escape(clean_ref)}">' if clean_ref else ""
+        discount_line = f" Активна скидка {discount_percent}%." if discount_percent > 0 else ""
 
         plans: dict[str, dict[str, Any]] = {}
         for device_limit in (3, 6, 9):
@@ -1642,6 +1686,7 @@ class WebCheckout:
           <div>
             <h1>Незаметный VPN, который просто работает</h1>
             <p class="lead">Включили один раз — и забыли. Выберите тариф, получите готовую ссылку для приложения на почту и пользуйтесь открытым интернетом.</p>
+            {ref_banner}
             <div class="notice">Ссылка на подписку придёт на электронную почту и появится на сайте сразу после оплаты</div>
           </div>
           <img class="hero-img" src="/assets/telegram/welcome.png" alt="SilentConnect">
@@ -1737,6 +1782,7 @@ class WebCheckout:
 
               <input id="builder-offer" type="hidden" name="offer" value="tcp_3_30">
               {promo_hidden}
+              {ref_hidden}
               <div class="cf-turnstile" data-sitekey="{html.escape(self.settings.cf_turnstile_site_key)}" data-theme="dark" data-refresh-expired="auto" style="margin: 14px 0; display: flex; justify-content: center;"></div>
               <div id="orderFormStatus" style="margin: -6px 0 10px; font-size: 13px; color: #ef4444; display: none; text-align: center; line-height: 1.4;"></div>
               <button type="submit">Перейти к оплате</button>
@@ -2132,12 +2178,34 @@ class RequestHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         return
 
-    def _send(self, status: HTTPStatus, body: bytes, content_type: str = "text/html; charset=utf-8") -> None:
+    def _get_cookie(self, name: str) -> str:
+        raw_cookie = self.headers.get("Cookie", "") if self.headers else ""
+        if not raw_cookie:
+            return ""
+        try:
+            c = SimpleCookie()
+            c.load(raw_cookie)
+            if name in c:
+                return c[name].value.strip()
+        except Exception:
+            pass
+        return ""
+
+    def _send(
+        self,
+        status: HTTPStatus,
+        body: bytes,
+        content_type: str = "text/html; charset=utf-8",
+        extra_headers: list[tuple[str, str]] | None = None,
+    ) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Cache-Control", "no-store")
         for name, value in SECURITY_HEADERS:
             self.send_header(name, value)
+        if extra_headers:
+            for name, value in extra_headers:
+                self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if self.command != "HEAD":
@@ -2146,11 +2214,14 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _send_json(self, status: HTTPStatus, body: bytes) -> None:
         self._send(status, body, "application/json; charset=utf-8")
 
-    def _redirect(self, location: str) -> None:
+    def _redirect(self, location: str, extra_headers: list[tuple[str, str]] | None = None) -> None:
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", location)
         for name, value in SECURITY_HEADERS:
             self.send_header(name, value)
+        if extra_headers:
+            for name, value in extra_headers:
+                self.send_header(name, value)
         self.end_headers()
 
     def _read_form(self) -> dict[str, str]:
@@ -2215,7 +2286,34 @@ class RequestHandler(BaseHTTPRequestHandler):
                             flash = f"Промокод {promo_code.upper()} применён! Скидка {int(promo['discount_percent'])}%."
                     except Exception:
                         pass
-                self._send(HTTPStatus.OK, self.checkout.render_home(active_discount=active_discount, promo_code=promo_code, flash=flash))
+
+                url_ref = query.get("ref", [""])[0].strip()
+                cookie_ref = self._get_cookie(REFERRAL_COOKIE_NAME)
+                ref_code = ""
+                extra_headers: list[tuple[str, str]] = []
+
+                if url_ref:
+                    referrer = self.checkout.store.get_referrer_by_code(url_ref)
+                    if referrer:
+                        ref_code = url_ref
+                        extra_headers.append(
+                            ("Set-Cookie", f"{REFERRAL_COOKIE_NAME}={ref_code}; Path=/; Max-Age={REFERRAL_COOKIE_MAX_AGE}; SameSite=Lax; HttpOnly")
+                        )
+                elif cookie_ref:
+                    referrer = self.checkout.store.get_referrer_by_code(cookie_ref)
+                    if referrer:
+                        ref_code = cookie_ref
+
+                self._send(
+                    HTTPStatus.OK,
+                    self.checkout.render_home(
+                        active_discount=active_discount,
+                        promo_code=promo_code,
+                        flash=flash,
+                        ref_code=ref_code,
+                    ),
+                    extra_headers=extra_headers if extra_headers else None,
+                )
                 return
             if path == ["legal", "privacy"]:
                 self._send(HTTPStatus.OK, self.checkout.render_legal_privacy())
@@ -2280,17 +2378,22 @@ class RequestHandler(BaseHTTPRequestHandler):
                 customer_email = form.get("customer_email", "").strip()
                 turnstile_token = form.get("cf-turnstile-response", "")
                 client_ip = client_ip_from_headers(self.headers, self.client_address[0] if self.client_address else None)
+                ref_code = form.get("ref_code", "").strip() or self._get_cookie(REFERRAL_COOKIE_NAME)
                 if self.checkout.settings.cf_turnstile_secret_key:
                     if not verify_cf_turnstile(self.checkout.settings.cf_turnstile_secret_key, turnstile_token, client_ip):
                         self._send(
                             HTTPStatus.OK,
-                            self.checkout.render_home(flash="Пожалуйста, подтвердите, что вы человек (пройдите проверку Cloudflare Turnstile)."),
+                            self.checkout.render_home(
+                                flash="Пожалуйста, подтвердите, что вы человек (пройдите проверку Cloudflare Turnstile).",
+                                ref_code=ref_code,
+                            ),
                         )
                         return
                 order = self.checkout.create_order(
                     form.get("offer", "tcp_3_30"),
                     form.get("promo_code", ""),
                     customer_email=customer_email,
+                    ref_code=ref_code,
                 )
                 self._redirect(self.checkout.order_url(self.headers, order))
                 return

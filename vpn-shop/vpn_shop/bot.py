@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit, urlunspl
 from . import awg_manager
 
 from .catalog import Offer, build_offers
-from .config import DEFAULT_MANAGER_TG_ID, Settings
+from .config import DEFAULT_MANAGER_TG_ID, REFERRAL_INVITEE_DISCOUNT_PERCENT, Settings
 from .mailer import send_subscription_email_async
 from .provisioning import ADMIN_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES, TEST_PROFILE_NOTES, Provisioner
 from .security import days_from_now, normalize_username, now_ts
@@ -1655,73 +1655,143 @@ class ShopBot:
             )
 
     def _format_referral_admin_report(self, balances: list[dict[str, Any]]) -> str:
-        total = sum(int(item.get("balance_rub") or 0) for item in balances)
+        total_debt = sum(int(item.get("balance_rub") or 0) for item in balances)
+        total_earned = sum(int(item.get("total_earned_rub") or 0) for item in balances)
+        total_paid = sum(int(item.get("total_paid_rub") or 0) for item in balances)
         payable = sum(
             int(item.get("balance_rub") or 0)
             for item in balances
             if int(item.get("balance_rub") or 0) >= REFERRAL_PAYOUT_MIN_RUB
         )
         lines = [
-            "Реферальная программа",
+            "🤝 Реферальная программа",
             "",
-            f"Общий долг: {total} RUB",
-            f"К выплате сейчас: {payable} RUB",
-            f"Минимальная выплата: {REFERRAL_PAYOUT_MIN_RUB} RUB",
+            "📊 Статистика системы:",
+            f"• 💰 Текущий долг к выплате: {total_debt} RUB",
+            f"• 💳 Доступно к выплате (≥{REFERRAL_PAYOUT_MIN_RUB} RUB): {payable} RUB",
+            f"• 📈 Начислено всего: {total_earned} RUB",
+            f"• 💸 Выплачено ранее: {total_paid} RUB",
+            f"• 👥 Всего партнеров: {len(balances)}",
             "",
         ]
         if not balances:
             lines.append("Участников пока нет.")
             return "\n".join(lines)
 
+        lines.append("📋 Список партнеров:")
         for item in balances[:25]:
-            balance = int(item.get("balance_rub") or 0)
+            bal = int(item.get("balance_rub") or 0)
+            status_emoji = "🟢" if bal >= REFERRAL_PAYOUT_MIN_RUB else "⚪"
             lines.append(
-                f"{self._display_user(item)} — {balance} RUB, "
-                f"рефералов: {int(item.get('referred_count') or 0)}, "
-                f"начислений: {int(item.get('pending_count') or 0)}"
+                f"{status_emoji} {self._display_user(item)}: долг {bal} RUB "
+                f"(рефералов: {int(item.get('referred_count') or 0)})"
             )
         if len(balances) > 25:
             lines.append(f"...и ещё {len(balances) - 25}")
         return "\n".join(lines)
 
-    def show_admin_referrals(self, chat_id: int | str) -> None:
+    def show_admin_referrals(self, chat_id: int | str, *, message_id: int | None = None) -> None:
         balances = self.store.list_referral_balances()
         rows: list[list[Any]] = []
-        for item in balances:
-            balance = int(item.get("balance_rub") or 0)
-            if balance >= REFERRAL_PAYOUT_MIN_RUB:
-                rows.append(
-                    [
-                        (
-                            f"Выплачено: {self._display_user(item)} • {balance} RUB",
-                            f"admin:refpay:{int(item['id'])}",
-                            "success",
-                        )
-                    ]
-                )
-        rows.append([("Назад в админ-меню", "admin:menu", "primary")])
-        self.telegram.send_message(
+        payable_items = [item for item in balances if int(item.get("balance_rub") or 0) >= REFERRAL_PAYOUT_MIN_RUB]
+        for item in payable_items:
+            bal = int(item.get("balance_rub") or 0)
+            rows.append(
+                [
+                    (
+                        f"💳 {self._display_user(item)} • {bal} RUB",
+                        f"admin:refpay:{int(item['id'])}",
+                        "success",
+                    )
+                ]
+            )
+        rows.append([
+            ("🔄 Обновить", "admin:referrals", "default"),
+            ("⬅ В админку", "admin:menu", "primary"),
+        ])
+        self._render_or_edit(
             chat_id,
             self._format_referral_admin_report(balances),
             reply_markup=kb(rows),
+            message_id=message_id,
         )
 
-    def mark_referral_paid(self, chat_id: int | str, referrer_id: int, user: dict[str, Any]) -> None:
-        balance = self.store.get_referral_balance(referrer_id)
-        if not balance:
+    def show_admin_refpay(self, chat_id: int | str, referrer_id: int, *, message_id: int | None = None) -> None:
+        balance_info = self.store.get_referral_balance(referrer_id)
+        if not balance_info:
+            self.telegram.send_message(chat_id, "Партнер не найден.")
+            self.show_admin_referrals(chat_id, message_id=message_id)
+            return
+
+        total_earned = int(balance_info.get("total_earned_rub") or 0)
+        total_paid = int(balance_info.get("total_paid_rub") or 0)
+        balance = int(balance_info.get("balance_rub") or 0)
+        referred_count = int(balance_info.get("referred_count") or 0)
+        user_display = self._display_user(balance_info)
+
+        text = (
+            f"💳 Выплата партнеру {user_display}\n\n"
+            f"• 👤 Партнер: {user_display} (ID {referrer_id})\n"
+            f"• 📈 Накоплено всего: {total_earned} RUB\n"
+            f"• 💸 Выплачено ранее: {total_paid} RUB\n"
+            f"• 💰 Текущий долг к выплате: {balance} RUB\n"
+            f"• 👥 Привлечено рефералов: {referred_count}\n\n"
+            f"Выберите сумму для выплаты или укажите произвольную:"
+        )
+
+        rows: list[list[Any]] = []
+        if balance > 0:
+            rows.append([(f"💰 Вся сумма: {balance} RUB", f"admin:refpay_exec:{referrer_id}:all", "success")])
+            presets: list[tuple[str, str, str]] = []
+            if balance >= 500:
+                presets.append(("💳 500 RUB", f"admin:refpay_exec:{referrer_id}:500", "primary"))
+            if balance >= 1000:
+                presets.append(("💳 1000 RUB", f"admin:refpay_exec:{referrer_id}:1000", "primary"))
+            if presets:
+                rows.append(presets)
+            rows.append([
+                ("✍ Своя сумма", f"admin:refpay_prompt:{referrer_id}", "primary"),
+                ("⬅ Назад", "admin:referrals", "default"),
+            ])
+        else:
+            rows.append([("⬅ Назад к рефералам", "admin:referrals", "primary")])
+
+        self._render_or_edit(chat_id, text, reply_markup=kb(rows), message_id=message_id)
+
+    def execute_referral_payout(
+        self,
+        chat_id: int | str,
+        referrer_id: int,
+        user: dict[str, Any],
+        amount_rub: int | None = None,
+        *,
+        message_id: int | None = None,
+    ) -> None:
+        balance_info = self.store.get_referral_balance(referrer_id)
+        if not balance_info:
             self.telegram.send_message(chat_id, "Участник реферальной программы не найден.")
+            self.show_admin_referrals(chat_id, message_id=message_id)
             return
-        amount = int(balance.get("balance_rub") or 0)
-        if amount < REFERRAL_PAYOUT_MIN_RUB:
-            self.telegram.send_message(
-                chat_id,
-                f"Баланс {self._display_user(balance)} сейчас {amount} RUB. До минимальной выплаты ещё не дошли.",
-            )
+        cur_debt = int(balance_info.get("balance_rub") or 0)
+        if cur_debt <= 0:
+            self.telegram.send_message(chat_id, f"Баланс {self._display_user(balance_info)} равен 0 RUB. Выплачивать нечего.")
+            self.show_admin_referrals(chat_id, message_id=message_id)
             return
-        payout = self.store.create_referral_payout(referrer_id=referrer_id, actor=f"tg:{user.get('id')}")
+
+        to_pay = cur_debt if amount_rub is None else amount_rub
+        if to_pay > cur_debt:
+            to_pay = cur_debt
+
+        payout = self.store.create_referral_payout(
+            referrer_id=referrer_id,
+            actor=f"tg:{user.get('id')}",
+            amount_rub=to_pay,
+        )
         if not payout:
-            self.telegram.send_message(chat_id, "Нечего отмечать выплаченным.")
+            self.telegram.send_message(chat_id, "Не удалось зафиксировать выплату.")
+            self.show_admin_referrals(chat_id, message_id=message_id)
             return
+
         self.store.record_admin_action(
             action_type="referral_payout",
             target_type="referrer",
@@ -1729,11 +1799,65 @@ class ShopBot:
             actor=f"tg:{user.get('id')}",
             meta={"amount_rub": int(payout["amount_rub"])},
         )
+        new_balance = cur_debt - int(payout["amount_rub"])
         self.telegram.send_message(
             chat_id,
-            f"Выплата {self._display_user(balance)} на {int(payout['amount_rub'])} RUB отмечена.",
+            f"✅ Выплата пользователю {self._display_user(balance_info)} на сумму {int(payout['amount_rub'])} RUB успешно зафиксирована.\n"
+            f"Текущий остаток долга: {new_balance} RUB.",
         )
+        ref_chat = balance_info.get("chat_id")
+        if ref_chat:
+            try:
+                self.telegram.send_message(
+                    ref_chat,
+                    f"🎉 Вам выплачено реферальное вознаграждение: {int(payout['amount_rub'])} RUB!\n"
+                    f"Остаток на балансе: {new_balance} RUB.",
+                )
+            except Exception:
+                LOGGER.exception("Failed to notify referrer %s about payout", referrer_id)
         self.show_admin_referrals(chat_id)
+
+    def mark_referral_paid(self, chat_id: int | str, referrer_id: int, user: dict[str, Any]) -> None:
+        self.execute_referral_payout(chat_id, referrer_id, user)
+
+    def notify_admins_referral_threshold(self, referrer_id: int, balance: int, user_info: str | None = None) -> None:
+        if not user_info:
+            ref = self.store.get_referral_balance(referrer_id)
+            user_info = self._display_user(ref) if ref else f"ID {referrer_id}"
+        text = f"🔔 Реферер {user_info} набрал сумму для выплаты ({balance} RUB)!"
+        markup = kb([[("💳 Выплатить", f"admin:refpay:{referrer_id}", "success")]])
+        for admin_id in self.settings.admin_user_ids:
+            try:
+                self.telegram.send_message(admin_id, text, reply_markup=markup)
+            except Exception:
+                LOGGER.exception("Failed to notify admin %s about referral threshold", admin_id)
+
+    def handle_admin_refpay_amount(self, chat_id: int, text: str, session: dict[str, Any], user: dict[str, Any]) -> None:
+        context = self._context_from_session(session)
+        referrer_id = context.get("refpay_referrer_id")
+        if not referrer_id:
+            self.show_admin_referrals(chat_id)
+            return
+        balance_info = self.store.get_referral_balance(int(referrer_id))
+        if not balance_info:
+            self.telegram.send_message(chat_id, "Партнер не найден.")
+            self.show_admin_referrals(chat_id)
+            return
+        current_debt = int(balance_info.get("balance_rub") or 0)
+        cleaned = text.strip().replace(" ", "").replace("RUB", "").replace("rub", "").replace("₽", "")
+        try:
+            amount = int(cleaned)
+        except ValueError:
+            self.telegram.send_message(chat_id, f"⚠️ Введите число (сумму выплаты от 1 до {current_debt} RUB):")
+            return
+        if amount <= 0:
+            self.telegram.send_message(chat_id, "⚠️ Сумма выплаты должна быть больше 0.")
+            return
+        if amount > current_debt:
+            self.telegram.send_message(chat_id, f"⚠️ Сумма ({amount} RUB) превышает текущий долг ({current_debt} RUB). Введите корректную сумму:")
+            return
+        self._merge_session_state(chat_id, "admin", "admin_menu", {}, drop_keys=("refpay_referrer_id",))
+        self.execute_referral_payout(chat_id, int(referrer_id), user, amount_rub=amount)
 
     def show_public_access_compare(self, chat_id: int | str) -> None:
         self._merge_session_state(chat_id, "public", "menu", drop_keys=("pending_promo", "pending_promo_id"))
@@ -2578,6 +2702,10 @@ class ShopBot:
             self.handle_warp_sub_url(chat_id, text, session, user)
             return
 
+        if session["scope"] == "admin" and session["state"] == "admin_wait_refpay_amount":
+            self.handle_admin_refpay_amount(chat_id, text, session, user)
+            return
+
 
         if is_admin_user and text and reply_to_message.get("message_id") is not None:
             order = self.store.get_order_by_manager_message(chat_id, int(reply_to_message["message_id"]))
@@ -2723,10 +2851,21 @@ class ShopBot:
             context = self._context_from_session(session)
             if status == "created" and attribution:
                 context["referrer_id"] = attribution["referrer_id"]
+                context["referral_discount"] = REFERRAL_INVITEE_DISCOUNT_PERCENT
                 self.store.set_session(chat_id, "public", "menu", context)
+                ref_chat_id = attribution.get("referrer_chat_id")
+                if ref_chat_id:
+                    user_name = f"@{user['username']}" if (user or {}).get("username") else ((user or {}).get("first_name") or f"ID {chat_id}")
+                    try:
+                        self.telegram.send_message(
+                            ref_chat_id,
+                            f"🤝 По вашей реферальной ссылке зарегистрировался новый пользователь ({user_name})! Когда он оплатит подписку, вы получите 10% комиссии.",
+                        )
+                    except Exception:
+                        LOGGER.exception("Failed to send referral join notification to %s", ref_chat_id)
                 self.show_public_menu(
                     chat_id,
-                    "Реферальная ссылка активирована. Можно выбрать доступ или взять бесплатную неделю.",
+                    "🎁 Реферальная ссылка активирована! Вам доступна скидка 10% на первую подписку + 7 дней бесплатного пробного периода.",
                     hero=True,
                 )
                 return
@@ -2736,6 +2875,13 @@ class ShopBot:
                 self.show_public_menu(
                     chat_id,
                     "Вы уже прикреплены к реферальной программе. Можно продолжать.",
+                    hero=True,
+                )
+                return
+            if status == "already_customer":
+                self.show_public_menu(
+                    chat_id,
+                    "Реферальный бонус доступен только для новых пользователей. Вы уже являетесь нашим клиентом!",
                     hero=True,
                 )
                 return
@@ -3018,11 +3164,22 @@ class ShopBot:
                 self._send_existing_public_order(chat_id, active_order, prefix="Возвращаю текущий заказ.")
                 return
 
-            discount_percent = int(discount_promo["discount_percent"]) if discount_promo else 0
+            promo_discount = int(discount_promo["discount_percent"]) if discount_promo else 0
+            ref_discount = 0
+            attr = self.store.get_referral_attribution_for_user(chat_id)
+            if attr:
+                prior_paid = self.store.count_delivered_paid_orders(customer_chat_id=chat_id)
+                if prior_paid == 0:
+                    ref_discount = REFERRAL_INVITEE_DISCOUNT_PERCENT
+
+            discount_percent = max(promo_discount, ref_discount)
             final_price = max(offer.price_rub * (100 - discount_percent) // 100, 0)
             meta = {"source": offer.code, "device_limit": offer.device_limit}
             if discount_promo:
                 meta["promo_type"] = "discount"
+            if attr and ref_discount > 0:
+                meta["referrer_id"] = attr["referrer_id"]
+                meta["referral_discount"] = ref_discount
             order = self.store.create_order(
                 kind="purchase",
                 status="waiting_payment" if final_price > 0 else "auto_provision",
@@ -3428,26 +3585,26 @@ class ShopBot:
         self._merge_session_state(chat_id, "admin", "menu", {"admin": True}, drop_keys=("order_public_id",))
         self.telegram.send_message(chat_id, f"\u0420\u0435\u043a\u0432\u0438\u0437\u0438\u0442\u044b \u043f\u043e \u0437\u0430\u043a\u0430\u0437\u0443 {order_public_id} \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u044b \u043a\u043b\u0438\u0435\u043d\u0442\u0443.")
 
-    def send_admin_menu(self, chat_id: int, *, clear_action_guard: bool = True) -> None:
+    def send_admin_menu(self, chat_id: int, *, clear_action_guard: bool = True, message_id: int | None = None) -> None:
         drop_keys = (ACTION_GUARD_KEY,) if clear_action_guard else ()
         self._merge_session_state(chat_id, "admin", "menu", {"admin": True}, drop_keys=drop_keys)
-        self.telegram.send_message(
+        text = (
+            "⚙️ Админ-меню SilentConnect\n\n"
+            "Выберите раздел для управления:"
+        )
+        self._render_or_edit(
             chat_id,
-            "Админ-меню",
+            text,
             reply_markup=kb(
                 [
-                    [("Создать инвайт", "admin:create_invite")],
-                    [("Создать промокод", "admin:create_promo")],
-                    [("Сервер и трафик", "admin:server", "primary")],
-                    [("Рефералка", "admin:referrals", "primary")],
-                    [("Публичная ссылка", "admin:public_link", "primary")],
-                    [("\u041c\u043e\u0439 \u0430\u0434\u043c\u0438\u043d-\u043a\u043e\u043d\u0444\u0438\u0433", "admin:create_personal_config")],
-                    [("\u0422\u0435\u0441\u0442\u043e\u0432\u044b\u0439 \u043a\u043e\u043d\u0444\u0438\u0433 24\u0447", "admin:create_test_config")],
-                    [("Универсальный тест TCP+XHTTP", "admin:create_hybrid_test_config", "primary")],
-
-                    [("Поделиться warp", "admin:share_warp", "primary")],
+                    [("🎫 Создать инвайт", "admin:create_invite"), ("🎟 Создать промокод", "admin:create_promo")],
+                    [("🤝 Рефералы", "admin:referrals", "primary"), ("📊 Сервер и статус", "admin:server", "primary")],
+                    [("🔗 Публичная ссылка", "admin:public_link"), ("🚀 Поделиться WARP", "admin:share_warp", "primary")],
+                    [("👤 Админ-конфиг", "admin:create_personal_config"), ("⏱ Тест 24ч", "admin:create_test_config")],
+                    [("⚡ Универсальный тест", "admin:create_hybrid_test_config", "primary")],
                 ]
             ),
+            message_id=message_id,
         )
 
     def _server_status_text(self) -> str:
@@ -4112,8 +4269,9 @@ class ShopBot:
 
         if completed_now:
             try:
-                ledger = self.store.create_referral_ledger_for_order(order)
-                if ledger:
+                res = self.store.create_referral_ledger_for_order(order)
+                if res and res[0]:
+                    ledger, old_balance, new_balance = res
                     self.store.record_admin_action(
                         action_type="referral_accrual",
                         target_type="order",
@@ -4123,8 +4281,29 @@ class ShopBot:
                             "referrer_id": ledger["referrer_id"],
                             "amount_rub": ledger["amount_rub"],
                             "commission_percent": ledger["commission_percent"],
+                            "old_balance": old_balance,
+                            "new_balance": new_balance,
                         },
                     )
+                    # Instant notification to referrer
+                    ref_info = self.store.get_referral_balance(int(ledger["referrer_id"]))
+                    ref_chat = (ref_info or {}).get("chat_id")
+                    if ref_chat:
+                        try:
+                            order_id = order.get("public_id", "")
+                            base_amount = ledger.get("base_amount_rub", 0)
+                            amount = ledger.get("amount_rub", 0)
+                            percent = ledger.get("commission_percent", 10)
+                            msg = (
+                                f"💰 Реферальное начисление! Заказ #{order_id}. "
+                                f"Сумма покупки: {base_amount} RUB. Вам начислено: +{amount} RUB ({percent}%). "
+                                f"Баланс: {new_balance} RUB."
+                            )
+                            self.telegram.send_message(ref_chat, msg)
+                        except Exception:
+                            LOGGER.exception("Failed to send referral accrual notification to %s", ref_chat)
+                    if old_balance < REFERRAL_PAYOUT_MIN_RUB <= new_balance:
+                        self.notify_admins_referral_threshold(int(ledger["referrer_id"]), new_balance)
             except Exception:
                 LOGGER.exception("Failed to create referral accrual for order %s", order["public_id"])
 
@@ -4194,7 +4373,7 @@ class ShopBot:
         try:
             if data == "admin:menu" and chat_id is not None and self.is_admin(user):
                 self.telegram.answer_callback_query(callback_id)
-                self.send_admin_menu(chat_id)
+                self.send_admin_menu(chat_id, message_id=message_id)
                 return
 
             if data == "public:accept_terms":
@@ -4595,7 +4774,42 @@ class ShopBot:
 
             if data == "admin:referrals" and chat_id is not None and self.is_admin(user):
                 self.telegram.answer_callback_query(callback_id)
-                self.show_admin_referrals(chat_id)
+                self.show_admin_referrals(chat_id, message_id=message_id)
+                return
+
+            if data.startswith("admin:refpay:") and chat_id is not None and self.is_admin(user):
+                self.telegram.answer_callback_query(callback_id)
+                referrer_id = int(data.split(":")[-1])
+                self.show_admin_refpay(chat_id, referrer_id, message_id=message_id)
+                return
+
+            if data.startswith("admin:refpay_exec:") and chat_id is not None and self.is_admin(user):
+                self.telegram.answer_callback_query(callback_id, "Выполняю выплату...")
+                parts = data.split(":")
+                referrer_id = int(parts[2])
+                amt_str = parts[3]
+                amount = None if amt_str == "all" else int(amt_str)
+                self.execute_referral_payout(chat_id, referrer_id, user, amount_rub=amount, message_id=message_id)
+                return
+
+            if data.startswith("admin:refpay_prompt:") and chat_id is not None and self.is_admin(user):
+                self.telegram.answer_callback_query(callback_id)
+                referrer_id = int(data.split(":")[-1])
+                balance_info = self.store.get_referral_balance(referrer_id)
+                cur_debt = int((balance_info or {}).get("balance_rub") or 0)
+                self._merge_session_state(
+                    chat_id,
+                    "admin",
+                    "admin_wait_refpay_amount",
+                    {"refpay_referrer_id": referrer_id},
+                    drop_keys=(ACTION_GUARD_KEY,),
+                )
+                self._render_or_edit(
+                    chat_id,
+                    f"✍ Введите сумму выплаты для {self._display_user(balance_info)} (от 1 до {cur_debt} RUB) ответным сообщением в чат:",
+                    reply_markup=kb([[("⬅ Отмена", f"admin:refpay:{referrer_id}", "default")]]),
+                    message_id=message_id,
+                )
                 return
 
             if data == "admin:public_link" and chat_id is not None and self.is_admin(user):
@@ -4618,12 +4832,6 @@ class ShopBot:
                         ]
                     ),
                 )
-                return
-
-            if data.startswith("admin:refpay:") and chat_id is not None and self.is_admin(user):
-                self.telegram.answer_callback_query(callback_id, "Отмечаю выплату")
-                referrer_id = int(data.split(":")[-1])
-                self.mark_referral_paid(chat_id, referrer_id, user)
                 return
 
             if data == "admin:share_warp" and chat_id is not None and self.is_admin(user):

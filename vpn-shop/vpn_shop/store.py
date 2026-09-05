@@ -1880,6 +1880,51 @@ class Store:
                     continue
         raise RuntimeError("Failed to generate unique referral code")
 
+    def get_referrer_by_code(self, code: str) -> dict[str, Any] | None:
+        clean = (code or "").strip()
+        if not clean:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM referrers WHERE code = ? AND status = 'active'",
+                (clean,),
+            ).fetchone()
+        return self._row_to_dict(row)
+
+    def get_referrer(self, referrer_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM referrers WHERE id = ?", (int(referrer_id),)).fetchone()
+        return self._row_to_dict(row)
+
+    def count_delivered_paid_orders(
+        self,
+        *,
+        customer_chat_id: int | str | None = None,
+        customer_email: str | None = None,
+    ) -> int:
+        clauses = []
+        params: list[Any] = []
+        if customer_chat_id is not None and str(customer_chat_id).strip():
+            clauses.append("customer_chat_id = ?")
+            params.append(str(customer_chat_id))
+        if customer_email is not None and str(customer_email).strip():
+            clauses.append("LOWER(customer_email) = ?")
+            params.append(str(customer_email).strip().lower())
+        if not clauses:
+            return 0
+        where_clause = " OR ".join(clauses)
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*) AS c FROM orders
+                WHERE ({where_clause})
+                  AND final_price_rub > 0
+                  AND status = 'delivered'
+                """,
+                params,
+            ).fetchone()
+        return int(row["c"]) if row else 0
+
     def get_referral_attribution_for_user(self, user_id: int | str) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -1914,6 +1959,22 @@ class Store:
             if str(referrer["user_id"]) == str(referred_user_id):
                 return "self", referrer
 
+            # Anti-retroactive protection (Requirement 5):
+            # Check if user has existing completed or waiting paid orders.
+            user_key = str(referred_user_id).strip()
+            prior_order = conn.execute(
+                """
+                SELECT 1 FROM orders
+                WHERE (customer_chat_id = ? OR LOWER(customer_email) = ?)
+                  AND final_price_rub > 0
+                  AND status IN ('delivered', 'waiting_payment')
+                LIMIT 1
+                """,
+                (user_key, user_key.lower()),
+            ).fetchone()
+            if prior_order is not None:
+                return "already_customer", None
+
             existing = conn.execute(
                 """
                 SELECT a.*, r.code AS referrer_code, r.user_id AS referrer_user_id,
@@ -1937,43 +1998,229 @@ class Store:
                 """,
                 (int(referrer["id"]), str(referred_user_id), str(referred_chat_id), code, now),
             )
-            row = conn.execute("SELECT * FROM referral_attributions WHERE id = ?", (cursor.lastrowid,)).fetchone()
-        return "created", self._row_to_dict(row)
-
-    def create_referral_ledger_for_order(self, order: dict[str, Any]) -> dict[str, Any] | None:
-        customer_chat_id = order.get("customer_chat_id")
-        final_price = int(order.get("final_price_rub") or 0)
-        if not customer_chat_id or final_price <= 0 or order.get("kind") not in {"purchase", "renewal"}:
-            return None
-        if (order.get("meta_json") or {}).get("source") == "trial":
-            return None
-
-        with self._connect() as conn:
-            attribution = conn.execute(
+            attribution_id = cursor.lastrowid
+            row = conn.execute(
                 """
-                SELECT a.*, r.commission_percent
+                SELECT a.*, r.code AS referrer_code, r.user_id AS referrer_user_id,
+                       r.chat_id AS referrer_chat_id, r.commission_percent
                 FROM referral_attributions a
                 JOIN referrers r ON r.id = a.referrer_id
-                WHERE a.referred_user_id = ?
-                LIMIT 1
+                WHERE a.id = ?
                 """,
-                (str(customer_chat_id),),
+                (attribution_id,),
             ).fetchone()
-            if attribution is None:
-                return None
-            percent = int(attribution["commission_percent"])
-            amount = max(final_price * percent // 100, 0)
+        return "created", self._row_to_dict(row)
+
+    def create_referral_ledger_for_order(
+        self,
+        order: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, int, int]:
+        customer_chat_id = order.get("customer_chat_id")
+        customer_email = str(order.get("customer_email") or "").strip().lower()
+        final_price = int(order.get("final_price_rub") or 0)
+        kind = str(order.get("kind") or "")
+
+        meta = order.get("meta_json") or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+
+        if final_price <= 0 or kind not in {"purchase", "renewal"}:
+            return None, 0, 0
+        if meta.get("source") == "trial":
+            return None, 0, 0
+
+        with self._connect() as conn:
+            referrer_id: int | None = None
+            commission_percent: int = 10
+            attribution_id: int | None = None
+            attribution_first_order: str | None = None
+
+            # Step 1: customer_chat_id in referral_attributions
+            if customer_chat_id:
+                row = conn.execute(
+                    """
+                    SELECT a.id, a.first_order_public_id, r.id AS referrer_id, r.commission_percent
+                    FROM referral_attributions a
+                    JOIN referrers r ON r.id = a.referrer_id
+                    WHERE a.referred_user_id = ? AND r.status = 'active'
+                    LIMIT 1
+                    """,
+                    (str(customer_chat_id),),
+                ).fetchone()
+                if row:
+                    referrer_id = int(row["referrer_id"])
+                    commission_percent = int(row["commission_percent"] or 10)
+                    attribution_id = int(row["id"])
+                    attribution_first_order = row["first_order_public_id"]
+
+            # Step 2: customer_email in referral_attributions
+            if not referrer_id and customer_email:
+                row = conn.execute(
+                    """
+                    SELECT a.id, a.first_order_public_id, r.id AS referrer_id, r.commission_percent
+                    FROM referral_attributions a
+                    JOIN referrers r ON r.id = a.referrer_id
+                    WHERE LOWER(a.referred_user_id) = ? AND r.status = 'active'
+                    LIMIT 1
+                    """,
+                    (customer_email,),
+                ).fetchone()
+                if row:
+                    referrer_id = int(row["referrer_id"])
+                    commission_percent = int(row["commission_percent"] or 10)
+                    attribution_id = int(row["id"])
+                    attribution_first_order = row["first_order_public_id"]
+
+            # Step 3: meta_json["referrer_id"]
+            if not referrer_id and meta.get("referrer_id"):
+                try:
+                    ref_candidate = int(meta["referrer_id"])
+                    row = conn.execute(
+                        "SELECT id, commission_percent FROM referrers WHERE id = ? AND status = 'active'",
+                        (ref_candidate,),
+                    ).fetchone()
+                    if row:
+                        referrer_id = int(row["id"])
+                        commission_percent = int(row["commission_percent"] or 10)
+                except (ValueError, TypeError):
+                    pass
+
+            # Step 4: For renewals, lookup provisioned_profile_id -> find initial purchase order / profile owner
+            if not referrer_id and kind == "renewal" and order.get("provisioned_profile_id"):
+                prof_id = int(order["provisioned_profile_id"])
+                # 4a. Look up earlier order for this profile
+                earlier_order = conn.execute(
+                    """
+                    SELECT customer_chat_id, customer_email, meta_json
+                    FROM orders
+                    WHERE provisioned_profile_id = ? AND id != ?
+                    ORDER BY id ASC LIMIT 1
+                    """,
+                    (prof_id, int(order.get("id") or 0)),
+                ).fetchone()
+                if earlier_order:
+                    earlier_chat_id = earlier_order["customer_chat_id"]
+                    earlier_email = str(earlier_order["customer_email"] or "").strip().lower()
+                    earlier_meta = earlier_order["meta_json"] or {}
+                    if isinstance(earlier_meta, str):
+                        try:
+                            earlier_meta = json.loads(earlier_meta)
+                        except Exception:
+                            earlier_meta = {}
+
+                    if earlier_chat_id:
+                        row = conn.execute(
+                            """
+                            SELECT r.id AS referrer_id, r.commission_percent
+                            FROM referral_attributions a
+                            JOIN referrers r ON r.id = a.referrer_id
+                            WHERE a.referred_user_id = ? AND r.status = 'active'
+                            LIMIT 1
+                            """,
+                            (str(earlier_chat_id),),
+                        ).fetchone()
+                        if row:
+                            referrer_id = int(row["referrer_id"])
+                            commission_percent = int(row["commission_percent"] or 10)
+
+                    if not referrer_id and earlier_email:
+                        row = conn.execute(
+                            """
+                            SELECT r.id AS referrer_id, r.commission_percent
+                            FROM referral_attributions a
+                            JOIN referrers r ON r.id = a.referrer_id
+                            WHERE LOWER(a.referred_user_id) = ? AND r.status = 'active'
+                            LIMIT 1
+                            """,
+                            (earlier_email,),
+                        ).fetchone()
+                        if row:
+                            referrer_id = int(row["referrer_id"])
+                            commission_percent = int(row["commission_percent"] or 10)
+
+                    if not referrer_id and earlier_meta.get("referrer_id"):
+                        try:
+                            row = conn.execute(
+                                "SELECT id, commission_percent FROM referrers WHERE id = ? AND status = 'active'",
+                                (int(earlier_meta["referrer_id"]),),
+                            ).fetchone()
+                            if row:
+                                referrer_id = int(row["id"])
+                                commission_percent = int(row["commission_percent"] or 10)
+                        except (ValueError, TypeError):
+                            pass
+
+                # 4b. If still not found, check profile_owners
+                if not referrer_id:
+                    owner_row = conn.execute(
+                        """
+                        SELECT po.user_id, po.chat_id
+                        FROM profile_owners po
+                        JOIN profiles p ON p.public_id = po.profile_public_id
+                        WHERE p.id = ?
+                        LIMIT 1
+                        """,
+                        (prof_id,),
+                    ).fetchone()
+                    if owner_row:
+                        for uid in (owner_row["user_id"], owner_row["chat_id"]):
+                            if uid and not referrer_id:
+                                row = conn.execute(
+                                    """
+                                    SELECT r.id AS referrer_id, r.commission_percent
+                                    FROM referral_attributions a
+                                    JOIN referrers r ON r.id = a.referrer_id
+                                    WHERE a.referred_user_id = ? AND r.status = 'active'
+                                    LIMIT 1
+                                    """,
+                                    (str(uid),),
+                                ).fetchone()
+                                if row:
+                                    referrer_id = int(row["referrer_id"])
+                                    commission_percent = int(row["commission_percent"] or 10)
+
+            if not referrer_id:
+                return None, 0, 0
+
+            amount = max(final_price * commission_percent // 100, 0)
             if amount <= 0:
-                return None
+                return None, 0, 0
+
+            # Calculate old balance: total_earned - total_paid
+            bal_row = conn.execute(
+                """
+                SELECT
+                  COALESCE(le.total_earned, 0) - COALESCE(lp.total_paid, 0) AS balance_rub
+                FROM (SELECT ? AS ref_id) x
+                LEFT JOIN (
+                  SELECT referrer_id, SUM(amount_rub) AS total_earned
+                  FROM referral_ledger
+                  WHERE referrer_id = ?
+                ) le ON 1=1
+                LEFT JOIN (
+                  SELECT referrer_id, SUM(amount_rub) AS total_paid
+                  FROM referral_payouts
+                  WHERE referrer_id = ?
+                ) lp ON 1=1
+                """,
+                (referrer_id, referrer_id, referrer_id),
+            ).fetchone()
+            old_balance = max(int(bal_row["balance_rub"]) if bal_row and bal_row["balance_rub"] is not None else 0, 0)
+
             payload = json.dumps(
                 {
                     "order_transport": order.get("transport"),
                     "order_duration_days": order.get("duration_days"),
-                    "device_limit": (order.get("meta_json") or {}).get("device_limit"),
+                    "device_limit": meta.get("device_limit"),
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
+
+            ref_user_key = str(customer_chat_id or customer_email or f"order_{order.get('public_id')}")
             try:
                 cursor = conn.execute(
                     """
@@ -1984,33 +2231,38 @@ class Store:
                     VALUES(?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        int(attribution["referrer_id"]),
-                        str(customer_chat_id),
+                        referrer_id,
+                        ref_user_key,
                         str(order["public_id"]),
                         final_price,
                         amount,
-                        percent,
+                        commission_percent,
                         now_ts(),
                         payload,
                     ),
                 )
+                ledger_id = cursor.lastrowid
+                new_balance = old_balance + amount
             except sqlite3.IntegrityError:
+                # Idempotent replay
                 row = conn.execute(
                     "SELECT * FROM referral_ledger WHERE order_public_id = ?",
                     (str(order["public_id"]),),
                 ).fetchone()
-                return self._row_to_dict(row)
-            if not attribution["first_order_public_id"]:
+                return self._row_to_dict(row), old_balance, old_balance
+
+            if attribution_id and not attribution_first_order:
                 conn.execute(
                     """
                     UPDATE referral_attributions
                     SET first_order_public_id = ?
                     WHERE id = ?
                     """,
-                    (str(order["public_id"]), int(attribution["id"])),
+                    (str(order["public_id"]), attribution_id),
                 )
-            row = conn.execute("SELECT * FROM referral_ledger WHERE id = ?", (cursor.lastrowid,)).fetchone()
-        return self._row_to_dict(row)
+
+            row = conn.execute("SELECT * FROM referral_ledger WHERE id = ?", (ledger_id,)).fetchone()
+            return self._row_to_dict(row), old_balance, new_balance
 
     def list_referral_balances(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -2019,17 +2271,23 @@ class Store:
                 SELECT
                   r.id, r.user_id, r.chat_id, r.code, r.commission_percent, r.status,
                   u.username, u.first_name, u.last_name,
-                  COALESCE(lb.balance_rub, 0) AS balance_rub,
-                  COALESCE(lb.pending_count, 0) AS pending_count,
+                  COALESCE(le.total_earned, 0) AS total_earned_rub,
+                  COALESCE(lp.total_paid, 0) AS total_paid_rub,
+                  MAX(COALESCE(le.total_earned, 0) - COALESCE(lp.total_paid, 0), 0) AS balance_rub,
+                  COALESCE(le.pending_count, 0) AS pending_count,
                   COALESCE(ac.referred_count, 0) AS referred_count
                 FROM referrers r
                 LEFT JOIN telegram_users u ON u.user_id = r.user_id
                 LEFT JOIN (
-                  SELECT referrer_id, SUM(amount_rub) AS balance_rub, COUNT(*) AS pending_count
+                  SELECT referrer_id, SUM(amount_rub) AS total_earned, COUNT(*) AS pending_count
                   FROM referral_ledger
-                  WHERE status = 'pending'
                   GROUP BY referrer_id
-                ) lb ON lb.referrer_id = r.id
+                ) le ON le.referrer_id = r.id
+                LEFT JOIN (
+                  SELECT referrer_id, SUM(amount_rub) AS total_paid
+                  FROM referral_payouts
+                  GROUP BY referrer_id
+                ) lp ON lp.referrer_id = r.id
                 LEFT JOIN (
                   SELECT referrer_id, COUNT(*) AS referred_count
                   FROM referral_attributions
@@ -2044,39 +2302,88 @@ class Store:
         balances = [item for item in self.list_referral_balances() if int(item["id"]) == int(referrer_id)]
         return balances[0] if balances else None
 
-    def create_referral_payout(self, *, referrer_id: int, actor: str) -> dict[str, Any] | None:
+    def create_referral_payout(
+        self,
+        *,
+        referrer_id: int,
+        actor: str,
+        amount_rub: int | None = None,
+    ) -> dict[str, Any] | None:
         now = now_ts()
         with self._connect() as conn:
-            rows = conn.execute(
+            # Calculate current debt
+            bal_row = conn.execute(
                 """
-                SELECT id, amount_rub
-                FROM referral_ledger
-                WHERE referrer_id = ? AND status = 'pending'
-                ORDER BY created_at ASC, id ASC
+                SELECT
+                  COALESCE(le.total_earned, 0) - COALESCE(lp.total_paid, 0) AS balance_rub
+                FROM (SELECT ? AS ref_id) x
+                LEFT JOIN (
+                  SELECT referrer_id, SUM(amount_rub) AS total_earned
+                  FROM referral_ledger
+                  WHERE referrer_id = ?
+                ) le ON 1=1
+                LEFT JOIN (
+                  SELECT referrer_id, SUM(amount_rub) AS total_paid
+                  FROM referral_payouts
+                  WHERE referrer_id = ?
+                ) lp ON 1=1
                 """,
-                (int(referrer_id),),
-            ).fetchall()
-            amount = sum(int(row["amount_rub"]) for row in rows)
-            if amount <= 0:
+                (int(referrer_id), int(referrer_id), int(referrer_id)),
+            ).fetchone()
+            cur_balance = max(int(bal_row["balance_rub"]) if bal_row and bal_row["balance_rub"] is not None else 0, 0)
+            if cur_balance <= 0:
                 return None
+
+            payout_amount = cur_balance if amount_rub is None else int(amount_rub)
+            if payout_amount <= 0:
+                return None
+            if payout_amount > cur_balance:
+                payout_amount = cur_balance
+
             cursor = conn.execute(
                 """
                 INSERT INTO referral_payouts(referrer_id, amount_rub, actor, created_at)
                 VALUES(?, ?, ?, ?)
                 """,
-                (int(referrer_id), amount, actor, now),
+                (int(referrer_id), payout_amount, actor, now),
             )
             payout_id = int(cursor.lastrowid)
-            ledger_ids = [int(row["id"]) for row in rows]
-            placeholders = ",".join("?" for _ in ledger_ids)
-            conn.execute(
-                f"""
-                UPDATE referral_ledger
-                SET status = 'paid', paid_at = ?, payout_id = ?
-                WHERE id IN ({placeholders})
+
+            # Cumulative calculation to mark covered referral_ledger rows as 'paid'
+            new_total_paid_row = conn.execute(
+                "SELECT SUM(amount_rub) AS total_paid FROM referral_payouts WHERE referrer_id = ?",
+                (int(referrer_id),),
+            ).fetchone()
+            total_paid_so_far = int(new_total_paid_row["total_paid"] or 0) if new_total_paid_row else payout_amount
+
+            all_ledger_rows = conn.execute(
+                """
+                SELECT id, amount_rub, status
+                FROM referral_ledger
+                WHERE referrer_id = ?
+                ORDER BY created_at ASC, id ASC
                 """,
-                [now, payout_id, *ledger_ids],
-            )
+                (int(referrer_id),),
+            ).fetchall()
+
+            ids_to_mark_paid = []
+            cumulative = 0
+            for r in all_ledger_rows:
+                cumulative += int(r["amount_rub"])
+                if cumulative <= total_paid_so_far and r["status"] == "pending":
+                    ids_to_mark_paid.append(int(r["id"]))
+
+            if ids_to_mark_paid:
+                placeholders = ",".join("?" for _ in ids_to_mark_paid)
+                conn.execute(
+                    f"""
+                    UPDATE referral_ledger
+                    SET status = 'paid', paid_at = ?, payout_id = ?
+                    WHERE id IN ({placeholders})
+                    """,
+                    [now, payout_id, *ids_to_mark_paid],
+                )
+
             row = conn.execute("SELECT * FROM referral_payouts WHERE id = ?", (payout_id,)).fetchone()
         return self._row_to_dict(row)
 

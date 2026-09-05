@@ -70,6 +70,10 @@ def _csv_ints(name: str) -> tuple[int, ...]:
 
 DEFAULT_MANAGER_TG_ID = 958026436  # PLACEHOLDER
 
+REFERRAL_INVITEE_DISCOUNT_PERCENT: int = 10
+REFERRAL_COOKIE_NAME: str = "sc_ref"
+REFERRAL_COOKIE_MAX_AGE: int = 2592000  # 30 days
+
 
 @dataclass(frozen=True)
 class Settings:
