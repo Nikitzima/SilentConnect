@@ -6514,6 +6514,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                             key = m.group(1)
                             val = body_part.decode("utf-8", errors="replace").strip()
                             result[key] = val
+        if not result and "application/json" in content_type.lower():
+            try:
+                parsed_json = json.loads(raw_bytes.decode("utf-8"))
+                if isinstance(parsed_json, dict):
+                    result = {str(k): str(v) for k, v in parsed_json.items()}
+            except Exception:
+                pass
         if not result:
             raw_str = raw_bytes.decode("utf-8", errors="replace")
             parsed = urllib.parse.parse_qs(raw_str, keep_blank_values=True)
