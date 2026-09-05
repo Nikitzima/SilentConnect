@@ -44,6 +44,7 @@ if _vpn_shop_path not in sys.path:
 try:
     from vpn_shop.catalog import calculate_renewal_price, quote_price
     from vpn_shop.security import hash_secret
+    from vpn_shop.web import subscription_setup_url, verify_cf_turnstile
 except ImportError:
     def quote_price(device_limit: int = 3, duration_days: int = 30, settings: Any = None) -> int:
         prices = {3: 100, 6: 150, 9: 200}
@@ -66,6 +67,12 @@ except ImportError:
     def hash_secret(value: str) -> str:
         effective_pepper = os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")
         return hmac.new(effective_pepper, value.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    def subscription_setup_url(subscription_url: str) -> str:
+        return subscription_url.replace("/sub/json/", "/my-secret-sub/import/")
+
+    def verify_cf_turnstile(secret_key: str, response_token: str, client_ip: str = "") -> bool:
+        return True
 
 
 LOGGER = logging.getLogger("subjson-service")
@@ -438,6 +445,262 @@ def find_store_db_path() -> str:
     if p3.exists():
         return str(p3)
     return "/root/vpn-shop/data-silentconnect/vpn_shop.db"
+
+
+BIND_EMAIL_RATE_LIMIT_LOCK = threading.Lock()
+BIND_EMAIL_RATE_LIMITS: collections.OrderedDict[str, list[float]] = collections.OrderedDict()
+BIND_EMAIL_RATE_LIMIT_MAX_ENTRIES = 5000
+
+
+def check_bind_email_rate_limit(client_ip: str, max_requests: int = 5, window_sec: int = 300) -> bool:
+    if not client_ip or client_ip in ("127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1"):
+        return True
+    now = time.time()
+    with BIND_EMAIL_RATE_LIMIT_LOCK:
+        history = [t for t in BIND_EMAIL_RATE_LIMITS.get(client_ip, []) if now - t < window_sec]
+        if len(history) >= max_requests:
+            return False
+        history.append(now)
+        BIND_EMAIL_RATE_LIMITS[client_ip] = history
+        BIND_EMAIL_RATE_LIMITS.move_to_end(client_ip)
+        while len(BIND_EMAIL_RATE_LIMITS) > BIND_EMAIL_RATE_LIMIT_MAX_ENTRIES:
+            BIND_EMAIL_RATE_LIMITS.popitem(last=False)
+        return True
+
+
+def get_shop_settings() -> Any:
+    env_paths = [
+        "/root/vpn-shop/.env.silentconnect",
+        "/root/vpn-shop/.env",
+        str(Path(__file__).resolve().parent.parent / "vpn-shop" / ".env"),
+        str(Path(__file__).resolve().parent.parent / ".env"),
+    ]
+    env_file = next((p for p in env_paths if os.path.exists(p)), None)
+    try:
+        from vpn_shop.config import load_settings
+        root_dir = Path(__file__).resolve().parent.parent / "vpn-shop"
+        if not root_dir.exists():
+            root_dir = Path("/root/vpn-shop")
+        return load_settings(root_dir=root_dir, env_file=Path(env_file) if env_file else None)
+    except Exception as exc:
+        LOGGER.warning("Could not load shop settings: %s", exc)
+        return None
+
+
+def mask_email(e: str) -> str:
+    if not e or "@" not in e:
+        return ""
+    loc, dom = e.split("@", 1)
+    if len(loc) <= 2:
+        m_loc = loc[:1] + "***"
+    else:
+        m_loc = loc[:2] + "***"
+    return f"{m_loc}@{dom}"
+
+
+def find_store_linked_email(sub_id: str) -> str:
+    try:
+        target_sub = sub_id.strip().split("~")[0]
+        row, _, _, _, client = find_subscription(target_sub)
+        xui_email = str(client.get("email") or "").strip()
+        if not xui_email:
+            return ""
+        db_path = find_store_db_path()
+        if not Path(db_path).exists():
+            return ""
+        conn = sqlite3.connect(db_path, timeout=10.0)
+        try:
+            conn.row_factory = sqlite3.Row
+            prof = conn.execute("SELECT id FROM profiles WHERE xui_email = ?", (xui_email,)).fetchone()
+            if prof:
+                ord_row = conn.execute(
+                    "SELECT customer_email FROM orders WHERE provisioned_profile_id = ? AND customer_email != '' ORDER BY id DESC LIMIT 1",
+                    (prof["id"],)
+                ).fetchone()
+                if ord_row and ord_row["customer_email"]:
+                    return str(ord_row["customer_email"]).strip()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return ""
+
+
+def bind_subscription_email(
+    sub_id: str,
+    customer_email: str,
+    email_reminders: bool = True,
+    turnstile_token: str = "",
+    client_ip: str = "",
+    headers: Any = None,
+) -> dict[str, Any]:
+    clean_email = str(customer_email or "").strip().lower()
+    if not clean_email or "@" not in clean_email or "." not in clean_email.split("@")[-1]:
+        raise ValueError("Пожалуйста, укажите корректный адрес электронной почты.")
+    if len(clean_email) > 120 or len(clean_email.split("@")[0]) < 1:
+        raise ValueError("Некорректный адрес электронной почты.")
+
+    if not check_bind_email_rate_limit(client_ip):
+        raise ValueError("Слишком много запросов на привязку почты. Пожалуйста, подождите несколько минут.")
+
+    shop_settings = get_shop_settings()
+    turnstile_secret = os.environ.get("CF_TURNSTILE_SECRET_KEY", "").strip()
+    if not turnstile_secret and shop_settings:
+        turnstile_secret = getattr(shop_settings, "cf_turnstile_secret_key", "").strip()
+
+    if turnstile_secret:
+        try:
+            from vpn_shop.web import verify_cf_turnstile
+            if not verify_cf_turnstile(turnstile_secret, turnstile_token, client_ip):
+                raise ValueError("Пожалуйста, подтвердите проверку защиты от роботов (Cloudflare).")
+        except ImportError:
+            pass
+
+    target_sub = sub_id.strip().split("~")[0]
+    found_client = None
+    try:
+        row, _, _, _, client = find_subscription(target_sub)
+        found_client = {"client": client, "inbound_id": row["id"]}
+    except KeyError:
+        pass
+
+    if not found_client:
+        raise ValueError("Подписка не найдена на сервере.")
+
+    xui_email = str(found_client["client"].get("email") or "")
+    db_path = find_store_db_path()
+    conn_shop = sqlite3.connect(db_path, timeout=30.0)
+    conn_shop.execute("PRAGMA busy_timeout = 30000;")
+    conn_shop.row_factory = sqlite3.Row
+    now = int(time.time())
+    try:
+        prof = conn_shop.execute("SELECT * FROM profiles WHERE xui_email = ?", (xui_email,)).fetchone()
+        if not prof:
+            pub_id = "prf_" + secrets.token_hex(6)
+            expiry_ms = int(found_client["client"].get("expiryTime") or 0)
+            expires_at = expiry_ms // 1000 if expiry_ms > 0 else (now + 30 * 86400)
+            client_id = str(found_client["client"].get("id") or xui_email)
+            mode = "family" if not xui_email.startswith("anon-") else "anonymous"
+            conn_shop.execute(
+                """
+                INSERT INTO profiles(
+                    public_id, xui_inbound_id, transport, profile_mode, family_label,
+                    xui_email, xui_client_id, status, created_at, expires_at,
+                    last_renewed_at, deleted_at, notes
+                )
+                VALUES(?, ?, 'tcp', ?, NULL, ?, ?, 'active', ?, ?, ?, NULL, 'auto_sync_from_xui')
+                """,
+                (pub_id, int(found_client["inbound_id"]), mode, xui_email, client_id, now, expires_at, now)
+            )
+            conn_shop.commit()
+            prof = conn_shop.execute("SELECT * FROM profiles WHERE xui_email = ?", (xui_email,)).fetchone()
+
+        if not prof or prof["status"] == "deleted":
+            raise ValueError("Профиль подписки не найден или удалён.")
+
+        prof_dict = dict(prof)
+        profile_id = prof_dict["id"]
+        profile_pub_id = prof_dict["public_id"]
+
+        order_rows = conn_shop.execute(
+            "SELECT * FROM orders WHERE provisioned_profile_id = ? ORDER BY id DESC",
+            (profile_id,)
+        ).fetchall()
+
+        if order_rows:
+            for ord_r in order_rows:
+                meta = json.loads(ord_r["meta_json"]) if ord_r["meta_json"] else {}
+                meta["customer_email"] = clean_email
+                meta["email_reminders"] = email_reminders
+                meta["bound_via"] = "lk_direct"
+                conn_shop.execute(
+                    "UPDATE orders SET customer_email = ?, meta_json = ?, updated_at = ? WHERE id = ?",
+                    (clean_email, json.dumps(meta), now, ord_r["id"])
+                )
+            source_order = dict(order_rows[0])
+            source_order["customer_email"] = clean_email
+        else:
+            ord_pub_id = "ord_" + secrets.token_hex(6)
+            web_token = secrets.token_hex(12)
+            meta = {
+                "source": f"lk_bind_email_{sub_id}",
+                "customer_email": clean_email,
+                "email_reminders": email_reminders,
+                "web": True,
+                "web_token": web_token,
+                "bound_via": "lk_direct",
+                "device_limit": 3,
+            }
+            conn_shop.execute(
+                """
+                INSERT INTO orders(
+                    public_id, kind, status, transport, duration_days, profile_mode, family_label,
+                    base_price_rub, final_price_rub, promo_id, invite_id, customer_chat_id,
+                    manager_chat_id, manager_message_id, privacy_ack, loss_policy_ack,
+                    terms_version, provisioned_profile_id, customer_email, created_at, updated_at, closed_at, meta_json
+                )
+                VALUES(?, 'email_binding', 'delivered', ?, 0, ?, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL, 1, 1, '2026-04-20', ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ord_pub_id,
+                    str(prof_dict.get("transport") or "tcp"),
+                    str(prof_dict.get("profile_mode") or "anonymous"),
+                    profile_id,
+                    clean_email,
+                    now,
+                    now,
+                    now,
+                    json.dumps(meta),
+                )
+            )
+            source_order = {
+                "public_id": ord_pub_id,
+                "duration_days": 30,
+                "meta_json": json.dumps(meta),
+                "customer_email": clean_email,
+            }
+        conn_shop.commit()
+    finally:
+        conn_shop.close()
+
+    try:
+        if shop_settings and (getattr(shop_settings, "smtp_host", None) or getattr(shop_settings, "support_email", None)):
+            from vpn_shop.mailer import send_subscription_email_async
+            sub_url = public_subscription_url(headers, "json", sub_id)
+            setup_url = subscription_setup_url(sub_url) if sub_url else f"{shop_settings.web_public_base_url}/my-secret-sub/import/{sub_id}"
+            web_token = ""
+            if source_order.get("meta_json"):
+                try:
+                    meta_parsed = json.loads(source_order["meta_json"]) if isinstance(source_order["meta_json"], str) else source_order["meta_json"]
+                    web_token = meta_parsed.get("web_token", "")
+                except Exception:
+                    pass
+            cabinet_url = f"{shop_settings.web_public_base_url}/order/{source_order['public_id']}/{web_token}" if (web_token and shop_settings.web_public_base_url) else f"{shop_settings.web_public_base_url}/cabinet"
+            tg_claim_base = HAPP_SUPPORT_URL or "https://t.me/your_vpn_bot"
+            bind_tg_url = f"{tg_claim_base}?start=claim_{source_order['public_id']}_{web_token}" if web_token else tg_claim_base
+
+            send_subscription_email_async(
+                shop_settings,
+                customer_email=clean_email,
+                order_public_id=str(source_order["public_id"]),
+                plan_name="SilentConnect VPN (Привязка Email)",
+                duration_days=int(source_order.get("duration_days") or 30),
+                setup_url=setup_url,
+                json_url=sub_url,
+                cabinet_url=cabinet_url,
+                bind_tg_url=bind_tg_url,
+                expires_ts=prof_dict.get("expires_at"),
+                subject=f"Подписка SilentConnect успешно привязана к почте! (#{source_order['public_id']})",
+            )
+    except Exception as mail_err:
+        LOGGER.warning("Could not dispatch async confirmation email for bind_email: %s", mail_err)
+
+    return {
+        "ok": True,
+        "customer_email": clean_email,
+        "profile_public_id": profile_pub_id,
+        "order_public_id": source_order["public_id"],
+    }
 
 
 def create_inline_renewal_order(
@@ -5027,6 +5290,24 @@ def setup_page_html(
     .button.secondary:hover, button.secondary:hover { background:rgba(255,255,255,0.12); border-color:rgba(255,255,255,0.25); }
     .button.success { background:linear-gradient(135deg,var(--green),#24a05d); color:#000; }
     .choice-box.active { border-color:var(--green) !important; background:rgba(47,191,113,0.16) !important; box-shadow:0 0 12px var(--green-glow) !important; }
+    #renew-plan-selectors.dimmed {
+      opacity: 0.35 !important;
+      pointer-events: none !important;
+      user-select: none !important;
+      filter: grayscale(0.85);
+    }
+    #renew-plan-selectors.dimmed .choice-box.active {
+      border-color: var(--line) !important;
+      background: rgba(255,255,255,0.03) !important;
+      box-shadow: none !important;
+    }
+    #renew-plan-selectors.dimmed .choice-box span {
+      color: var(--muted) !important;
+    }
+    #renew-plan-selectors.dimmed .choice-box span[style*="background:#f59e0b"] {
+      opacity: 0.25 !important;
+      box-shadow: none !important;
+    }
     textarea { width:100%; max-width:100%; box-sizing:border-box; min-height:94px; margin-top:14px; border:1px solid var(--line); border-radius:12px; background:rgba(0,0,0,0.3); color:var(--text); padding:14px; font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; resize:vertical; }
     textarea:focus { outline:none; border-color:var(--green); }
     footer { margin-top:30px; text-align:center; padding:24px 0; color:var(--muted); font-size:14px; border-top:1px solid var(--line); }
@@ -5125,57 +5406,71 @@ def setup_page_html(
           <div id="renew-content" style="padding:0 24px 24px 24px; border-top:1px solid rgba(255,255,255,0.06); opacity:0; transition:opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1);">
             <p style="color:var(--muted); font-size:14px; margin-top:12px; margin-bottom:16px;">Выберите период продления. При оплате ваш текущий ключ доступа и настройки в приложении сразу продлятся.</p>
             
+            __LINKED_EMAIL_BADGE__
+
             <form method="post" action="/__SECRET_SEGMENT__/renew/__SUB_ID__">
               <input type="hidden" name="device_limit" id="renew_device_limit" value="3">
               <input type="hidden" name="duration_days" id="renew_duration_days" value="360">
 
-              <div style="color:var(--muted); font-size:12px; font-weight:600; margin-bottom:6px;">Устройства (одновременно)</div>
-              <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-bottom:16px;">
-                <div class="dev-box choice-box active" data-group="device_limit" data-value="3" onclick="setRenewChoice('device_limit', '3')" style="padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; align-items:center; justify-content:center; position:relative; min-height:48px; cursor:pointer;">
-                  <span style="font-weight:700; font-size:15px; color:#fff;">3 устройства</span>
+              <div class="bind-only-row" style="margin-bottom: 16px; background: rgba(255,255,255,0.03); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; transition: all 0.2s ease;">
+                <label style="display: flex; align-items: center; gap: 12px; cursor: pointer; user-select: none;">
+                  <input type="checkbox" name="bind_email_only" id="bind_email_only" value="1" onchange="toggleBindEmailOnly(this.checked)" style="width: 18px; height: 18px; accent-color: var(--green); cursor: pointer;">
+                  <div>
+                    <div style="font-weight: 700; font-size: 14.5px; color: #fff;">Только привязать почту (без смены тарифа и оплаты)</div>
+                    <div style="font-size: 12px; color: var(--muted); margin-top: 2px;">Для получения напоминаний об окончании за 24ч / 1ч и входа в личный кабинет</div>
+                  </div>
+                </label>
+              </div>
+
+              <div id="renew-plan-selectors" style="transition: opacity 0.25s ease, filter 0.25s ease;">
+                <div style="color:var(--muted); font-size:12px; font-weight:600; margin-bottom:6px;">Устройства (одновременно)</div>
+                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-bottom:16px;">
+                  <div class="dev-box choice-box active" data-group="device_limit" data-value="3" onclick="setRenewChoice('device_limit', '3')" style="padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; align-items:center; justify-content:center; position:relative; min-height:48px; cursor:pointer;">
+                    <span style="font-weight:700; font-size:15px; color:#fff;">3 устройства</span>
+                  </div>
+                  <div class="dev-box choice-box" data-group="device_limit" data-value="6" onclick="setRenewChoice('device_limit', '6')" style="padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; align-items:center; justify-content:center; position:relative; min-height:48px; cursor:pointer;">
+                    <span style="font-weight:700; font-size:15px; color:#fff;">6 устройств</span>
+                  </div>
+                  <div class="dev-box choice-box" data-group="device_limit" data-value="9" onclick="setRenewChoice('device_limit', '9')" style="padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; align-items:center; justify-content:center; position:relative; min-height:48px; cursor:pointer;">
+                    <span style="font-weight:700; font-size:15px; color:#fff;">9 устройств</span>
+                  </div>
                 </div>
-                <div class="dev-box choice-box" data-group="device_limit" data-value="6" onclick="setRenewChoice('device_limit', '6')" style="padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; align-items:center; justify-content:center; position:relative; min-height:48px; cursor:pointer;">
-                  <span style="font-weight:700; font-size:15px; color:#fff;">6 устройств</span>
-                </div>
-                <div class="dev-box choice-box" data-group="device_limit" data-value="9" onclick="setRenewChoice('device_limit', '9')" style="padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; align-items:center; justify-content:center; position:relative; min-height:48px; cursor:pointer;">
-                  <span style="font-weight:700; font-size:15px; color:#fff;">9 устройств</span>
+
+                <div style="color:var(--muted); font-size:12px; font-weight:600; margin-bottom:6px;">Срок доступа</div>
+                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-bottom:16px;">
+                  <div class="dur-box choice-box" data-group="duration_days" data-value="30" onclick="setRenewChoice('duration_days', '30')" style="padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; flex-direction:column; justify-content:center; position:relative; cursor:pointer;">
+                    <span style="font-weight:700; font-size:15px; color:#fff;">1 месяц</span>
+                    <span style="font-size:12px; color:var(--muted);">помесячно</span>
+                  </div>
+                  <div class="dur-box choice-box" data-group="duration_days" data-value="90" onclick="setRenewChoice('duration_days', '90')" style="padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; flex-direction:column; justify-content:center; position:relative; cursor:pointer;">
+                    <span style="position:absolute; top:-8px; right:-4px; background:#f59e0b; color:#fff; font-weight:800; font-size:10px; padding:2px 6px; border-radius:6px; box-shadow:0 2px 6px rgba(245,158,11,0.4);">−10%</span>
+                    <span style="font-weight:700; font-size:15px; color:#fff;">3 месяца</span>
+                    <span style="font-size:12px; color:var(--muted);">экономия</span>
+                  </div>
+                  <div class="dur-box choice-box" data-group="duration_days" data-value="180" onclick="setRenewChoice('duration_days', '180')" style="padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; flex-direction:column; justify-content:center; position:relative; cursor:pointer;">
+                    <span style="position:absolute; top:-8px; right:-4px; background:#f59e0b; color:#fff; font-weight:800; font-size:10px; padding:2px 6px; border-radius:6px; box-shadow:0 2px 6px rgba(245,158,11,0.4);">−20%</span>
+                    <span style="font-weight:700; font-size:15px; color:#fff;">6 месяцев</span>
+                    <span style="font-size:12px; color:var(--muted);">выгодно</span>
+                  </div>
+                  <div class="dur-box choice-box active" data-group="duration_days" data-value="360" onclick="setRenewChoice('duration_days', '360')" style="padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; flex-direction:column; justify-content:center; position:relative; cursor:pointer;">
+                    <span style="position:absolute; top:-8px; right:-4px; background:#f59e0b; color:#fff; font-weight:800; font-size:10px; padding:2px 6px; border-radius:6px; box-shadow:0 2px 6px rgba(245,158,11,0.4);">−30%</span>
+                    <span style="font-weight:700; font-size:15px; color:#fff;">12 месяцев</span>
+                    <span style="font-size:12px; color:var(--muted);">максимум</span>
+                  </div>
                 </div>
               </div>
 
-              <div style="color:var(--muted); font-size:12px; font-weight:600; margin-bottom:6px;">Срок доступа</div>
-              <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-bottom:16px;">
-                <div class="dur-box choice-box" data-group="duration_days" data-value="30" onclick="setRenewChoice('duration_days', '30')" style="padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; flex-direction:column; justify-content:center; position:relative; cursor:pointer;">
-                  <span style="font-weight:700; font-size:15px; color:#fff;">1 месяц</span>
-                  <span style="font-size:12px; color:var(--muted);">помесячно</span>
-                </div>
-                <div class="dur-box choice-box" data-group="duration_days" data-value="90" onclick="setRenewChoice('duration_days', '90')" style="padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; flex-direction:column; justify-content:center; position:relative; cursor:pointer;">
-                  <span style="position:absolute; top:-8px; right:-4px; background:#f59e0b; color:#fff; font-weight:800; font-size:10px; padding:2px 6px; border-radius:6px; box-shadow:0 2px 6px rgba(245,158,11,0.4);">−10%</span>
-                  <span style="font-weight:700; font-size:15px; color:#fff;">3 месяца</span>
-                  <span style="font-size:12px; color:var(--muted);">экономия</span>
-                </div>
-                <div class="dur-box choice-box" data-group="duration_days" data-value="180" onclick="setRenewChoice('duration_days', '180')" style="padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; flex-direction:column; justify-content:center; position:relative; cursor:pointer;">
-                  <span style="position:absolute; top:-8px; right:-4px; background:#f59e0b; color:#fff; font-weight:800; font-size:10px; padding:2px 6px; border-radius:6px; box-shadow:0 2px 6px rgba(245,158,11,0.4);">−20%</span>
-                  <span style="font-weight:700; font-size:15px; color:#fff;">6 месяцев</span>
-                  <span style="font-size:12px; color:var(--muted);">выгодно</span>
-                </div>
-                <div class="dur-box choice-box active" data-group="duration_days" data-value="360" onclick="setRenewChoice('duration_days', '360')" style="padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; flex-direction:column; justify-content:center; position:relative; cursor:pointer;">
-                  <span style="position:absolute; top:-8px; right:-4px; background:#f59e0b; color:#fff; font-weight:800; font-size:10px; padding:2px 6px; border-radius:6px; box-shadow:0 2px 6px rgba(245,158,11,0.4);">−30%</span>
-                  <span style="font-weight:700; font-size:15px; color:#fff;">12 месяцев</span>
-                  <span style="font-size:12px; color:var(--muted);">максимум</span>
-                </div>
-              </div>
-
-              <div style="background:rgba(0,0,0,0.25); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-                <span style="color:var(--muted); font-size:14px;">Стоимость продления:</span>
+              <div id="renew-price-card" style="background:rgba(0,0,0,0.25); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                <span id="renew-price-label" style="color:var(--muted); font-size:14px;">Стоимость продления:</span>
                 <strong id="renew-total-price" style="font-size:22px; font-weight:800; color:var(--green);">1 249 ₽ <span style="font-size:13px; color:var(--muted); font-weight:400;">(~104 ₽/мес)</span></strong>
               </div>
 
               <div style="margin-bottom: 12px;">
                 <label style="color:var(--muted); font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Электронная почта (для отправки чека и ссылок)</label>
-                <input type="email" name="customer_email" placeholder="pochta@gmail.com" value="__CUSTOMER_EMAIL__" required autocomplete="email" style="width:100%; min-height:44px; background:rgba(0,0,0,0.3); border:1px solid var(--line); border-radius:10px; color:#fff; padding:10px 14px; font-size:15px;">
+                <input type="email" id="renew_customer_email" name="customer_email" placeholder="pochta@gmail.com" value="__CUSTOMER_EMAIL__" required autocomplete="email" style="width:100%; min-height:44px; background:rgba(0,0,0,0.3); border:1px solid var(--line); border-radius:10px; color:#fff; padding:10px 14px; font-size:15px;">
               </div>
 
-              <div style="margin-bottom: 12px;">
+              <div id="renew-promo-row" style="margin-bottom: 12px;">
                 <input type="text" name="promo_code" placeholder="Промокод (если есть)" style="width:100%; min-height:40px; background:rgba(0,0,0,0.2); border:1px solid var(--line); border-radius:8px; color:#fff; padding:8px 12px; font-size:14px;">
               </div>
 
@@ -5192,7 +5487,7 @@ def setup_page_html(
 
               <div class="cf-turnstile" data-sitekey="0x4AAAAAAD_SNIC95jkFweEh" data-theme="dark" style="margin: 14px 0; display: flex; justify-content: center;"></div>
               <div id="renew-turnstile-error" style="margin: 10px 0; font-size: 13.5px; color: #ef4444; text-align: center; line-height: 1.4; display: none; font-weight: 600;"></div>
-              <button type="submit" class="button success" style="width:100%; min-height:48px; font-size:16px; font-weight:800; cursor:pointer;">Оплатить продление 💳</button>
+              <button type="submit" id="renew-submit-btn" class="button success" style="width:100%; min-height:48px; font-size:16px; font-weight:800; cursor:pointer;">Оплатить продление 💳</button>
             </form>
           </div>
         </div>
@@ -5445,7 +5740,38 @@ def setup_page_html(
       window.updateRenewPrice();
     };
 
+    window.toggleBindEmailOnly = function(checked) {
+      const selectors = document.getElementById("renew-plan-selectors");
+      const promoRow = document.getElementById("renew-promo-row");
+      const priceLabel = document.getElementById("renew-price-label");
+      const priceBox = document.getElementById("renew-total-price");
+      const submitBtn = document.getElementById("renew-submit-btn");
+
+      if (selectors) {
+        selectors.classList.toggle("dimmed", Boolean(checked));
+      }
+      if (promoRow) {
+        promoRow.style.display = checked ? "none" : "block";
+      }
+      if (priceBox && priceLabel) {
+        if (checked) {
+          priceLabel.textContent = "Стоимость:";
+          priceBox.innerHTML = '0 ₽ <span style="font-size:13px; color:var(--green); font-weight:600;">(Бесплатно)</span>';
+        } else {
+          priceLabel.textContent = "Стоимость продления:";
+          window.updateRenewPrice();
+        }
+      }
+      if (submitBtn) {
+        submitBtn.innerHTML = checked ? "Привязать почту бесплатно ✉️" : "Оплатить продление 💳";
+      }
+    };
+
     window.updateRenewPrice = function() {
+      const bindOnly = document.getElementById("bind_email_only");
+      if (bindOnly && bindOnly.checked) {
+        return;
+      }
       const devInput = document.getElementById("renew_device_limit");
       const durInput = document.getElementById("renew_duration_days");
       if (!devInput || !durInput) return;
@@ -5510,8 +5836,22 @@ def setup_page_html(
               if (data.html) {
                 slot.scrollIntoView({ behavior: "smooth", block: "nearest" });
               }
-              if (window.startOrderStatusPolling) {
+              if (window.startOrderStatusPolling && !data.bind_email_only) {
                 window.startOrderStatusPolling();
+              }
+            }
+            if (data.bind_email_only && data.masked_email) {
+              const badge = document.getElementById("linked-email-badge");
+              const text = document.getElementById("linked-email-text");
+              if (badge) badge.style.display = "flex";
+              if (text) text.textContent = data.masked_email;
+              const bindInput = document.getElementById("bind_email_only");
+              if (bindInput) {
+                bindInput.checked = false;
+                window.toggleBindEmailOnly(false);
+              }
+              if (window.turnstile) {
+                try { window.turnstile.reset(); } catch(e) {}
               }
             }
           }
@@ -5683,6 +6023,17 @@ def setup_page_html(
     result = result.replace("__ESCAPED_SUBSCRIPTION__", escaped_subscription)
     result = result.replace("__SUB_ID__", subscription_id)
     result = result.replace("__SECRET_SEGMENT__", SECRET_SEGMENT)
+    masked_email = mask_email(customer_email) if customer_email else ""
+    linked_badge_style = "display:flex;" if customer_email else "display:none;"
+    linked_badge_html = f"""
+    <div id="linked-email-badge" style="{linked_badge_style} background:rgba(47,191,113,0.08); border:1px solid rgba(47,191,113,0.25); border-radius:12px; padding:12px 16px; margin-bottom:14px; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+      <span style="color:#fff; font-size:13.5px; font-weight:600; display:flex; align-items:center; gap:8px;">
+        <span style="font-size:16px;">✅</span> Почта привязана: <strong id="linked-email-text" style="color:var(--green);">{html.escape(masked_email)}</strong>
+      </span>
+      <span style="color:var(--muted); font-size:12px;">Уведомления за 24ч/1ч и вход в кабинет активны</span>
+    </div>
+    """
+    result = result.replace("__LINKED_EMAIL_BADGE__", linked_badge_html)
     result = result.replace("__CUSTOMER_EMAIL__", html.escape(customer_email))
     result = result.replace("__PAYMENT_CARD_HTML__", payment_card_html)
     result = result.replace("__APPS_JSON__", apps_json)
@@ -6248,10 +6599,72 @@ class RequestHandler(BaseHTTPRequestHandler):
             if is_quiesced() and (self.command == "POST" or "bot" in self.path):
                 self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "quiesce_merge_in_progress", "retry_after": 10}, True)
                 return
-            if len(path) == 3 and path[0] == SECRET_SEGMENT and path[1] == "renew":
+            if len(path) == 3 and path[0] == SECRET_SEGMENT and path[1] in ("renew", "bind-email"):
                 sub_id = path[2]
                 form = self._read_form()
                 LOGGER.info("READ FORM RESULT: %r, Content-Type: %r", form, self.headers.get("Content-Type"))
+                bind_email_only = (
+                    str(form.get("bind_email_only") or "").strip().lower() in ("1", "true", "yes", "on")
+                    or path[1] == "bind-email"
+                )
+
+                if bind_email_only:
+                    customer_email = form.get("customer_email", "").strip()
+                    email_reminders = form.get("email_reminders") != "0"
+                    turnstile_token = form.get("cf-turnstile-response", "").strip()
+                    xff = self.headers.get("X-Forwarded-For")
+                    if xff:
+                        client_ip = xff.split(",")[-1].strip()
+                    else:
+                        client_ip = self.headers.get("CF-Connecting-IP") or (self.client_address[0] if self.client_address else "unknown")
+
+                    res = bind_subscription_email(
+                        sub_id=sub_id,
+                        customer_email=customer_email,
+                        email_reminders=email_reminders,
+                        turnstile_token=turnstile_token,
+                        client_ip=client_ip,
+                        headers=self.headers,
+                    )
+
+                    success_card = f"""
+                    <section class="install" style="margin-bottom:24px; background:rgba(47,191,113,0.12); border:1px solid var(--green);">
+                      <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+                        <span style="font-size:24px;">🎉</span>
+                        <h2 style="color:var(--green); margin:0; font-size:20px;">Почта успешно привязана!</h2>
+                      </div>
+                      <p style="color:#fff; font-size:15px; line-height:1.5; margin:0;">
+                        Адрес <strong>{html.escape(res['customer_email'])}</strong> привязан к вашей подписке. 
+                        Напоминания об окончании за 24ч и 1ч включены, а ссылки для подключения и входа в кабинет отправлены на вашу почту.
+                      </p>
+                    </section>
+                    """
+
+                    if is_ajax:
+                        self._send_json(HTTPStatus.OK, {
+                            "ok": True,
+                            "bind_email_only": True,
+                            "html": success_card,
+                            "customer_email": res["customer_email"],
+                            "masked_email": mask_email(res["customer_email"]),
+                            "message": "Почта успешно привязана!",
+                        }, include_body=True)
+                        return
+
+                    source_url = public_subscription_url(self.headers, "json", sub_id)
+                    quoted_sub_id = urllib.parse.quote(sub_id, safe="")
+                    import_query = urllib.parse.urlencode({"url": source_url})
+                    generic_html = setup_page_html(
+                        subscription_url=source_url,
+                        subscription_id=sub_id,
+                        quoted_sub_id=quoted_sub_id,
+                        import_query=import_query,
+                        customer_email=res["customer_email"],
+                        payment_card_html=success_card,
+                    )
+                    self._send_html(HTTPStatus.OK, generic_html, include_body=True)
+                    return
+
                 duration_days = int(form.get("duration_days") or 360)
                 device_limit = int(form.get("device_limit") or 3)
                 customer_email = form.get("customer_email", "").strip()
@@ -6407,7 +6820,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "html": payment_card, "error": msg}, include_body=True)
                 return
             parsed_path = [segment for segment in urllib.parse.urlsplit(self.path).path.split("/") if segment]
-            sub_id = parsed_path[2] if len(parsed_path) >= 3 and parsed_path[0] == SECRET_SEGMENT and parsed_path[1] == "renew" else "default"
+            sub_id = parsed_path[2] if len(parsed_path) >= 3 and parsed_path[0] == SECRET_SEGMENT and parsed_path[1] in ("renew", "bind-email") else "default"
             source_url = public_subscription_url(self.headers, "json", sub_id)
             generic_html = setup_page_html(
                 subscription_url=source_url,
@@ -6834,11 +7247,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                 quoted_sub_id = urllib.parse.quote(sub_id, safe="")
                 import_query = urllib.parse.urlencode({"url": source_url})
                 pending_card = check_pending_payment_card(sub_id)
+                existing_email = find_store_linked_email(sub_id)
                 generic_html = setup_page_html(
                     subscription_url=source_url,
                     subscription_id=sub_id,
                     quoted_sub_id=quoted_sub_id,
                     import_query=import_query,
+                    customer_email=existing_email,
                     payment_card_html=pending_card,
                 )
                 self._send_html(HTTPStatus.OK, generic_html, include_body)
