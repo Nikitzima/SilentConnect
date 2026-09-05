@@ -922,13 +922,12 @@ class WebCheckout:
       --blue: #3b82f6;
       --red: #ef4444;
     }}
-    html {{ scroll-behavior: smooth; overflow-x: hidden; }}
+    html {{ scroll-behavior: smooth; }}
     * {{ box-sizing: border-box; -webkit-tap-highlight-color: transparent; }}
     #tariffs {{ scroll-margin-top: 92px; }}
     body {{
       margin: 0;
       padding: 0;
-      overflow-x: hidden;
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
       background-color: var(--bg-dark);
       background-image: 
@@ -945,13 +944,16 @@ class WebCheckout:
       font-family: 'Outfit', sans-serif;
     }}
     .wrap {{ width: 100%; max-width: 1120px; margin-left: auto; margin-right: auto; padding-left: 20px; padding-right: 20px; box-sizing: border-box; }}
-    main.wrap {{ flex: 1 0 auto; width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 20px 60px; box-sizing: border-box; }}
+    main.wrap {{ flex: 1 0 auto; width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 20px 60px; box-sizing: border-box; overflow-x: clip; }}
     header {{ 
-      background: rgba(5, 10, 8, 0.7); 
+      background: rgba(5, 10, 8, 0.8); 
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
       border-bottom: 1px solid var(--glass-border); 
-      position: sticky; top: 0; z-index: 10; 
+      position: -webkit-sticky;
+      position: sticky;
+      top: 0;
+      z-index: 1000; 
     }}
     nav {{ height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }}
     .brand {{ 
@@ -1286,6 +1288,7 @@ class WebCheckout:
         max-width: 100% !important;
         padding: 0 14px 40px !important;
         box-sizing: border-box !important;
+        overflow-x: clip;
       }}
       .card {{
         padding: 16px;
@@ -1352,13 +1355,14 @@ class WebCheckout:
       .mobile-nav-txt {{ display: inline; }}
       .desktop-nav-txt {{ display: none; }}
       header {{
-        background: rgba(5, 10, 8, 0.7);
+        background: rgba(5, 10, 8, 0.85);
         backdrop-filter: blur(16px);
         -webkit-backdrop-filter: blur(16px);
         border-bottom: 1px solid var(--glass-border);
+        position: -webkit-sticky;
         position: sticky;
         top: 0;
-        z-index: 100;
+        z-index: 1000;
         height: auto;
         padding: 6px 0;
       }}
