@@ -2405,8 +2405,8 @@ def build_singbox_smart_config(
             "pl-speed-hysteria2": "🇵🇱 Скоростной (Hysteria 2)",
             "pl-backup-grpc": "🇵🇱 Резерв (gRPC)",
             "pl-stealth-xhttp": "🇵🇱 Стелс (XHTTP)",
-            "nl-ws443": "🇳🇱 CDN WebSocket (Резерв)",
-            "fi-ws443": "🇫🇮 CDN WebSocket (Резерв)",
+            "nl-ws443": "🇳🇱 Резерв (WebSocket)",
+            "fi-ws443": "🇫🇮 Резерв (WebSocket)",
             "direct": "🎯 Прямой трафик (Direct)",
         }
         for ob in outbounds:
