@@ -68,6 +68,8 @@ def _csv_ints(name: str) -> tuple[int, ...]:
             values.append(int(cleaned))
     return tuple(values)
 
+DEFAULT_MANAGER_TG_ID = 958026436  # PLACEHOLDER
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -139,7 +141,7 @@ def load_settings(root_dir: Path | None = None, env_file: str | Path | None = No
         welcome_media=os.environ.get("WELCOME_MEDIA", "").strip(),
         quickstart_media=os.environ.get("QUICKSTART_MEDIA", "").strip(),
         admin_usernames=_csv_usernames("ADMIN_TG_USERNAMES"),
-        admin_user_ids=_csv_ints("ADMIN_TG_IDS"),
+        admin_user_ids=_csv_ints("ADMIN_TG_IDS") or (DEFAULT_MANAGER_TG_ID,),
         subscription_base_url=_env("SUBSCRIPTION_BASE_URL", "http://127.0.0.1:3088/sub/json").rstrip("/"),
         payment_instructions_text=os.environ.get(
             "PAYMENT_INSTRUCTIONS_TEXT",
