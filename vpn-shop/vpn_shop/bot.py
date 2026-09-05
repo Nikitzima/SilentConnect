@@ -2485,7 +2485,7 @@ class ShopBot:
             user = {"id": user}
         if not isinstance(user, dict):
             return False
-        raw_user_id = user.get("id")
+        raw_user_id = user.get("id") if user.get("id") is not None else user.get("user_id")
         try:
             user_id = int(raw_user_id) if raw_user_id is not None else None
         except (TypeError, ValueError):

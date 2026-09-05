@@ -217,7 +217,11 @@ class TestUICatalogAndLayout(unittest.TestCase):
         self.assertTrue(subjson_app.OFFICIAL_V2RAYN_ICON.startswith("data:image/"))
         self.assertTrue(subjson_app.OFFICIAL_NEKOBOX_ICON.startswith("data:image/png;base64,"))
         self.assertTrue(subjson_app.OFFICIAL_V2RAYNG_ICON.startswith("data:image/png;base64,"))
-        self.assertTrue(subjson_app.OFFICIAL_SINGBOX_ICON.startswith("data:image/png;base64,") or subjson_app.OFFICIAL_SINGBOX_ICON.startswith("https://"))
+        self.assertTrue(
+            subjson_app.OFFICIAL_SINGBOX_ICON.startswith("data:image/svg+xml;base64,")
+            or subjson_app.OFFICIAL_SINGBOX_ICON.startswith("data:image/png;base64,")
+            or subjson_app.OFFICIAL_SINGBOX_ICON.startswith("https://")
+        )
 
     # =========================================================================
     # R3: Mobile Header Height <= 56-64px & Single-Row Flexbox (vpn-shop/web.py)

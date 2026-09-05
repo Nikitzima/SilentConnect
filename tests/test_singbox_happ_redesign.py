@@ -41,24 +41,16 @@ from vpn_shop.config import DEFAULT_MANAGER_TG_ID
 
 class TestSingboxHappRedesign(unittest.TestCase):
 
-    def test_official_singbox_png_icon(self):
-        """Verify OFFICIAL_SINGBOX_ICON is a valid base64 PNG data-URI."""
+    def test_official_singbox_svg_icon(self):
+        """Verify OFFICIAL_SINGBOX_ICON is a valid official base64 SVG data-URI."""
         icon = subjson_app.OFFICIAL_SINGBOX_ICON
-        self.assertTrue(icon.startswith("data:image/png;base64,"))
+        self.assertTrue(icon.startswith("data:image/svg+xml;base64,"))
 
-        # Decode base64 and verify PNG signature
+        # Decode base64 and verify SVG vector payload
         b64_data = icon.split(",", 1)[1]
         raw_bytes = base64.b64decode(b64_data)
-        self.assertTrue(raw_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
-
-        # Check dimensions via PIL if available
-        try:
-            from PIL import Image
-            im = Image.open(io.BytesIO(raw_bytes))
-            self.assertEqual(im.format, "PNG")
-            self.assertEqual(im.size, (144, 144))
-        except ImportError:
-            pass
+        self.assertTrue(raw_bytes.startswith(b"<svg"))
+        self.assertIn(b"viewBox=\"148 90 728 820\"", raw_bytes)
 
     def test_singbox_legacy_tag_style_backward_compatibility(self):
         """Verify default tag_style remains legacy for backward compatibility."""
@@ -71,7 +63,9 @@ class TestSingboxHappRedesign(unittest.TestCase):
             self.assertIn("auto-urltest", tags)
             self.assertIn("nl-classic-tcp", tags)
             self.assertIn("fi-classic-tcp", tags)
+            self.assertIn("direct", tags)
             self.assertNotIn("⚡ Авто-выбор (Лучший пинг)", tags)
+            self.assertNotIn("🎯 Прямой трафик (Direct)", tags)
 
     def test_singbox_happ_tag_style(self):
         """Verify Happ tag style translates outbounds to emoji and flag tags."""
@@ -85,21 +79,37 @@ class TestSingboxHappRedesign(unittest.TestCase):
 
             self.assertIn("⚡ Авто-выбор (Лучший пинг)", tags)
             self.assertIn("🇳🇱 Classic (TCP Reality)", tags)
+            self.assertIn("🇳🇱 Скоростной (Hysteria 2)", tags)
+            self.assertIn("🇳🇱 Резерв (gRPC)", tags)
+            self.assertIn("🇳🇱 Стелс (XHTTP)", tags)
             self.assertIn("🇫🇮 Classic (TCP Reality)", tags)
+            self.assertIn("🇫🇮 Скоростной (Hysteria 2)", tags)
             self.assertIn("🇵🇱 Classic (TCP Reality)", tags)
+            self.assertIn("🇵🇱 Скоростной (Hysteria 2)", tags)
+            self.assertIn("🎯 Прямой трафик (Direct)", tags)
             self.assertNotIn("auto-urltest", tags)
             self.assertNotIn("nl-classic-tcp", tags)
+            self.assertNotIn("direct", tags)
 
             # Check selector outbounds list
             selector = next(ob for ob in outbounds if ob.get("tag") == "proxy-selector")
             self.assertIn("⚡ Авто-выбор (Лучший пинг)", selector["outbounds"])
             self.assertIn("🇳🇱 Classic (TCP Reality)", selector["outbounds"])
+            self.assertIn("🎯 Прямой трафик (Direct)", selector["outbounds"])
             self.assertEqual(selector.get("default"), "⚡ Авто-выбор (Лучший пинг)")
 
             # Check urltest outbounds list
             urltest = next(ob for ob in outbounds if ob.get("tag") == "⚡ Авто-выбор (Лучший пинг)")
             self.assertIn("🇳🇱 Classic (TCP Reality)", urltest["outbounds"])
+            self.assertIn("🇳🇱 Скоростной (Hysteria 2)", urltest["outbounds"])
             self.assertIn("🇫🇮 Classic (TCP Reality)", urltest["outbounds"])
+
+            # Check route rules
+            route_rules = cfg.get("route", {}).get("rules", [])
+            direct_rules = [r for r in route_rules if r.get("outbound") == "🎯 Прямой трафик (Direct)"]
+            self.assertTrue(len(direct_rules) > 0, "Expected route rules to route to '🎯 Прямой трафик (Direct)'")
+            old_direct_rules = [r for r in route_rules if r.get("outbound") == "direct"]
+            self.assertEqual(len(old_direct_rules), 0, "No rule should route to old tag 'direct'")
 
     def test_telegram_bot_is_admin_safe(self):
         """Verify is_admin handles None, int, str, dict and DEFAULT_MANAGER_TG_ID."""
@@ -112,9 +122,11 @@ class TestSingboxHappRedesign(unittest.TestCase):
         self.assertTrue(bot.is_admin(111222333))
         self.assertTrue(bot.is_admin("111222333"))
         self.assertTrue(bot.is_admin({"id": 111222333}))
+        self.assertTrue(bot.is_admin({"user_id": 111222333}))
         self.assertTrue(bot.is_admin(DEFAULT_MANAGER_TG_ID))
         self.assertTrue(bot.is_admin(str(DEFAULT_MANAGER_TG_ID)))
         self.assertTrue(bot.is_admin({"id": DEFAULT_MANAGER_TG_ID}))
+        self.assertTrue(bot.is_admin({"user_id": DEFAULT_MANAGER_TG_ID}))
 
         self.assertFalse(bot.is_admin(None))
         self.assertFalse(bot.is_admin({}))
