@@ -77,12 +77,16 @@ class ManualPaymentProcessor:
         subscription_recover: Callable[[dict[str, Any]], dict[str, Any]],
         hybrid_url_builder: Callable[[str, str], str] | None = None,
         default_device_limit: int = 3,
+        notifier: Any = None,
+        admin_notifier: Any = None,
     ) -> None:
         self.store = store
         self.provisioner = provisioner
         self._recover = subscription_recover
         self._hybrid_url = hybrid_url_builder
         self.default_device_limit = int(default_device_limit)
+        self.notifier = notifier
+        self.admin_notifier = admin_notifier
 
     # ------------------------------------------------------------------
     # Public API
@@ -285,18 +289,47 @@ class ManualPaymentProcessor:
 
     def _accrue_referral(self, order: dict[str, Any]) -> None:
         try:
-            ledger = self.store.create_referral_ledger_for_order(order)
-            if ledger:
-                self.store.record_admin_action(
-                    action_type="referral_accrual",
-                    target_type="order",
-                    target_public_id=order["public_id"],
-                    actor="system-referral",
-                    meta={
-                        "referrer_id": ledger["referrer_id"],
-                        "amount_rub": ledger["amount_rub"],
-                        "commission_percent": ledger["commission_percent"],
-                    },
+            res = self.store.create_referral_ledger_for_order(order)
+            if not res or not res[0]:
+                return
+            ledger, old_balance, new_balance = res
+            self.store.record_admin_action(
+                action_type="referral_accrual",
+                target_type="order",
+                target_public_id=order["public_id"],
+                actor="system-referral",
+                meta={
+                    "referrer_id": ledger["referrer_id"],
+                    "amount_rub": ledger["amount_rub"],
+                    "commission_percent": ledger["commission_percent"],
+                    "old_balance": old_balance,
+                    "new_balance": new_balance,
+                },
+            )
+            # Instant Telegram notification to referrer
+            ref_info = self.store.get_referral_balance(int(ledger["referrer_id"]))
+            ref_chat_id = (ref_info or {}).get("chat_id")
+            if ref_chat_id and self.notifier:
+                order_id = order.get("public_id", "")
+                base_amount = ledger.get("base_amount_rub", 0)
+                amount = ledger.get("amount_rub", 0)
+                percent = ledger.get("commission_percent", 10)
+                msg = (
+                    f"💰 Реферальное начисление! Заказ #{order_id}. "
+                    f"Сумма покупки: {base_amount} RUB. Вам начислено: +{amount} RUB ({percent}%). "
+                    f"Баланс: {new_balance} RUB."
                 )
+                if callable(getattr(self.notifier, "send_message", None)):
+                    self.notifier.send_message(ref_chat_id, msg)
+                elif callable(self.notifier):
+                    self.notifier(ref_chat_id, msg)
+
+            # Threshold alert for admins
+            if old_balance < 500 <= new_balance:
+                username = f"@{ref_info['username']}" if (ref_info or {}).get("username") else ((ref_info or {}).get("first_name") or f"ID {ledger['referrer_id']}")
+                if callable(self.admin_notifier):
+                    self.admin_notifier(int(ledger["referrer_id"]), new_balance, username)
+                elif self.notifier and callable(getattr(self.notifier, "notify_admins_referral_threshold", None)):
+                    self.notifier.notify_admins_referral_threshold(int(ledger["referrer_id"]), new_balance, username)
         except Exception:  # noqa: BLE001
             LOGGER.exception("Failed to create referral accrual for order %s", order.get("public_id"))

@@ -554,6 +554,16 @@ def create_inline_renewal_order(
 
         token = secrets.token_hex(12)
         order_pub_id = "ord_" + secrets.token_hex(6)
+
+        customer_chat_id = str(order_row["customer_chat_id"]) if order_row and order_row["customer_chat_id"] else None
+        if not customer_chat_id:
+            owner_row = conn_shop.execute(
+                "SELECT chat_id FROM profile_owners WHERE profile_public_id = ? LIMIT 1",
+                (str(prof_dict["public_id"]),)
+            ).fetchone()
+            if owner_row and owner_row["chat_id"]:
+                customer_chat_id = str(owner_row["chat_id"])
+
         meta = {
             "source": f"inline_renewal_{sub_id}",
             "device_limit": device_limit,
@@ -564,6 +574,11 @@ def create_inline_renewal_order(
             "sub_id": sub_id,
             "email_reminders": email_reminders,
         }
+        if source_meta.get("referrer_id"):
+            meta["referrer_id"] = source_meta["referrer_id"]
+        if source_meta.get("referrer_code"):
+            meta["referrer_code"] = source_meta["referrer_code"]
+
         status = "waiting_payment" if final_price > 0 else "auto_provision"
         conn_shop.execute(
             """
@@ -573,11 +588,11 @@ def create_inline_renewal_order(
                 manager_chat_id, manager_message_id, privacy_ack, loss_policy_ack,
                 terms_version, provisioned_profile_id, customer_email, created_at, updated_at, closed_at, meta_json
             )
-            VALUES(?, 'renewal', ?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL, NULL, NULL, 1, 1, '2026-04-20', ?, ?, ?, ?, NULL, ?)
+            VALUES(?, 'renewal', ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, NULL, NULL, 1, 1, '2026-04-20', ?, ?, ?, ?, NULL, ?)
             """,
             (
                 order_pub_id, status, transport, duration_days, str(prof_dict.get("profile_mode") or "anonymous"),
-                base_price, final_price, promo_id, prof_dict["id"], final_email, now, now, json.dumps(meta)
+                base_price, final_price, promo_id, customer_chat_id, prof_dict["id"], final_email, now, now, json.dumps(meta)
             )
         )
         conn_shop.commit()
