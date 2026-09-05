@@ -6053,9 +6053,10 @@ def legal_terms_html() -> bytes:
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>Пользовательское соглашение SilentConnect.net</title>
   <style>
-    body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f1317; color: #eef2f3; }}
-    main {{ max-width: 920px; margin: 0 auto; padding: 34px 18px 56px; }}
-    h1 {{ font-size: 30px; margin: 0 0 8px; }}
+    body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f1317; color: #eef2f3; overflow-x: hidden; }}
+    main {{ max-width: 920px; margin: 0 auto; padding: 34px 18px 56px; box-sizing: border-box; }}
+    h1, h2, p, li {{ overflow-wrap: break-word; word-wrap: break-word; }}
+    h1 {{ font-size: clamp(20px, 5.5vw, 30px); line-height: 1.25; margin: 0 0 8px; }}
     h2 {{ font-size: 20px; margin: 28px 0 10px; }}
     p, li {{ line-height: 1.55; color: #cbd4d8; }}
     ul {{ padding-left: 22px; }}

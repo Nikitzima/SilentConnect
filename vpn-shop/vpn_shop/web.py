@@ -991,6 +991,11 @@ class WebCheckout:
     }}
     .advantage b {{ display: block; color: #fff; margin-bottom: 6px; font-family: 'Outfit', sans-serif; font-size: 17px; }}
     .advantage span {{ display: block; color: var(--muted); font-size: 14px; line-height: 1.45; }}
+    h1, h2, h3, h4, p, li, .card, .page-card, .page-title {{
+      overflow-wrap: break-word;
+      word-wrap: break-word;
+      box-sizing: border-box;
+    }}
     .card {{ 
       background: var(--glass-bg);
       backdrop-filter: blur(12px);
@@ -1000,6 +1005,27 @@ class WebCheckout:
       padding: 24px;
       transition: all 0.3s ease;
       box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }}
+    .page-card {{
+      max-width: 860px;
+      margin: 30px auto;
+      line-height: 1.7;
+      padding: 28px 32px;
+      box-sizing: border-box;
+    }}
+    .page-title {{
+      font-size: clamp(22px, 5.2vw, 32px);
+      line-height: 1.25;
+      margin-top: 0;
+      margin-bottom: 12px;
+      background: linear-gradient(to right, #fff, #2fbf71);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      overflow-wrap: break-word;
+      word-wrap: break-word;
+      word-break: normal;
+      hyphens: auto;
+      -webkit-hyphens: auto;
     }}
     .card strong {{ display: block; font-size: 20px; margin-bottom: 8px; letter-spacing: -0.2px; }}
     .muted {{ color: var(--muted); }}
@@ -1266,6 +1292,15 @@ class WebCheckout:
         border-radius: 14px;
         box-sizing: border-box;
       }}
+      .page-card {{
+        padding: 20px 16px !important;
+        margin: 16px auto !important;
+        border-radius: 14px !important;
+      }}
+      .page-title {{
+        font-size: clamp(20px, 5.5vw, 24px) !important;
+        margin-bottom: 10px !important;
+      }}
       .hero, .order {{
         grid-template-columns: 1fr;
         gap: 16px;
@@ -1349,6 +1384,8 @@ class WebCheckout:
       .wrap {{ padding-left: 10px !important; padding-right: 10px !important; }}
       main.wrap {{ padding-left: 10px !important; padding-right: 10px !important; }}
       .card {{ padding: 12px; }}
+      .page-card {{ padding: 16px 10px !important; }}
+      .page-title {{ font-size: 19px !important; }}
       .choice {{ font-size: 10.5px; padding: 6px 2px; }}
       .choice span {{ font-size: 8.5px; }}
       .cf-turnstile > * {{ transform: scale(0.92); transform-origin: center center; }}
@@ -1555,11 +1592,11 @@ class WebCheckout:
 
     def render_legal_privacy(self) -> bytes:
         body = f"""
-        <div class="card" style="max-width: 860px; margin: 30px auto; line-height: 1.7; padding: 28px 32px;">
+        <div class="card page-card">
           <div style="margin-bottom: 20px;">
             <a class="btn secondary" href="/" style="display: inline-flex; width: auto; min-height: 38px; padding: 6px 14px; font-size: 14px;">← На главную к тарифам</a>
           </div>
-          <h1 style="font-size: 30px; margin-top: 0; margin-bottom: 10px; background: linear-gradient(to right, #fff, #2fbf71); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Политика конфиденциальности SilentConnect</h1>
+          <h1 class="page-title">Политика конфиденциальности SilentConnect</h1>
           <p class="muted" style="margin-bottom: 24px;">Редакция от 5 сентября 2026 г. · Принципы обработки данных и защита приватности (152-ФЗ / GDPR)</p>
 
           <p class="muted">Сервис <strong>SilentConnect</strong> ставит своим абсолютным приоритетом цифровую приватность пользователей. Наша политика предельно прозрачна: мы не собираем и не храним информацию о вашей активности в сети, поэтому мы не можем никому ее передать.</p>
@@ -1604,11 +1641,11 @@ class WebCheckout:
 
     def render_legal_terms(self) -> bytes:
         body = f"""
-        <div class="card" style="max-width: 860px; margin: 30px auto; line-height: 1.7; padding: 28px 32px;">
+        <div class="card page-card">
           <div style="margin-bottom: 20px;">
             <a class="btn secondary" href="/" style="display: inline-flex; width: auto; min-height: 38px; padding: 6px 14px; font-size: 14px;">← На главную к тарифам</a>
           </div>
-          <h1 style="font-size: 30px; margin-top: 0; margin-bottom: 10px; background: linear-gradient(to right, #fff, #2fbf71); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Пользовательское соглашение (Публичная оферта)</h1>
+          <h1 class="page-title">Пользовательское соглашение (Публичная оферта)</h1>
           <p class="muted" style="margin-bottom: 24px;">Редакция от 5 сентября 2026 г. · Условия оказания услуг по ст. 435, 437, 438 ГК РФ</p>
 
           <p class="muted">Настоящее Пользовательское соглашение (далее — «Соглашение» или «Оферта») регулирует отношения между Администрацией сервиса <strong>SilentConnect</strong> (далее — «Исполнитель») и любым физическим или юридическим лицом, использующим сервисы Сайта, Telegram-бота или инфраструктуру Платформы (далее — «Пользователь»).</p>
@@ -1664,11 +1701,11 @@ class WebCheckout:
 
     def render_legal_refund(self) -> bytes:
         body = f"""
-        <div class="card" style="max-width: 860px; margin: 30px auto; line-height: 1.7; padding: 28px 32px;">
+        <div class="card page-card">
           <div style="margin-bottom: 20px;">
             <a class="btn secondary" href="/" style="display: inline-flex; width: auto; min-height: 38px; padding: 6px 14px; font-size: 14px;">← На главную к тарифам</a>
           </div>
-          <h1 style="font-size: 30px; margin-top: 0; margin-bottom: 10px; background: linear-gradient(to right, #fff, #2fbf71); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Политика возврата денежных средств и отмены подписки</h1>
+          <h1 class="page-title">Политика возврата денежных средств и отмены подписки</h1>
           <p class="muted" style="margin-bottom: 24px;">Редакция от 5 сентября 2026 г. · Регламент рассмотрения и взаиморасчетов (СБП / НСПК / Fair Use)</p>
 
           <p class="muted">Мы стремимся обеспечить максимальный комфорт при использовании сервиса SilentConnect. Если сервис по техническим причинам вам не подошел, вы вправе запросить возврат денежных средств в рамках правил добросовестного использования (Fair Use Policy).</p>
@@ -1711,11 +1748,11 @@ class WebCheckout:
 
     def render_about(self) -> bytes:
         body = f"""
-        <div class="card" style="max-width: 860px; margin: 30px auto; line-height: 1.7; padding: 28px 32px;">
+        <div class="card page-card">
           <div style="margin-bottom: 20px;">
             <a class="btn secondary" href="/" style="display: inline-flex; width: auto; min-height: 38px; padding: 6px 14px; font-size: 14px;">← На главную к тарифам</a>
           </div>
-          <h1 style="font-size: 32px; margin-top: 0; margin-bottom: 10px; background: linear-gradient(to right, #fff, #2fbf71); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">О сервисе SilentConnect</h1>
+          <h1 class="page-title">О сервисе SilentConnect</h1>
           <p class="muted" style="margin-bottom: 24px;">Передовой сервис приватного сетевого доступа нового поколения, созданный для безопасного и стабильного интернета.</p>
           
           <h3 style="color: #fff; font-size: 20px; margin-top: 24px;">Наша миссия</h3>
@@ -1736,11 +1773,11 @@ class WebCheckout:
 
     def render_contact(self) -> bytes:
         body = f"""
-        <div class="card" style="max-width: 860px; margin: 30px auto; line-height: 1.7; padding: 28px 32px;">
+        <div class="card page-card">
           <div style="margin-bottom: 20px;">
             <a class="btn secondary" href="/" style="display: inline-flex; width: auto; min-height: 38px; padding: 6px 14px; font-size: 14px;">← На главную к тарифам</a>
           </div>
-          <h1 style="font-size: 32px; margin-top: 0; margin-bottom: 10px; background: linear-gradient(to right, #fff, #2fbf71); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Контакты &amp; Поддержка</h1>
+          <h1 class="page-title">Контакты &amp; Поддержка</h1>
           <p class="muted" style="margin-bottom: 24px;">Мы работаем круглосуточно и готовы оперативно помочь с любыми вопросами по настройке и оплате.</p>
 
           <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin: 24px 0;">
