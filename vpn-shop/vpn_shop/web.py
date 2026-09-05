@@ -922,10 +922,13 @@ class WebCheckout:
       --blue: #3b82f6;
       --red: #ef4444;
     }}
-    html {{ scroll-behavior: smooth; }}
+    html {{ scroll-behavior: smooth; overflow-x: hidden; }}
     * {{ box-sizing: border-box; -webkit-tap-highlight-color: transparent; }}
     #tariffs {{ scroll-margin-top: 92px; }}
     body {{
+      margin: 0;
+      padding: 0;
+      overflow-x: hidden;
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
       background-color: var(--bg-dark);
       background-image: 
@@ -1243,26 +1246,97 @@ class WebCheckout:
       transform: scale(1) translateY(0);
     }}
     @media (max-width: 820px) {{
-      .wrap {{ width: calc(100% - 24px); }}
-      .hero, .order {{ grid-template-columns: 1fr; gap: 20px; padding: 20px 0; }}
-      .hero h1 {{ font-size: 28px; margin-bottom: 12px; }}
-      .lead {{ font-size: 15px; margin-bottom: 16px; }}
+      .wrap {{
+        width: 100% !important;
+        max-width: 100% !important;
+        padding-left: 14px !important;
+        padding-right: 14px !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
+        box-sizing: border-box !important;
+      }}
+      main.wrap {{
+        width: 100% !important;
+        max-width: 100% !important;
+        padding: 0 14px 40px !important;
+        box-sizing: border-box !important;
+      }}
+      .card {{
+        padding: 16px;
+        border-radius: 14px;
+        box-sizing: border-box;
+      }}
+      .hero, .order {{
+        grid-template-columns: 1fr;
+        gap: 16px;
+        padding: 16px 0;
+      }}
+      .hero h1 {{ font-size: 26px; margin-bottom: 10px; }}
+      .lead {{ font-size: 14.5px; margin-bottom: 14px; }}
       .advantage-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }}
-      .advantage {{ min-height: 100px; padding: 12px; }}
-      .advantage b {{ font-size: 15px; margin-bottom: 4px; }}
-      .advantage span {{ font-size: 12px; }}
+      .advantage {{ min-height: 90px; padding: 12px; }}
+      .advantage b {{ font-size: 14.5px; margin-bottom: 3px; }}
+      .advantage span {{ font-size: 11.5px; }}
       .grid {{ grid-template-columns: 1fr; gap: 14px; }}
-      .builder {{ grid-template-columns: 1fr; gap: 14px; }}
+      .builder {{
+        grid-template-columns: 1fr;
+        gap: 14px;
+        width: 100%;
+        box-sizing: border-box;
+      }}
+      .builder > .card,
+      .builder > .summary-box {{
+        width: 100%;
+        box-sizing: border-box;
+      }}
       .choice-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }}
       .choice-grid-durations {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }}
-      .choice {{ min-height: 56px; padding: 8px 3px; gap: 2px; font-size: 12.5px; font-weight: 700; word-break: normal; overflow: visible; position: relative; }}
-      .choice span {{ font-size: 10px; font-weight: 400; }}
-      .summary-box {{ position: static; }}
+      .choice {{
+        min-height: 52px;
+        padding: 8px 4px;
+        gap: 2px;
+        font-size: 11.5px;
+        font-weight: 700;
+        word-break: normal;
+        overflow: visible;
+        position: relative;
+        box-sizing: border-box;
+        min-width: 0;
+      }}
+      .choice span {{ font-size: 9.5px; font-weight: 400; }}
+      .summary-box {{
+        position: static;
+        padding: 16px;
+      }}
+      .cf-turnstile {{
+        max-width: 100%;
+        overflow: hidden;
+        display: flex;
+        justify-content: center;
+      }}
       .mobile-nav-txt {{ display: inline; }}
       .desktop-nav-txt {{ display: none; }}
-      .wrap {{ width: calc(100% - 20px); padding-left: 10px; padding-right: 10px; }}
-      header {{ background: rgba(5, 10, 8, 0.7); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-bottom: 1px solid var(--glass-border); position: sticky; top: 0; z-index: 100; height: auto; padding: 6px 0; }}
-      nav {{ height: auto; min-height: 48px; padding: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: nowrap; }}
+      header {{
+        background: rgba(5, 10, 8, 0.7);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border-bottom: 1px solid var(--glass-border);
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        height: auto;
+        padding: 6px 0;
+      }}
+      nav {{
+        height: auto;
+        min-height: 48px;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: nowrap;
+      }}
       .brand {{ font-size: 15px; display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }}
       .brand-logo {{ width: 24px; height: 24px; border-radius: 6px; flex-shrink: 0; }}
       .navlinks {{ display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px 4px; justify-content: end; align-items: center; max-width: 220px; }}
@@ -1270,6 +1344,14 @@ class WebCheckout:
       .navlinks a.span-2 {{ grid-column: span 2; }}
       .navlinks a.span-3 {{ grid-column: span 3; }}
       .navlinks a.span-6 {{ grid-column: span 6; color: #2fbf71 !important; font-size: 11px; padding: 3.5px 6px; }}
+    }}
+    @media (max-width: 360px) {{
+      .wrap {{ padding-left: 10px !important; padding-right: 10px !important; }}
+      main.wrap {{ padding-left: 10px !important; padding-right: 10px !important; }}
+      .card {{ padding: 12px; }}
+      .choice {{ font-size: 10.5px; padding: 6px 2px; }}
+      .choice span {{ font-size: 8.5px; }}
+      .cf-turnstile > * {{ transform: scale(0.92); transform-origin: center center; }}
     }}
   </style>
   <script type="application/ld+json">
