@@ -946,7 +946,7 @@ class WebCheckout:
     .wrap {{ width: 100%; max-width: 1120px; margin-left: auto; margin-right: auto; padding-left: 20px; padding-right: 20px; box-sizing: border-box; }}
     main.wrap {{ flex: 1 0 auto; width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 20px 60px; box-sizing: border-box; overflow-x: clip; }}
     header {{ 
-      background: rgba(5, 10, 8, 0.8); 
+      background: rgba(5, 10, 8, 0.7); 
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
       border-bottom: 1px solid var(--glass-border); 
@@ -1355,7 +1355,7 @@ class WebCheckout:
       .mobile-nav-txt {{ display: inline; }}
       .desktop-nav-txt {{ display: none; }}
       header {{
-        background: rgba(5, 10, 8, 0.85);
+        background: rgba(5, 10, 8, 0.7);
         backdrop-filter: blur(16px);
         -webkit-backdrop-filter: blur(16px);
         border-bottom: 1px solid var(--glass-border);
