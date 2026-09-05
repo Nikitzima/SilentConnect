@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit, urlunspl
 from . import awg_manager
 
 from .catalog import Offer, build_offers
-from .config import Settings
+from .config import DEFAULT_MANAGER_TG_ID, Settings
 from .mailer import send_subscription_email_async
 from .provisioning import ADMIN_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES, TEST_PROFILE_NOTES, Provisioner
 from .security import days_from_now, normalize_username, now_ts
@@ -425,25 +425,57 @@ class ShopBot:
             return str(root_candidate)
         return media
 
+    def _render_or_edit(
+        self,
+        chat_id: int | str,
+        text: str,
+        *,
+        reply_markup: dict[str, Any] | None = None,
+        message_id: int | None = None,
+        protect_content: bool = False,
+        disable_web_page_preview: bool = True,
+    ) -> dict[str, Any]:
+        if message_id is not None:
+            try:
+                return self.telegram.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=int(message_id),
+                    text=text,
+                    reply_markup=reply_markup,
+                )
+            except Exception as exc:
+                LOGGER.info(
+                    "edit_message_text failed for chat %s message %s (%s), falling back to send_message",
+                    chat_id,
+                    message_id,
+                    exc,
+                )
+        return self.telegram.send_message(
+            chat_id,
+            text,
+            reply_markup=reply_markup,
+            protect_content=protect_content,
+            disable_web_page_preview=disable_web_page_preview,
+        )
+
     def _public_home_text(self, *, prefix: str | None = None) -> str:
         lines: list[str] = []
         if prefix:
             lines.extend([prefix, ""])
         lines.extend(
             [
-                f"{self.settings.brand_name}",
+                f"🛡️ {self.settings.brand_name}",
                 "",
                 "Главное меню",
                 "",
-                "Выберите, что нужно сейчас:",
+                "Выберите действие с помощью кнопок ниже:",
                 "",
-                "• оформить доступ",
-                "• продлить текущую подписку",
-                "• ввести промокод",
-                "• посмотреть инструкцию",
-                "• открыть FAQ, правила или поддержку",
+                "• Оформить быстрый доступ к VPN",
+                "• Продлить подписку или активировать пробный период",
+                "• Ввести промокод или пригласить друзей",
+                "• Инструкции по настройке и поддержка",
                 "",
-                "Если Вы здесь впервые, начните с «Получить доступ».",
+                f"📄 Пользовательское соглашение: {self.legal_terms_url()}",
             ]
         )
         return "\n".join(lines)
@@ -451,14 +483,10 @@ class ShopBot:
     def _public_home_markup(self) -> dict[str, Any]:
         return kb(
             [
-                [("Получить доступ", "public:access", "success")],
-                [("Продлить подписку", "public:renew", "success")],
-                [("🎁 Бесплатная неделя", "public:trial", "success")],
-                [("У меня есть промокод", "public:promo")],
-                [("🤝 Реферальная программа", "public:referral", "success")],
-                [("Как подключить", "public:help", "primary"), ("FAQ", "public:faq", "primary")],
-                [("Правила и приватность", "public:rules")],
-                [("Поддержка", "public:support", "primary")],
+                [("🚀 Подключить VPN / Выбрать тариф", "public:access", "success")],
+                [("🔄 Продлить подписку", "public:renew", "success"), ("🎁 Пробный период", "public:trial", "success")],
+                [("🎟 Промокод", "public:promo"), ("🤝 Рефералы", "public:referral", "success")],
+                [("📖 Помощь & FAQ", "public:help", "primary"), ("💬 Поддержка", "public:support", "primary")],
             ]
         )
 
@@ -700,7 +728,7 @@ class ShopBot:
             ),
         )
 
-    def _send_public_promo_prompt(self, chat_id: int | str, *, prefix: str | None = None) -> None:
+    def _send_public_promo_prompt(self, chat_id: int | str, *, prefix: str | None = None, message_id: int | None = None) -> None:
         session = self.store.get_session(chat_id)
         context = self._context_from_session(session)
         context.pop("pending_promo", None)
@@ -709,7 +737,12 @@ class ShopBot:
         message = "Отправьте промокод одним сообщением без лишних символов."
         if prefix:
             message = f"{prefix}\n\n{message}"
-        self.telegram.send_message(chat_id, message)
+        self._render_or_edit(
+            chat_id,
+            message,
+            reply_markup=kb([[("« Назад в меню", "public:menu")]]),
+            message_id=message_id,
+        )
 
     def _send_public_family_privacy_prompt(self, chat_id: int | str, promo: dict[str, Any]) -> None:
         self.telegram.send_message(
@@ -779,7 +812,7 @@ class ShopBot:
         mode = str(context.get("buy_mode") or "tcp")
         return f"{mode}_{device_limit}_{duration_days}"
 
-    def show_public_access_menu(self, chat_id: int | str) -> None:
+    def show_public_access_menu(self, chat_id: int | str, *, message_id: int | None = None) -> None:
         self._expire_stale_waiting_orders(chat_id, notify_user=True)
         context = self._merge_session_state(
             chat_id,
@@ -796,14 +829,14 @@ class ShopBot:
             return
         discount_promo = self._active_discount_promo_from_context(context)
         lines = [
-            "Оформление доступа",
+            "🚀 Оформление доступа",
             "",
             "Сначала выберите, сколько устройств будет подключаться одновременно.",
             "Технические настройки уже подготовлены, разбираться в них не нужно.",
         ]
         if discount_promo:
             lines.extend(["", f"Активен промокод: скидка {int(discount_promo['discount_percent'])}%."])
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             "\n".join(lines),
             reply_markup=kb(
@@ -811,17 +844,18 @@ class ShopBot:
                     [("Личный · до 3 устройств", "public:buy_devices:3", "success")],
                     [("Домашний · до 6 устройств", "public:buy_devices:6")],
                     [("Расширенный · до 9 устройств", "public:buy_devices:9")],
-                    [("Назад в меню", "public:menu")],
+                    [("« Назад в меню", "public:menu")],
                 ]
             ),
+            message_id=message_id,
         )
 
-    def show_public_buy_duration(self, chat_id: int | str, device_limit: int) -> None:
+    def show_public_buy_duration(self, chat_id: int | str, device_limit: int, *, message_id: int | None = None) -> None:
         session = self.store.get_session(chat_id) or {"scope": "public", "state": "buy_devices", "context_json": {}}
         context = self._context_from_session(session)
         context["buy_device_limit"] = int(device_limit)
         self.store.set_session(chat_id, "public", "buy_duration", context)
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             "\n".join(
                 [
@@ -834,23 +868,24 @@ class ShopBot:
                 [
                     [("1 месяц", "public:buy_duration:30"), ("3 месяца", "public:buy_duration:90")],
                     [("6 месяцев", "public:buy_duration:180"), ("12 месяцев", "public:buy_duration:360")],
-                    [("Назад", "public:access")],
+                    [("« Назад", "public:access")],
                 ]
             ),
+            message_id=message_id,
         )
 
-    def show_public_buy_confirm(self, chat_id: int | str, mode: str = "tcp") -> None:
+    def show_public_buy_confirm(self, chat_id: int | str, mode: str = "tcp", *, message_id: int | None = None) -> None:
         session = self.store.get_session(chat_id) or {"scope": "public", "state": "buy_duration", "context_json": {}}
         context = self._context_from_session(session)
         if not context.get("buy_device_limit") or not context.get("buy_duration_days"):
-            self.show_public_access_menu(chat_id)
+            self.show_public_access_menu(chat_id, message_id=message_id)
             return
         context["buy_mode"] = "tcp"
         self.store.set_session(chat_id, "public", "buy_confirm", context)
         offer = self.offers.get(self._purchase_offer_code(context))
         if not offer:
             self.telegram.send_message(chat_id, "Не удалось собрать тариф. Попробуйте выбрать заново.")
-            self.show_public_access_menu(chat_id)
+            self.show_public_access_menu(chat_id, message_id=message_id)
             return
         discount_promo = self._active_discount_promo_from_context(context)
         discount = int(discount_promo["discount_percent"]) if discount_promo else 0
@@ -858,7 +893,7 @@ class ShopBot:
         price_line = f"{final_price} RUB"
         if discount_promo:
             price_line = f"{offer.price_rub} -> {final_price} RUB по промокоду"
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             "\n".join(
                 [
@@ -874,9 +909,10 @@ class ShopBot:
                 [
                     [("Перейти к оплате", "public:buy_confirm", "success")],
                     [("Выбрать другой срок", "public:buy_back:duration")],
-                    [("Назад в меню", "public:menu")],
+                    [("« Назад в меню", "public:menu")],
                 ]
             ),
+            message_id=message_id,
         )
 
 
@@ -1008,8 +1044,8 @@ class ShopBot:
             )
         return target
 
-    def _send_renewal_target_missing(self, chat_id: int | str) -> None:
-        self.telegram.send_message(
+    def _send_renewal_target_missing(self, chat_id: int | str, *, message_id: int | None = None) -> None:
+        self._render_or_edit(
             chat_id,
             "Подписка не найдена или уже недоступна на сервере. Можно вставить другую ссылку или написать в поддержку.",
             reply_markup=kb(
@@ -1019,6 +1055,7 @@ class ShopBot:
                     [("Назад в меню", "public:menu")],
                 ]
             ),
+            message_id=message_id,
         )
 
     def _send_renewal_overview(
@@ -1027,10 +1064,11 @@ class ShopBot:
         profile: dict[str, Any],
         *,
         prefix: str | None = None,
+        message_id: int | None = None,
     ) -> None:
         target = self._renewal_target(str(profile["public_id"]))
         if not target:
-            self._send_renewal_target_missing(chat_id)
+            self._send_renewal_target_missing(chat_id, message_id=message_id)
             return
         profile = target["profile"]
         context = self._context_from_session(self.store.get_session(chat_id))
@@ -1069,12 +1107,12 @@ class ShopBot:
                 [("Назад в меню", "public:menu")],
             ]
         )
-        self.telegram.send_message(chat_id, "\n".join(lines), reply_markup=kb(rows))
+        self._render_or_edit(chat_id, "\n".join(lines), reply_markup=kb(rows), message_id=message_id)
 
-    def show_public_renew_devices(self, chat_id: int | str, profile_public_id: str) -> None:
+    def show_public_renew_devices(self, chat_id: int | str, profile_public_id: str, *, message_id: int | None = None) -> None:
         target = self._renewal_target(profile_public_id)
         if not target:
-            self._send_renewal_target_missing(chat_id)
+            self._send_renewal_target_missing(chat_id, message_id=message_id)
             return
         current_limit = int(target["device_limit"])
         rows = []
@@ -1082,16 +1120,17 @@ class ShopBot:
             suffix = " · текущий" if limit == current_limit else ""
             rows.append([(f"{self._device_plan_title(limit)} · до {limit} устройств{suffix}", f"public:renew_duration:{target['profile']['public_id']}:{limit}")])
         rows.append([("Назад", "public:renew")])
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             "Выберите лимит устройств для следующего оплаченного периода.",
             reply_markup=kb(rows),
+            message_id=message_id,
         )
 
-    def show_public_renew_duration(self, chat_id: int | str, profile_public_id: str, device_limit: int) -> None:
+    def show_public_renew_duration(self, chat_id: int | str, profile_public_id: str, device_limit: int, *, message_id: int | None = None) -> None:
         target = self._renewal_target(profile_public_id)
         if not target:
-            self._send_renewal_target_missing(chat_id)
+            self._send_renewal_target_missing(chat_id, message_id=message_id)
             return
         transport = str(target["transport"])
         discount_promo = self._active_discount_promo_from_context(self._context_from_session(self.store.get_session(chat_id)))
@@ -1102,10 +1141,11 @@ class ShopBot:
             final_price = max(price * (100 - discount) // 100, 0)
             rows.append([(f"{self._duration_label(duration_days)} · {final_price} RUB", f"public:renew_preview:{target['profile']['public_id']}:{device_limit}:{duration_days}")])
         rows.append([("Назад", f"public:renew_devices:{target['profile']['public_id']}")])
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             f"Лимит: {self.device_limit_label(device_limit)}. Теперь выберите срок продления.",
             reply_markup=kb(rows),
+            message_id=message_id,
         )
 
     def show_public_renew_confirm(
@@ -1115,16 +1155,17 @@ class ShopBot:
         *,
         duration_days: int,
         device_limit: int,
+        message_id: int | None = None,
     ) -> None:
         target = self._renewal_target(profile_public_id)
         if not target:
-            self._send_renewal_target_missing(chat_id)
+            self._send_renewal_target_missing(chat_id, message_id=message_id)
             return
         discount_promo = self._active_discount_promo_from_context(self._context_from_session(self.store.get_session(chat_id)))
         price = self.base_price_for_duration(str(target["transport"]), duration_days, device_limit=device_limit)
         final_price = max(price * (100 - int(discount_promo["discount_percent"])) // 100, 0) if discount_promo else price
         price_line = f"{final_price} RUB" if not discount_promo else f"{price} -> {final_price} RUB по промокоду"
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             "\n".join(
                 [
@@ -1145,17 +1186,18 @@ class ShopBot:
                     [("Назад", f"public:renew_devices:{target['profile']['public_id']}")],
                 ]
             ),
+            message_id=message_id,
         )
 
-    def show_public_upgrade_devices(self, chat_id: int | str, profile_public_id: str) -> None:
+    def show_public_upgrade_devices(self, chat_id: int | str, profile_public_id: str, *, message_id: int | None = None) -> None:
         target = self._renewal_target(profile_public_id)
         if not target:
-            self._send_renewal_target_missing(chat_id)
+            self._send_renewal_target_missing(chat_id, message_id=message_id)
             return
         current_limit = int(target["device_limit"])
         remaining_days = self._remaining_days_until(target.get("expires_at"))
         if remaining_days <= 0:
-            self.telegram.send_message(chat_id, "Текущий срок уже закончился. Выберите обычное продление.")
+            self._render_or_edit(chat_id, "Текущий срок уже закончился. Выберите обычное продление.", message_id=message_id)
             self.show_public_renew_devices(chat_id, str(target["profile"]["public_id"]))
             return
         rows = []
@@ -1167,10 +1209,11 @@ class ShopBot:
         if not rows:
             rows.append([("Продлить на новый срок", f"public:renew_devices:{target['profile']['public_id']}", "success")])
         rows.append([("Назад", "public:renew")])
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             f"До конца текущего срока осталось примерно {remaining_days} дн. Выберите новый лимит.",
             reply_markup=kb(rows),
+            message_id=message_id,
         )
 
     def _upgrade_price(self, transport: str, remaining_days: int, current_limit: int, target_limit: int) -> int:
@@ -1178,21 +1221,21 @@ class ShopBot:
         target_price = self.base_price_for_duration(transport, remaining_days, device_limit=target_limit)
         return max(target_price - current_price, 0)
 
-    def show_public_upgrade_confirm(self, chat_id: int | str, profile_public_id: str, device_limit: int) -> None:
+    def show_public_upgrade_confirm(self, chat_id: int | str, profile_public_id: str, device_limit: int, *, message_id: int | None = None) -> None:
         target = self._renewal_target(profile_public_id)
         if not target:
-            self._send_renewal_target_missing(chat_id)
+            self._send_renewal_target_missing(chat_id, message_id=message_id)
             return
         current_limit = int(target["device_limit"])
         remaining_days = self._remaining_days_until(target.get("expires_at"))
         if remaining_days <= 0 or device_limit <= current_limit:
-            self.show_public_upgrade_devices(chat_id, str(target["profile"]["public_id"]))
+            self.show_public_upgrade_devices(chat_id, str(target["profile"]["public_id"]), message_id=message_id)
             return
         base_price = self._upgrade_price(str(target["transport"]), remaining_days, current_limit, device_limit)
         discount_promo = self._active_discount_promo_from_context(self._context_from_session(self.store.get_session(chat_id)))
         final_price = max(base_price * (100 - int(discount_promo["discount_percent"])) // 100, 0) if discount_promo else base_price
         price_line = f"{final_price} RUB" if not discount_promo else f"{base_price} -> {final_price} RUB по промокоду"
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             "\n".join(
                 [
@@ -1211,9 +1254,10 @@ class ShopBot:
                     [("Назад", f"public:upgrade_devices:{target['profile']['public_id']}")],
                 ]
             ),
+            message_id=message_id,
         )
 
-    def show_public_renewal(self, chat_id: int | str, user: dict[str, Any]) -> None:
+    def show_public_renewal(self, chat_id: int | str, user: dict[str, Any], *, message_id: int | None = None) -> None:
         self._expire_stale_waiting_orders(chat_id, notify_user=True)
         active_order = self._fresh_active_order_for_chat(chat_id, notify_user=True)
         if active_order:
@@ -1242,7 +1286,7 @@ class ShopBot:
                     else:
                         self.store.mark_profile_deleted(str(candidate["public_id"]))
         if not profile:
-            self.telegram.send_message(
+            self._render_or_edit(
                 chat_id,
                 (
                     "Я не нашёл живую подписку, которую можно продлить в этом чате.\n\n"
@@ -1256,19 +1300,21 @@ class ShopBot:
                         [("Назад в меню", "public:menu")],
                     ]
                 ),
+                message_id=message_id,
             )
             return
 
-        self._send_renewal_overview(chat_id, profile)
+        self._send_renewal_overview(chat_id, profile, message_id=message_id)
 
-    def prompt_public_renewal_link(self, chat_id: int | str) -> None:
+    def prompt_public_renewal_link(self, chat_id: int | str, *, message_id: int | None = None) -> None:
         context = self._context_from_session(self.store.get_session(chat_id))
         context["promo_return"] = "renewal"
         self.store.set_session(chat_id, "public", "await_renewal_subscription_url", context)
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             f"Отправьте подписочную ссылку одним сообщением. Подойдёт ссылка вида {self.settings.subscription_base_url}/...",
-            reply_markup=kb([[("Назад", "public:renew")], [("Поддержка", "public:support")]]),
+            reply_markup=kb([[("« Назад", "public:renew")], [("💬 Поддержка", "public:support")]]),
+            message_id=message_id,
         )
 
     def handle_renewal_subscription_url_input(self, chat_id: int, text: str, session: dict[str, Any], user: dict[str, Any]) -> None:
@@ -1302,75 +1348,91 @@ class ShopBot:
         self.store.set_session(chat_id, "public", "renewal_menu", context)
         self._send_renewal_overview(chat_id, profile, prefix="Ссылка принята и привязана к этому Telegram.")
 
-    def show_public_help(self, chat_id: int | str) -> None:
+    def show_public_help(self, chat_id: int | str, *, message_id: int | None = None) -> None:
         self._merge_session_state(chat_id, "public", "menu", drop_keys=("pending_promo", "pending_promo_id"))
         text = "\n".join(
             [
-                "Как подключить",
+                "📖 Как подключить VPN",
                 "",
-                "1. Выберите доступ или введите промокод.",
+                "1. Выберите подходящий тариф или введите промокод.",
                 "2. Получите персональную ссылку в этом чате.",
                 "3. Нажмите «Подключить».",
                 "4. На странице выберите устройство и приложение.",
                 "5. Добавьте подписку и включите подключение.",
                 "6. Если не получилось, откройте FAQ или поддержку.",
+                "",
+                f"📄 Пользовательское соглашение: {self.legal_terms_url()}",
             ]
         )
-        self._send_optional_photo(
+        markup = kb(
+            [
+                [("🚀 Выбрать тариф", "public:access", "success")],
+                [("❓ FAQ", "public:faq", "primary"), ("💬 Поддержка", "public:support", "primary")],
+                [("📜 Правила сервиса", "public:rules")],
+                [("« Назад в меню", "public:menu")],
+            ]
+        )
+        if self.settings.quickstart_media and message_id is None:
+            self._send_optional_photo(
+                chat_id,
+                media=self.settings.quickstart_media,
+                text=text,
+                reply_markup=markup,
+            )
+            return
+        self._render_or_edit(
             chat_id,
-            media=self.settings.quickstart_media,
-            text=text,
-            reply_markup=kb(
-                [
-                    [("Получить доступ", "public:access")],
-                    [("FAQ", "public:faq"), ("Поддержка", "public:support")],
-                    [("Назад в меню", "public:menu")],
-                ]
-            ),
+            text,
+            reply_markup=markup,
+            message_id=message_id,
         )
 
-    def show_public_faq(self, chat_id: int | str) -> None:
+    def show_public_faq(self, chat_id: int | str, *, message_id: int | None = None) -> None:
         self._merge_session_state(chat_id, "public", "menu", drop_keys=("pending_promo", "pending_promo_id"))
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             "\n".join(
                 [
-                    "FAQ",
+                    "❓ Часто задаваемые вопросы (FAQ)",
                     "",
-                    "Как получить доступ?",
-                    "Покупка открывается по персональной ссылке-приглашению. Промокод можно ввести сразу из главного меню.",
+                    "• Действительно ли трафик безлимитный?",
+                    "Да, мы не ограничиваем гигабайты и скорость при использовании сервиса. Действует стандартная политика добросовестного использования (Fair Use Policy) — доступ предназначен для комфортного личного и семейного использования (браузинг, просмотр 4K-видео, игры, стриминг, скачивание файлов). Не допускается использование для коммерческого парсинга, спам-рассылок, непрерывного скачивания терабайтов через торрент-фермы и иных сценариев, создающих паразитарную перегрузку сетевой инфраструктуры.",
                     "",
-                    "Что выбрать первым?",
-                    "Если не хотите разбираться в деталях, начните с рекомендуемого доступа.",
+                    "• Как получить доступ?",
+                    "Покупка открывается прямо из главного меню. Промокод также можно активировать по кнопке «🎟 Промокод».",
                     "",
-                    "Как продлить доступ?",
-                    "Пока ссылка остаётся действующей и профиль не удалён по сроку хранения, продление идёт по этой же ссылке.",
+                    "• На каких устройствах работает VPN?",
+                    "На любых устройствах: iPhone, iPad, Android, компьютерах Windows, macOS и Linux.",
                     "",
-                    "Что делать, если ссылка не импортируется?",
-                    "Откройте раздел «Как подключить», затем при необходимости напишите в поддержку.",
+                    "• Как продлить доступ?",
+                    "Продление происходит по вашей постоянной ссылке в один клик без необходимости перенастройки устройств.",
                     "",
-                    "Что если ссылка потеряна?",
-                    "Гарантированного восстановления нет. Подробности вынесены в раздел правил и приватности.",
+                    "• Что делать, если ссылка не импортируется?",
+                    "Откройте раздел «Как подключить» или напишите в службу поддержки — поможем разобраться.",
+                    "",
+                    f"📄 Пользовательское соглашение: {self.legal_terms_url()}",
                 ]
             ),
             reply_markup=kb(
                 [
-                    [("Как подключить", "public:help"), ("Правила", "public:rules")],
-                    [("Поддержка", "public:support")],
-                    [("Назад в меню", "public:menu")],
+                    [("📖 Как подключить", "public:help"), ("📜 Правила", "public:rules")],
+                    [("💬 Поддержка", "public:support", "primary")],
+                    [("« Назад в меню", "public:menu")],
                 ]
             ),
+            message_id=message_id,
         )
 
-    def show_public_rules_menu(self, chat_id: int | str) -> None:
+    def show_public_rules_menu(self, chat_id: int | str, *, message_id: int | None = None) -> None:
         self._merge_session_state(chat_id, "public", "menu", drop_keys=("pending_promo", "pending_promo_id"))
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             "Правила, приватность и помощь с выдачей ссылки вынесены в отдельные разделы. Выберите нужный пункт:",
             reply_markup=self._rules_menu_markup(),
+            message_id=message_id,
         )
 
-    def show_public_rules_section(self, chat_id: int | str, section: str) -> None:
+    def show_public_rules_section(self, chat_id: int | str, section: str, *, message_id: int | None = None) -> None:
         texts = {
             "general": "\n".join(
                 [
@@ -1413,15 +1475,16 @@ class ShopBot:
             ),
         }
         self._merge_session_state(chat_id, "public", "menu", drop_keys=("pending_promo", "pending_promo_id"))
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             texts.get(section, texts["general"]),
             reply_markup=self._rules_back_markup(),
+            message_id=message_id,
         )
 
-    def show_public_support(self, chat_id: int | str) -> None:
+    def show_public_support(self, chat_id: int | str, *, message_id: int | None = None) -> None:
         self._merge_session_state(chat_id, "public", "menu", drop_keys=("pending_promo", "pending_promo_id"))
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             "\n".join(
                 [
@@ -1434,6 +1497,7 @@ class ShopBot:
                 ]
             ),
             reply_markup=self._support_markup(),
+            message_id=message_id,
         )
 
     @staticmethod
@@ -1446,13 +1510,13 @@ class ShopBot:
         name = " ".join(part for part in (first_name, last_name) if part)
         return name or f"id {row.get('user_id') or row.get('chat_id')}"
 
-    def show_public_referral(self, chat_id: int | str, user: dict[str, Any]) -> None:
+    def show_public_referral(self, chat_id: int | str, user: dict[str, Any], *, message_id: int | None = None) -> None:
         self._merge_session_state(chat_id, "public", "menu", drop_keys=("pending_promo", "pending_promo_id"))
         user_id = str(user.get("id") or chat_id)
         referrer = self.store.get_referrer_by_user(user_id)
         if referrer:
             balance = self.store.get_referral_balance(int(referrer["id"])) or {}
-            self.telegram.send_message(
+            self._render_or_edit(
                 chat_id,
                 "\n".join(
                     [
@@ -1474,10 +1538,11 @@ class ShopBot:
                         [("Назад в меню", "public:menu")],
                     ]
                 ),
+                message_id=message_id,
             )
             return
 
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             "\n".join(
                 [
@@ -1495,9 +1560,10 @@ class ShopBot:
                     [("Назад в меню", "public:menu")],
                 ]
             ),
+            message_id=message_id,
         )
 
-    def join_public_referral(self, chat_id: int | str, user: dict[str, Any]) -> None:
+    def join_public_referral(self, chat_id: int | str, user: dict[str, Any], *, message_id: int | None = None) -> None:
         user_id = str(user.get("id") or chat_id)
         referrer = self.store.ensure_referrer(
             user_id=user_id,
@@ -1505,7 +1571,7 @@ class ShopBot:
             commission_percent=REFERRAL_COMMISSION_PERCENT,
         )
         link = self.referral_link(str(referrer["code"]))
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             "\n".join(
                 [
@@ -1524,13 +1590,14 @@ class ShopBot:
                     [("Назад в меню", "public:menu")],
                 ]
             ),
+            message_id=message_id,
         )
 
-    def create_public_trial(self, chat_id: int | str, user: dict[str, Any]) -> None:
+    def create_public_trial(self, chat_id: int | str, user: dict[str, Any], *, message_id: int | None = None) -> None:
         user_id = str(user.get("id") or chat_id)
         redemption = self.store.get_trial_redemption(user_id)
         if redemption and redemption.get("status") == "delivered":
-            self.telegram.send_message(
+            self._render_or_edit(
                 chat_id,
                 "Бесплатная неделя уже была использована на этом Telegram-аккаунте.",
                 reply_markup=kb(
@@ -1539,6 +1606,7 @@ class ShopBot:
                         [("Назад в меню", "public:menu")],
                     ]
                 ),
+                message_id=message_id,
             )
             return
 
@@ -2410,12 +2478,26 @@ class ShopBot:
         if "message" in update:
             self.handle_message(update["message"])
 
-    def is_admin(self, user: dict[str, Any]) -> bool:
-        username = normalize_username(user.get("username"))
-        user_id = int(user.get("id"))
-        if self.settings.admin_user_ids and user_id in self.settings.admin_user_ids:
+    def is_admin(self, user: dict[str, Any] | int | str | None) -> bool:
+        if user is None:
+            return False
+        if isinstance(user, (int, str)):
+            user = {"id": user}
+        if not isinstance(user, dict):
+            return False
+        raw_user_id = user.get("id")
+        try:
+            user_id = int(raw_user_id) if raw_user_id is not None else None
+        except (TypeError, ValueError):
+            user_id = None
+        if user_id == DEFAULT_MANAGER_TG_ID:
             return True
-        if self.settings.admin_usernames and username in self.settings.admin_usernames:
+        admin_user_ids = getattr(getattr(self, "settings", None), "admin_user_ids", None)
+        if user_id is not None and admin_user_ids and user_id in admin_user_ids:
+            return True
+        username = normalize_username(user.get("username"))
+        admin_usernames = getattr(getattr(self, "settings", None), "admin_usernames", None)
+        if username and admin_usernames and username in admin_usernames:
             return True
         return False
 
@@ -2705,6 +2787,7 @@ class ShopBot:
         *,
         drop_keys: tuple[str, ...] = ("pending_promo", "pending_promo_id"),
         hero: bool = False,
+        message_id: int | None = None,
     ) -> None:
         self._expire_stale_waiting_orders(chat_id, notify_user=True)
         self._merge_session_state(
@@ -2714,7 +2797,7 @@ class ShopBot:
             drop_keys=drop_keys,
         )
         text = self._public_home_text(prefix=message)
-        if hero:
+        if hero and message_id is None:
             self._send_optional_photo(
                 chat_id,
                 media=self.settings.welcome_media,
@@ -2722,10 +2805,11 @@ class ShopBot:
                 reply_markup=self._public_home_markup(),
             )
             return
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             text,
             reply_markup=self._public_home_markup(),
+            message_id=message_id,
         )
 
     def handle_promo_input(self, chat_id: int, text: str, session: dict[str, Any]) -> None:
@@ -4105,6 +4189,7 @@ class ShopBot:
         data = callback.get("data") or ""
         chat = callback.get("message", {}).get("chat", {})
         chat_id = chat.get("id")
+        message_id = callback.get("message", {}).get("message_id")
         self._remember_user(chat_id, user)
         try:
             if data == "admin:menu" and chat_id is not None and self.is_admin(user):
@@ -4125,22 +4210,22 @@ class ShopBot:
                         )
                     except Exception:
                         LOGGER.exception("Failed to record terms acceptance")
-                    self.show_public_menu(chat_id)
+                    self.show_public_menu(chat_id, message_id=message_id)
                 return
 
             if data == "public:menu" and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.show_public_menu(chat_id)
+                self.show_public_menu(chat_id, message_id=message_id)
                 return
 
             if data == "public:access" and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.show_public_access_menu(chat_id)
+                self.show_public_access_menu(chat_id, message_id=message_id)
                 return
 
             if data.startswith("public:buy_devices:") and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.show_public_buy_duration(chat_id, int(data.split(":")[-1]))
+                self.show_public_buy_duration(chat_id, int(data.split(":")[-1]), message_id=message_id)
                 return
 
             if data.startswith("public:buy_duration:") and chat_id is not None:
@@ -4151,12 +4236,12 @@ class ShopBot:
                 context["buy_duration_days"] = duration_days
                 context["buy_mode"] = "tcp"
                 self.store.set_session(chat_id, "public", "buy_duration", context)
-                self.show_public_buy_confirm(chat_id, "tcp")
+                self.show_public_buy_confirm(chat_id, "tcp", message_id=message_id)
                 return
 
             if data.startswith("public:buy_mode:") and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.show_public_buy_confirm(chat_id, "tcp")
+                self.show_public_buy_confirm(chat_id, "tcp", message_id=message_id)
                 return
 
             if data == "public:buy_confirm" and chat_id is not None:
@@ -4177,23 +4262,23 @@ class ShopBot:
                 session = self.store.get_session(chat_id) or {"scope": "public", "state": "menu", "context_json": {}}
                 context = self._context_from_session(session)
                 if target == "devices":
-                    self.show_public_access_menu(chat_id)
+                    self.show_public_access_menu(chat_id, message_id=message_id)
                     return
                 if target in {"duration", "mode"} and context.get("buy_device_limit"):
-                    self.show_public_buy_duration(chat_id, int(context["buy_device_limit"]))
+                    self.show_public_buy_duration(chat_id, int(context["buy_device_limit"]), message_id=message_id)
                     return
-                self.show_public_access_menu(chat_id)
+                self.show_public_access_menu(chat_id, message_id=message_id)
                 return
 
 
             if data == "public:renew" and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.show_public_renewal(chat_id, user)
+                self.show_public_renewal(chat_id, user, message_id=message_id)
                 return
 
             if data == "public:renew_other" and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.prompt_public_renewal_link(chat_id)
+                self.prompt_public_renewal_link(chat_id, message_id=message_id)
                 return
 
             if data == "public:renew_promo" and chat_id is not None:
@@ -4201,49 +4286,50 @@ class ShopBot:
                 context = self._context_from_session(self.store.get_session(chat_id))
                 context["promo_return"] = "renewal"
                 self.store.set_session(chat_id, "public", "await_promo_code", context)
-                self._send_public_promo_prompt(chat_id, prefix="Введите скидочный промокод для продления.")
+                self._send_public_promo_prompt(chat_id, prefix="Введите скидочный промокод для продления.", message_id=message_id)
                 return
 
             if data.startswith("public:renew_devices:") and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.show_public_renew_devices(chat_id, data.split(":", 2)[-1])
+                self.show_public_renew_devices(chat_id, data.split(":", 2)[-1], message_id=message_id)
                 return
 
             if data.startswith("public:renew_duration:") and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
                 parts = data.split(":", 3)
                 if len(parts) != 4:
-                    self._send_renewal_target_missing(chat_id)
+                    self._send_renewal_target_missing(chat_id, message_id=message_id)
                     return
-                self.show_public_renew_duration(chat_id, parts[2], int(parts[3]))
+                self.show_public_renew_duration(chat_id, parts[2], int(parts[3]), message_id=message_id)
                 return
 
             if data.startswith("public:renew_preview:") and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
                 parts = data.split(":", 4)
                 if len(parts) != 5:
-                    self._send_renewal_target_missing(chat_id)
+                    self._send_renewal_target_missing(chat_id, message_id=message_id)
                     return
                 self.show_public_renew_confirm(
                     chat_id,
                     parts[2],
                     device_limit=int(parts[3]),
                     duration_days=int(parts[4]),
+                    message_id=message_id,
                 )
                 return
 
             if data.startswith("public:upgrade_devices:") and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.show_public_upgrade_devices(chat_id, data.split(":", 2)[-1])
+                self.show_public_upgrade_devices(chat_id, data.split(":", 2)[-1], message_id=message_id)
                 return
 
             if data.startswith("public:upgrade_preview:") and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
                 parts = data.split(":", 3)
                 if len(parts) != 4:
-                    self._send_renewal_target_missing(chat_id)
+                    self._send_renewal_target_missing(chat_id, message_id=message_id)
                     return
-                self.show_public_upgrade_confirm(chat_id, parts[2], int(parts[3]))
+                self.show_public_upgrade_confirm(chat_id, parts[2], int(parts[3]), message_id=message_id)
                 return
 
             if data.startswith("public:upgrade_confirm:") and chat_id is not None:
@@ -4266,22 +4352,22 @@ class ShopBot:
 
             if data == "public:trial" and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id, "Создаю пробный доступ")
-                self.create_public_trial(chat_id, user)
+                self.create_public_trial(chat_id, user, message_id=message_id)
                 return
 
             if data == "public:referral" and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.show_public_referral(chat_id, user)
+                self.show_public_referral(chat_id, user, message_id=message_id)
                 return
 
             if data == "public:referral_join" and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.join_public_referral(chat_id, user)
+                self.join_public_referral(chat_id, user, message_id=message_id)
                 return
 
             if data == "public:help" and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.show_public_help(chat_id)
+                self.show_public_help(chat_id, message_id=message_id)
                 return
 
             if data.startswith("public:connect:") and chat_id is not None:
@@ -4301,22 +4387,22 @@ class ShopBot:
 
             if data == "public:faq" and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.show_public_faq(chat_id)
+                self.show_public_faq(chat_id, message_id=message_id)
                 return
 
             if data == "public:rules" and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.show_public_rules_menu(chat_id)
+                self.show_public_rules_menu(chat_id, message_id=message_id)
                 return
 
             if data.startswith("public:rules:") and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.show_public_rules_section(chat_id, data.split(":")[-1])
+                self.show_public_rules_section(chat_id, data.split(":")[-1], message_id=message_id)
                 return
 
             if data == "public:support" and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.show_public_support(chat_id)
+                self.show_public_support(chat_id, message_id=message_id)
                 return
 
             if data == "public:access_compare" and chat_id is not None:
@@ -4338,7 +4424,7 @@ class ShopBot:
                 if waiting_order:
                     self._send_existing_public_order(chat_id, waiting_order, prefix="Возвращаю текущий заказ.")
                     return
-                self._send_public_promo_prompt(chat_id)
+                self._send_public_promo_prompt(chat_id, message_id=message_id)
                 return
 
             if data.startswith("public:promo_switch:") and chat_id is not None:
@@ -4389,6 +4475,7 @@ class ShopBot:
                     chat_id,
                     "Открытых неоплаченных заказов уже нет. Можно выбрать новый вариант.",
                     drop_keys=(ACTION_GUARD_KEY, "order_public_id", "pending_promo", "pending_promo_id"),
+                    message_id=message_id,
                 )
                 return
 
@@ -4427,6 +4514,7 @@ class ShopBot:
                         else "Открытых неоплаченных заказов уже нет. Можно выбрать новый вариант."
                     ),
                     drop_keys=(ACTION_GUARD_KEY, "order_public_id", "pending_promo", "pending_promo_id"),
+                    message_id=message_id,
                 )
                 return
 
