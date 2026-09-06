@@ -992,7 +992,7 @@ class WebCheckout:
       font-family: 'Outfit', sans-serif;
     }}
     .wrap {{ width: 100%; max-width: 1120px; margin-left: auto; margin-right: auto; padding-left: 20px; padding-right: 20px; box-sizing: border-box; }}
-    main.wrap {{ flex: 1 0 auto; width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 20px 60px; box-sizing: border-box; overflow-x: clip; }}
+    main.wrap {{ flex: 1 0 auto; width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 20px 60px; box-sizing: border-box; }}
     header {{ 
       background: rgba(5, 10, 8, 0.7); 
       backdrop-filter: blur(16px);
