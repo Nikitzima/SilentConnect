@@ -486,12 +486,6 @@ class ShopBot:
                 "• Продлить подписку или активировать пробный период",
                 "• Ввести промокод или пригласить друзей",
                 "• Инструкции по настройке и поддержка",
-                "",
-                f"📄 Оферта: {self.legal_terms_url()}",
-                f"🔒 Конфиденциальность: {self.legal_privacy_url()}",
-                f"↩️ Возвраты: {self.legal_refund_url()}",
-                "",
-                "[code: mekbuda]",
             ]
         )
         return "\n".join(lines)
@@ -1376,8 +1370,6 @@ class ShopBot:
                 f"📄 Пользовательское соглашение: {self.legal_terms_url()}",
                 f"🔒 Политика конфиденциальности: {self.legal_privacy_url()}",
                 f"↩️ Политика возвратов: {self.legal_refund_url()}",
-                "",
-                "[code: mekbuda]",
             ]
         )
         markup = kb(
@@ -1430,8 +1422,6 @@ class ShopBot:
                     f"📄 Пользовательское соглашение: {self.legal_terms_url()}",
                     f"🔒 Политика конфиденциальности: {self.legal_privacy_url()}",
                     f"↩️ Политика возвратов: {self.legal_refund_url()}",
-                    "",
-                    "[code: mekbuda]",
                 ]
             ),
             reply_markup=kb(
