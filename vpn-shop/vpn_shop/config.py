@@ -142,7 +142,7 @@ def load_settings(root_dir: Path | None = None, env_file: str | Path | None = No
         telegram_bot_username=os.environ.get("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@"),
         brand_name=os.environ.get("BRAND_NAME", "SilentConnect").strip() or "SilentConnect",
         support_tg_url=os.environ.get("SUPPORT_TG_URL", "https://t.me/your_support").strip(),
-        welcome_media=os.environ.get("WELCOME_MEDIA", "assets/telegram/bot_menu_hero.png").strip() or "assets/telegram/bot_menu_hero.png",
+        welcome_media=os.environ.get("WELCOME_MEDIA", "").strip(),
         quickstart_media=os.environ.get("QUICKSTART_MEDIA", "").strip(),
         admin_usernames=_csv_usernames("ADMIN_TG_USERNAMES"),
         admin_user_ids=_csv_ints("ADMIN_TG_IDS") or (DEFAULT_MANAGER_TG_ID,),
