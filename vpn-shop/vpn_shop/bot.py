@@ -456,6 +456,9 @@ class ShopBot:
                     reply_markup=reply_markup,
                 )
             except Exception as exc:
+                if "message is not modified" in str(exc).lower():
+                    return {"message_id": int(message_id)}
+                
                 LOGGER.info(
                     "edit_message_text failed for chat %s message %s (%s), attempting delete and fallback to send_message",
                     chat_id,
