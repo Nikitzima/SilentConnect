@@ -405,19 +405,6 @@ class ShopBot:
         reply_markup: dict[str, Any] | None = None,
         protect_content: bool = False,
     ) -> None:
-        media = self._resolve_media_reference(media)
-        if media:
-            try:
-                self.telegram.send_photo(
-                    chat_id,
-                    media,
-                    caption=text,
-                    reply_markup=reply_markup,
-                    protect_content=protect_content,
-                )
-                return
-            except TelegramApiError:
-                LOGGER.exception("Failed to send media %r, falling back to text mode", media)
         self.telegram.send_message(
             chat_id,
             text,
@@ -483,7 +470,7 @@ class ShopBot:
             lines.extend([prefix, ""])
         lines.extend(
             [
-                f"🛡️ {self.settings.brand_name}",
+                f"🐍 {self.settings.brand_name}",
                 "",
                 "Главное меню",
                 "",
@@ -1392,14 +1379,6 @@ class ShopBot:
                 [("« Назад в меню", "public:menu")],
             ]
         )
-        if self.settings.quickstart_media and message_id is None:
-            self._send_optional_photo(
-                chat_id,
-                media=self.settings.quickstart_media,
-                text=text,
-                reply_markup=markup,
-            )
-            return
         self._render_or_edit(
             chat_id,
             text,
@@ -1884,9 +1863,9 @@ class ShopBot:
         self._merge_session_state(chat_id, "admin", "admin_menu", {}, drop_keys=("refpay_referrer_id",))
         self.execute_referral_payout(chat_id, int(referrer_id), user, amount_rub=amount)
 
-    def show_public_access_compare(self, chat_id: int | str) -> None:
+    def show_public_access_compare(self, chat_id: int | str, *, message_id: int | None = None) -> None:
         self._merge_session_state(chat_id, "public", "menu", drop_keys=("pending_promo", "pending_promo_id"))
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             "\n".join(
                 [
@@ -1917,11 +1896,12 @@ class ShopBot:
                     [("Назад в меню", "public:menu")],
                 ]
             ),
+            message_id=message_id,
         )
 
-    def show_public_access_advanced(self, chat_id: int | str) -> None:
+    def show_public_access_advanced(self, chat_id: int | str, *, message_id: int | None = None) -> None:
         self._merge_session_state(chat_id, "public", "menu", drop_keys=("pending_promo", "pending_promo_id"))
-        self.telegram.send_message(
+        self._render_or_edit(
             chat_id,
             "\n".join(
                 [
@@ -1943,6 +1923,7 @@ class ShopBot:
                     [("Назад в меню", "public:menu")],
                 ]
             ),
+            message_id=message_id,
         )
 
     def _send_public_promo_switch_prompt(self, chat_id: int | str, order: dict[str, Any]) -> None:
@@ -2972,14 +2953,6 @@ class ShopBot:
             drop_keys=drop_keys,
         )
         text = self._public_home_text(prefix=message)
-        if hero and message_id is None:
-            self._send_optional_photo(
-                chat_id,
-                media=self.settings.welcome_media,
-                text=text,
-                reply_markup=self._public_home_markup(),
-            )
-            return
         self._render_or_edit(
             chat_id,
             text,
@@ -4615,12 +4588,12 @@ class ShopBot:
 
             if data == "public:access_compare" and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.show_public_access_compare(chat_id)
+                self.show_public_access_compare(chat_id, message_id=message_id)
                 return
 
             if data == "public:access_advanced" and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.show_public_access_advanced(chat_id)
+                self.show_public_access_advanced(chat_id, message_id=message_id)
                 return
 
             if data == "public:promo" and chat_id is not None:
@@ -4647,6 +4620,7 @@ class ShopBot:
                 self._send_public_promo_prompt(
                     chat_id,
                     prefix="Открытого неоплаченного заказа уже нет. Можно сразу ввести промокод.",
+                    message_id=message_id,
                 )
                 return
 
@@ -4667,6 +4641,7 @@ class ShopBot:
                         if cancelled_orders
                         else "Открытых неоплаченных заказов уже не было."
                     ),
+                    message_id=message_id,
                 )
                 return
 
