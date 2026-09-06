@@ -1,0 +1,6 @@
+#!/bin/sh
+# SilentConnect Pre-Commit Hook
+# Automatically blocks commits containing secrets, broken syntax, or forbidden files
+
+python scripts/git_pre_commit.py
+exit $?

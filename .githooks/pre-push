@@ -1,0 +1,6 @@
+#!/bin/sh
+# SilentConnect Pre-Push Hook
+# Automatically blocks pushes if security audit fails or tests are broken
+
+python scripts/git_pre_push.py
+exit $?
