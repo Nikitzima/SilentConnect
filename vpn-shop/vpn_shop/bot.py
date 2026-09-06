@@ -110,6 +110,18 @@ class ShopBot:
             return urlunsplit((parsed.scheme, parsed.netloc, "/legal/terms", "", ""))
         return f"{self.settings.web_public_base_url}/legal/terms"
 
+    def legal_privacy_url(self) -> str:
+        parsed = urlsplit(self.settings.subscription_base_url)
+        if parsed.scheme and parsed.netloc:
+            return urlunsplit((parsed.scheme, parsed.netloc, "/legal/privacy", "", ""))
+        return f"{self.settings.web_public_base_url}/legal/privacy"
+
+    def legal_refund_url(self) -> str:
+        parsed = urlsplit(self.settings.subscription_base_url)
+        if parsed.scheme and parsed.netloc:
+            return urlunsplit((parsed.scheme, parsed.netloc, "/legal/refund", "", ""))
+        return f"{self.settings.web_public_base_url}/legal/refund"
+
     def payment_transfer_url(self, order: dict[str, Any] | None = None) -> str:
         return (self.settings.payment_transfer_url or "").strip()
 
@@ -475,7 +487,11 @@ class ShopBot:
                 "• Ввести промокод или пригласить друзей",
                 "• Инструкции по настройке и поддержка",
                 "",
-                f"📄 Пользовательское соглашение: {self.legal_terms_url()}",
+                f"📄 Оферта: {self.legal_terms_url()}",
+                f"🔒 Конфиденциальность: {self.legal_privacy_url()}",
+                f"↩️ Возвраты: {self.legal_refund_url()}",
+                "",
+                "[code: mekbuda]",
             ]
         )
         return "\n".join(lines)
@@ -507,9 +523,10 @@ class ShopBot:
     def _rules_menu_markup(self) -> dict[str, Any]:
         return kb(
             [
-                [("Пользовательское соглашение", self.legal_terms_url(), "primary")],
-                [("Правила", "public:rules:general")],
-                [("Приватность", "public:rules:privacy")],
+                [("📄 Пользовательское соглашение", self.legal_terms_url())],
+                [("🔒 Политика конфиденциальности", self.legal_privacy_url())],
+                [("↩️ Политика возвратов", self.legal_refund_url())],
+                [("Правила", "public:rules:general"), ("Приватность", "public:rules:privacy")],
                 [("Как работает выдача ссылки", "public:rules:delivery")],
                 [("Если не получается импорт", "public:rules:import")],
                 [("Назад в меню", "public:menu")],
@@ -1362,13 +1379,18 @@ class ShopBot:
                 "6. Если не получилось, откройте FAQ или поддержку.",
                 "",
                 f"📄 Пользовательское соглашение: {self.legal_terms_url()}",
+                f"🔒 Политика конфиденциальности: {self.legal_privacy_url()}",
+                f"↩️ Политика возвратов: {self.legal_refund_url()}",
+                "",
+                "[code: mekbuda]",
             ]
         )
         markup = kb(
             [
                 [("🚀 Выбрать тариф", "public:access", "success")],
                 [("❓ FAQ", "public:faq", "primary"), ("💬 Поддержка", "public:support", "primary")],
-                [("📜 Правила сервиса", "public:rules")],
+                [("📄 Соглашение", self.legal_terms_url()), ("🔒 Приватность", self.legal_privacy_url())],
+                [("↩️ Возвраты", self.legal_refund_url()), ("📜 Все правила", "public:rules")],
                 [("« Назад в меню", "public:menu")],
             ]
         )
@@ -1411,12 +1433,17 @@ class ShopBot:
                     "Откройте раздел «Как подключить» или напишите в службу поддержки — поможем разобраться.",
                     "",
                     f"📄 Пользовательское соглашение: {self.legal_terms_url()}",
+                    f"🔒 Политика конфиденциальности: {self.legal_privacy_url()}",
+                    f"↩️ Политика возвратов: {self.legal_refund_url()}",
+                    "",
+                    "[code: mekbuda]",
                 ]
             ),
             reply_markup=kb(
                 [
-                    [("📖 Как подключить", "public:help"), ("📜 Правила", "public:rules")],
-                    [("💬 Поддержка", "public:support", "primary")],
+                    [("📄 Соглашение", self.legal_terms_url()), ("🔒 Приватность", self.legal_privacy_url())],
+                    [("↩️ Возвраты", self.legal_refund_url()), ("💬 Поддержка", "public:support", "primary")],
+                    [("📖 Как подключить", "public:help"), ("📜 Все правила", "public:rules")],
                     [("« Назад в меню", "public:menu")],
                 ]
             ),
