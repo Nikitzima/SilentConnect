@@ -97,11 +97,14 @@ class TestOperatorPaymentFlow(unittest.TestCase):
         html_bytes = self.web.render_order({}, order)
         html = html_bytes.decode("utf-8")
 
-        # Must contain transfer payment button pointing to payment_transfer_url
-        self.assertIn("Оплатить переводом", html)
-        self.assertIn(MOCK_PAYMENT_URL, html)
+        # Must contain operator button pointing to support_tg_url
+        self.assertIn("💬 Написать оператору для оплаты", html)
+        self.assertIn(self.settings.support_tg_url, html)
         self.assertIn(str(order["public_id"]), html)
-        self.assertIn("МТС Банк", html)
+
+        # Must NOT expose private mock payment link or bank notes
+        self.assertNotIn(MOCK_PAYMENT_URL, html)
+        self.assertNotIn("МТС Банк", html)
 
     def test_web_create_order_sends_instant_admin_notification(self):
         self.web.telegram.reset_mock()

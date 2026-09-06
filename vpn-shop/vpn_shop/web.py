@@ -619,7 +619,7 @@ class WebCheckout:
                     f"Лимит: {device_limit_label(meta.get('device_limit'))}",
                     f"Сумма: {money(order['final_price_rub'])}",
                     "",
-                    "Покупатель перешел к оплате на сайте.",
+                    "Покупатель перешел к оплате. Реквизиты выдаются оператором в поддержке.",
                     "При поступлении перевода нажмите кнопку ниже — доступ автоматически активируется и ссылка отправится клиенту на почту.",
                 ]
             )
@@ -941,8 +941,8 @@ class WebCheckout:
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="SilentConnect">
   <meta name="theme-color" content="#0e1317">
-  <meta property="og:title" content="SilentConnect — Безопасный VPN">
-  <meta property="og:description" content="Приватный VPN-сервис для персонального использования. Xray Reality, Hysteria 2, AmneziaWG. Без логирования активности.">
+  <meta property="og:title" content="SilentConnect — Приватный и безопасный интернет">
+  <meta property="og:description" content="Сервис защищенного и приватного сетевого доступа для персонального использования. Без ограничений и без логирования активности.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://silentconnect.net"><!-- PLACEHOLDER -->
   <meta property="og:site_name" content="SilentConnect">
@@ -992,7 +992,7 @@ class WebCheckout:
       font-family: 'Outfit', sans-serif;
     }}
     .wrap {{ width: 100%; max-width: 1120px; margin-left: auto; margin-right: auto; padding-left: 20px; padding-right: 20px; box-sizing: border-box; }}
-    main.wrap {{ flex: 1 0 auto; width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 20px 60px; box-sizing: border-box; }}
+    main.wrap {{ flex: 1 0 auto; width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 20px 60px; box-sizing: border-box; overflow-x: clip; }}
     header {{ 
       background: rgba(5, 10, 8, 0.7); 
       backdrop-filter: blur(16px);
@@ -1322,34 +1322,125 @@ class WebCheckout:
       transform: scale(1) translateY(0);
     }}
     @media (max-width: 820px) {{
-      .wrap {{ width: calc(100% - 24px); }}
-      .hero, .order {{ grid-template-columns: 1fr; gap: 20px; padding: 20px 0; }}
-      .hero h1 {{ font-size: 28px; margin-bottom: 12px; }}
-      .lead {{ font-size: 15px; margin-bottom: 16px; }}
+      .wrap {{
+        width: 100% !important;
+        max-width: 100% !important;
+        padding-left: 14px !important;
+        padding-right: 14px !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
+        box-sizing: border-box !important;
+      }}
+      main.wrap {{
+        width: 100% !important;
+        max-width: 100% !important;
+        padding: 0 14px 40px !important;
+        box-sizing: border-box !important;
+        overflow-x: clip;
+      }}
+      .card {{
+        padding: 16px;
+        border-radius: 14px;
+        box-sizing: border-box;
+      }}
+      .page-card {{
+        padding: 20px 16px !important;
+        margin: 16px auto !important;
+        border-radius: 14px !important;
+      }}
+      .page-title {{
+        font-size: clamp(20px, 5.5vw, 24px) !important;
+        margin-bottom: 10px !important;
+      }}
+      .hero, .order {{
+        grid-template-columns: 1fr;
+        gap: 16px;
+        padding: 16px 0;
+      }}
+      .hero h1 {{ font-size: 26px; margin-bottom: 10px; }}
+      .lead {{ font-size: 14.5px; margin-bottom: 14px; }}
       .advantage-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }}
-      .advantage {{ min-height: 100px; padding: 12px; }}
-      .advantage b {{ font-size: 15px; margin-bottom: 4px; }}
-      .advantage span {{ font-size: 12px; }}
+      .advantage {{ min-height: 90px; padding: 12px; }}
+      .advantage b {{ font-size: 14.5px; margin-bottom: 3px; }}
+      .advantage span {{ font-size: 11.5px; }}
       .grid {{ grid-template-columns: 1fr; gap: 14px; }}
-      .builder {{ grid-template-columns: 1fr; gap: 14px; }}
+      .builder {{
+        grid-template-columns: 1fr;
+        gap: 14px;
+        width: 100%;
+        box-sizing: border-box;
+      }}
+      .builder > .card,
+      .builder > .summary-box {{
+        width: 100%;
+        box-sizing: border-box;
+      }}
       .choice-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }}
       .choice-grid-durations {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }}
-      .choice {{ min-height: 56px; padding: 8px 3px; gap: 2px; font-size: 12.5px; font-weight: 700; word-break: normal; overflow: visible; position: relative; }}
-      .choice span {{ font-size: 10px; font-weight: 400; }}
-      .summary-box {{ position: static; }}
-      .cf-turnstile {{ display: flex; justify-content: center; max-width: 100%; }}
+      .choice {{
+        min-height: 52px;
+        padding: 8px 4px;
+        gap: 2px;
+        font-size: 11.5px;
+        font-weight: 700;
+        word-break: normal;
+        overflow: visible;
+        position: relative;
+        box-sizing: border-box;
+        min-width: 0;
+      }}
+      .choice span {{ font-size: 9.5px; font-weight: 400; }}
+      .summary-box {{
+        position: static;
+        padding: 16px;
+      }}
+      .cf-turnstile {{
+        max-width: 100%;
+        overflow: hidden;
+        display: flex;
+        justify-content: center;
+      }}
       .mobile-nav-txt {{ display: inline; }}
       .desktop-nav-txt {{ display: none; }}
-      .wrap {{ width: calc(100% - 20px); padding-left: 10px; padding-right: 10px; }}
-      header {{ background: rgba(5, 10, 8, 0.7); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-bottom: 1px solid var(--glass-border); position: sticky; top: 0; z-index: 100; height: auto; padding: 6px 0; }}
-      nav {{ height: auto; min-height: 48px; padding: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: nowrap; }}
+      header {{
+        background: rgba(5, 10, 8, 0.7);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border-bottom: 1px solid var(--glass-border);
+        position: -webkit-sticky;
+        position: sticky;
+        top: 0;
+        z-index: 1000;
+        height: auto;
+        padding: 6px 0;
+      }}
+      nav {{
+        height: auto;
+        min-height: 48px;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: nowrap;
+      }}
       .brand {{ font-size: 15px; display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }}
       .brand-logo {{ width: 24px; height: 24px; border-radius: 6px; flex-shrink: 0; }}
-      .navlinks {{ display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; flex-grow: 1; max-width: none; justify-items: stretch; }}
-      .navlinks a {{ text-align: center; font-size: 10.5px; padding: 3.5px 2px; border-radius: 4px; background: rgba(255,255,255,0.03); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+      .navlinks {{ display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px 4px; justify-content: end; align-items: center; max-width: 220px; }}
+      .navlinks a {{ background: rgba(255,255,255,0.07); border: 1px solid var(--glass-border); padding: 3px 4px; border-radius: 5px; font-size: 10.5px; font-weight: 600; text-align: center; color: var(--muted); text-decoration: none; white-space: nowrap; line-height: 1.25; }}
       .navlinks a.span-2 {{ grid-column: span 2; }}
       .navlinks a.span-3 {{ grid-column: span 3; }}
       .navlinks a.span-6 {{ grid-column: span 6; color: #2fbf71 !important; font-size: 11px; padding: 3.5px 6px; }}
+    }}
+    @media (max-width: 360px) {{
+      .wrap {{ padding-left: 10px !important; padding-right: 10px !important; }}
+      main.wrap {{ padding-left: 10px !important; padding-right: 10px !important; }}
+      .card {{ padding: 12px; }}
+      .page-card {{ padding: 16px 10px !important; }}
+      .page-title {{ font-size: 19px !important; }}
+      .choice {{ font-size: 10.5px; padding: 6px 2px; }}
+      .choice span {{ font-size: 8.5px; }}
+      .cf-turnstile > * {{ transform: scale(0.92); transform-origin: center center; }}
     }}
   </style>
   <script type="application/ld+json">
@@ -1361,7 +1452,7 @@ class WebCheckout:
         "@id": "https://silentconnect.net/#organization", "placeholder": "PLACEHOLDER",
         "name": "SilentConnect",
         "url": "https://silentconnect.net", "comment": "PLACEHOLDER",
-        "description": "Приватный VPN-сервис для персонального использования без логирования веб-активности",
+        "description": "Сервис приватного сетевого доступа для персонального использования без логирования активности",
         "contactPoint": {{
           "@type": "ContactPoint",
           "url": "https://t.me/silentconnect_bot",
@@ -1371,14 +1462,14 @@ class WebCheckout:
       {{
         "@type": "SoftwareApplication",
         "@id": "https://silentconnect.net/#software", "placeholder": "PLACEHOLDER",
-        "name": "SilentConnect VPN",
+        "name": "SilentConnect",
         "applicationCategory": "SecurityApplication",
         "operatingSystem": "iOS, Android, Windows, macOS, Linux",
         "offers": {{
           "@type": "Offer",
           "price": "199",
           "priceCurrency": "RUB",
-          "description": "Тарифы от 199 RUB/месяц с Xray Reality, Hysteria 2, AmneziaWG"
+          "description": "Тарифы от 199 RUB/месяц для защищенного доступа к интернету"
         }},
         "url": "https://silentconnect.net", "comment": "PLACEHOLDER"
       }}
@@ -1714,15 +1805,15 @@ class WebCheckout:
             <a class="btn secondary" href="/" style="display: inline-flex; width: auto; min-height: 38px; padding: 6px 14px; font-size: 14px;">← На главную к тарифам</a>
           </div>
           <h1 class="page-title">О сервисе SilentConnect</h1>
-          <p class="muted" style="margin-bottom: 24px;">Передовой приватный VPN-сервис нового поколения, созданный для безотказного доступа к интернету.</p>
+          <p class="muted" style="margin-bottom: 24px;">Передовой сервис приватного сетевого доступа нового поколения, созданный для безопасного и стабильного интернета.</p>
           
           <h3 style="color: #fff; font-size: 20px; margin-top: 24px;">Наша миссия</h3>
-          <p class="muted">Мы верим, что свободный и незамедлительный доступ к информации — это фундаментальное право каждого человека. SilentConnect создавался с нуля для работы в сложных сетевых условиях, где традиционные протоколы VPN легко распознаются и блокируются провайдерами.</p>
+          <p class="muted">Мы верим, что свободный и безопасный доступ к информации — это фундаментальное право каждого человека. SilentConnect создавался с нуля для работы в сложных сетевых условиях, где стандартные методы подключения легко распознаются и замедляются провайдерами.</p>
 
           <h3 style="color: #2fbf71; font-size: 20px; margin-top: 24px;">Инфраструктура и технологии:</h3>
           <ul class="muted" style="padding-left: 20px; line-height: 1.8;">
-            <li><strong style="color:#fff;">Маскировка REALITY &amp; XHTTP:</strong> Наш трафик маскируется под стандартный защищенный веб-скроллинг популярных сервисов. Для сетевых фильтров ваше подключение выглядит как обычный визит на веб-сайт.</li>
-            <li><strong style="color:#fff;">Европейские гигабитные узлы:</strong> Серверы размещены в дата-центрах Нидерландов и Финляндии с прямыми магистральными каналами связи и минимальным пингом.</li>
+            <li><strong style="color:#fff;">Современное защищенное шифрование:</strong> Наш трафик маскируется под стандартный защищенный протокол веб-сервисов. Для сетевых фильтров ваше подключение выглядит как обычный визит на веб-сайт.</li>
+            <li><strong style="color:#fff;">Европейские гигабитные узлы:</strong> Серверы размещены в современных дата-центрах Нидерландов и Финляндии с прямыми магистральными каналами связи и минимальным пингом.</li>
             <li><strong style="color:#fff;">Умная доставка и личный кабинет:</strong> Мгновенная генерация подписки, отправка чеков и ключей на Email, удобное управление через веб-интерфейс и Telegram-бота.</li>
             <li><strong style="color:#fff;">Поддержка любых устройств:</strong> Готовые мастера установки под iOS (Happ, Streisand), Android (Happ, V2RayTun), Windows, macOS, Linux, Android TV и Apple TV.</li>
           </ul>
@@ -1808,7 +1899,7 @@ class WebCheckout:
         body = f"""
         <section class="hero">
           <div>
-            <h1>Незаметный VPN, который просто работает</h1>
+            <h1>Приватный доступ, который просто работает</h1>
             <p class="lead">Включили один раз — и забыли. Выберите тариф, получите готовую ссылку для приложения на почту и пользуйтесь открытым интернетом.</p>
             {ref_banner}
             <div class="notice">Ссылка на подписку придёт на электронную почту и появится на сайте сразу после оплаты</div>
@@ -1823,7 +1914,7 @@ class WebCheckout:
             </div>
             <div class="advantage">
               <b>Устойчивые режимы</b>
-              <span>Стандартный и универсальный доступ помогают переживать любые ограничения.</span>
+              <span>Стандартный и универсальный доступ обеспечивают высокую стабильность соединения.</span>
             </div>
             <div class="advantage">
               <b>Доставка на Email</b>
@@ -1955,23 +2046,23 @@ class WebCheckout:
             </details>
             <details class="card faq-card" style="padding: 16px 20px; cursor: pointer;">
               <summary style="font-weight: 700; font-size: 16px; color: #fff; list-style: none; display: flex; justify-content: space-between; align-items: center; font-family: 'Outfit', sans-serif;">
-                Будут ли работать привычные зарубежные сервисы и соцсети?
+                Будут ли работать нужные мне сайты?
                 <span class="faq-arrow">▼</span>
               </summary>
               <div class="faq-content">
                 <div class="faq-content-inner">
-                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">Да! Наш VPN использует маскировку трафика REALITY и XHTTP. Все популярные сервисы будут открываться мгновенно.</p>
+                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">Да! Наш сервис использует современное защищенное шифрование. Все популярные ресурсы будут открываться мгновенно и стабильно.</p>
                 </div>
               </div>
             </details>
             <details class="card faq-card" style="padding: 16px 20px; cursor: pointer;">
               <summary style="font-weight: 700; font-size: 16px; color: #fff; list-style: none; display: flex; justify-content: space-between; align-items: center; font-family: 'Outfit', sans-serif;">
-                На каких устройствах работает VPN?
+                На каких устройствах работает SilentConnect?
                 <span class="faq-arrow">▼</span>
               </summary>
               <div class="faq-content">
                 <div class="faq-content-inner">
-                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">На любых! Вы можете установить его на iPhone, iPad, Android-смартфоны, планшеты, а также на компьютеры Windows, macOS и Linux.</p>
+                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">На любых! Вы можете настроить подключение на iPhone, iPad, Android-смартфоны, планшеты, а также на компьютеры Windows, macOS и Linux.</p>
                 </div>
               </div>
             </details>
@@ -2010,12 +2101,12 @@ class WebCheckout:
             </details>
             <details class="card faq-card" style="padding: 16px 20px; cursor: pointer;">
               <summary style="font-weight: 700; font-size: 16px; color: #fff; list-style: none; display: flex; justify-content: space-between; align-items: center; font-family: 'Outfit', sans-serif;">
-                Почему у SilentConnect высокая скорость и нет блокировок?
+                Почему у SilentConnect высокая скорость и стабильное соединение?
                 <span class="faq-arrow">▼</span>
               </summary>
               <div class="faq-content">
                 <div class="faq-content-inner">
-                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">Мы используем маскировку трафика REALITY и XHTTP с шифрованием TLS. Провайдер видит ваше подключение как зашифрованный визит на обычный популярный сайт, поэтому заблокировать его невозможно.</p>
+                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">Мы используем современный оптимизированный стек протоколов REALITY и XHTTP со сквозным шифрованием TLS. Трафик направляется по выделенным скоростным каналам европейских дата-центров, обеспечивая максимальную отзывчивость без потери пакетов.</p>
                 </div>
               </div>
             </details>
@@ -2178,7 +2269,7 @@ class WebCheckout:
         }})();
         </script>
         """
-        return self.render_page("VPN-доступ", body)
+        return self.render_page("Приватный доступ", body)
 
     def render_order(self, headers: Any, order: dict[str, Any], *, flash: str = "") -> bytes:
         meta = order.get("meta_json") or {}
@@ -2199,22 +2290,17 @@ class WebCheckout:
         status = str(order.get("status") or "")
         if status == "waiting_payment":
             paid_reported = bool(meta.get("web_paid_reported_at"))
-            payment_url = html.escape(self.payment_transfer_url(order), quote=True)
-            bank_note = html.escape(self.payment_bank_note())
-            pay_button = (
-                f'<a class="btn" href="{payment_url}" target="_blank" rel="noopener">Оплатить переводом</a>'
-                if payment_url
-                else f'<a class="btn secondary" href="{html.escape(self.support_url)}">Получить ссылку на оплату</a>'
-            )
+            support_link = html.escape(self.support_url, quote=True)
+            pay_button = f'<a class="btn" href="{support_link}" target="_blank" rel="noopener">💬 Написать оператору для оплаты</a>'
             payment_action = (
                 """
-                <div id="order-live-status" class="notice">Оплата отмечена. Ждём подтверждение админом, эта страница обновится сама.</div>
+                <div id="order-live-status" class="notice">Оплата отмечена. Ждём подтверждение админом, эта страница обновится сама (или ссылка на доступ придёт вам на указанный email).</div>
                 """
                 if paid_reported
                 else f"""
-                <p class="muted">Нажмите кнопку оплаты, переведите ровно {html.escape(money(order['final_price_rub']))}, затем отметьте заказ как оплаченный.</p>
+                <p class="muted">Для оплаты свяжитесь с нашим менеджером в Telegram. Нажмите кнопку ниже, чтобы получить реквизиты перевода, переведите ровно <strong>{html.escape(money(order['final_price_rub']))}</strong>, затем нажмите «Оплачено».</p>
                 <div class="actions">{pay_button}</div>
-                <p class="fine">Комментарий к переводу можно оставить нейтральным: {html.escape(str(order['public_id']))}. {bank_note}</p>
+                <p class="fine">В сообщении оператору укажите номер вашего заказа: <code>{html.escape(str(order['public_id']))}</code>.</p>
                 <form method="post" action="/order/{html.escape(str(order['public_id']))}/{html.escape(str(meta.get('web_token') or ''))}/paid">
                   <button type="submit">Оплачено</button>
                 </form>
@@ -2226,10 +2312,10 @@ class WebCheckout:
               <section class="order">
                 {summary}
                 <div class="card">
-                  <strong>Оплата переводом</strong>
+                  <strong>Оплата через оператора</strong>
                   {payment_action}
                   <div class="actions">
-                    <a class="btn secondary" href="{html.escape(self.support_url)}">Поддержка</a>
+                    <a class="btn secondary" href="{html.escape(self.support_url)}" target="_blank" rel="noopener">Поддержка</a>
                     <form method="post" action="/order/{html.escape(str(order['public_id']))}/{html.escape(str(meta.get('web_token') or ''))}/cancel" style="margin:0;">
                       <button type="submit" class="btn secondary" style="background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.3);">Отменить заказ ✖</button>
                     </form>
@@ -2254,7 +2340,7 @@ class WebCheckout:
               <section class="order">
                 {summary}
                 <div class="card">
-                  <strong>Подключить VPN</strong>
+                  <strong>Активировать доступ</strong>
                   <p class="muted">Откройте страницу подключения. Она определит устройство, предложит подходящие приложения и покажет запасной способ через копирование.</p>
                   <div class="actions">
                     <a class="btn" href="{html.escape(setup_url)}">Подключить</a>
