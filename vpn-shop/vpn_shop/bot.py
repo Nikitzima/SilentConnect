@@ -2027,7 +2027,7 @@ class ShopBot:
             if promo:
                 self._send_public_family_privacy_prompt(chat_id, promo)
                 return
-        self.show_public_menu(chat_id)
+        self.show_public_menu(chat_id, hero=True)
 
     def _send_public_subscription(
         self,
@@ -2934,6 +2934,10 @@ class ShopBot:
             return
 
         if session and session.get("scope") == "public":
+            state = str(session.get("state") or "")
+            if state in ("", "menu"):
+                self.show_public_menu(chat_id, hero=True)
+                return
             self._resume_public_session(chat_id, session)
             return
 
