@@ -1398,7 +1398,7 @@ class WebCheckout:
         <a href="/legal/terms">Пользовательское соглашение</a>
             <a href="/legal/refund">Политика возвратов</a>
       </div>
-      <div class="footer-copy">© 2026 SilentConnect. Все права защищены.</div>
+      <div class="footer-copy">© 2026 SilentConnect. Все права защищены. [code: mekbuda]</div>
     </div>
   </footer>
 
