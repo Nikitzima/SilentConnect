@@ -457,11 +457,15 @@ class ShopBot:
                 )
             except Exception as exc:
                 LOGGER.info(
-                    "edit_message_text failed for chat %s message %s (%s), falling back to send_message",
+                    "edit_message_text failed for chat %s message %s (%s), attempting delete and fallback to send_message",
                     chat_id,
                     message_id,
                     exc,
                 )
+                try:
+                    self.telegram.delete_message(chat_id, int(message_id))
+                except Exception:
+                    pass
         return self.telegram.send_message(
             chat_id,
             text,
