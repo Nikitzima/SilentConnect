@@ -661,17 +661,13 @@ class ShopBot:
         self.telegram.send_message(chat_id, "Уже обрабатывается. Новый дубль не создаю.")
 
     def _public_waiting_payment_markup(self, order_public_id: str) -> dict[str, Any]:
-        rows: list[list[Any]] = []
-        payment_url = self.payment_transfer_url()
-        if payment_url:
-            rows.append([("Оплатить переводом", payment_url, "success")])
-        rows.extend(
-            [
-                [("Оплачено", f"public:payment_sent:{order_public_id}", "success")],
-                [("Отменить заказ", f"public:cancel_waiting:{order_public_id}", "danger")],
-                [("У меня есть промокод", f"public:promo_switch:{order_public_id}")],
-            ]
-        )
+        support_url = (self.settings.support_tg_url or "").strip() or "https://t.me/SilentConnectHelp"
+        rows: list[list[Any]] = [
+            [("💬 Написать оператору для оплаты", support_url)],
+            [("Оплачено", f"public:payment_sent:{order_public_id}", "success")],
+            [("Отменить заказ", f"public:cancel_waiting:{order_public_id}", "danger")],
+            [("У меня есть промокод", f"public:promo_switch:{order_public_id}")],
+        ]
         return kb(rows)
 
     @staticmethod
@@ -714,11 +710,10 @@ class ShopBot:
         lines.extend(
             [
                 "",
-                "Нажмите «Оплатить переводом» и отправьте сумму по ссылке.",
-                f"Комментарий к переводу можно оставить нейтральным: `{order['public_id']}`.",
-                self.payment_bank_note(),
+                "Для оплаты нажмите кнопку «💬 Написать оператору для оплаты» и отправьте менеджеру номер заказа.",
+                f"Номер заказа: `{order['public_id']}`.",
                 "",
-                "После перевода нажмите «Оплачено». Я проверю поступление и бот сам пришлёт ссылку.",
+                "После оплаты нажмите «Оплачено». Мы подтвердим заказ и бот сразу пришлёт ссылку доступа.",
             ]
         )
         return "\n".join(lines)

@@ -417,7 +417,10 @@ class WebCheckout:
             meta=meta,
         )
         order = self._attach_web_token(order, token)
-        return self.maybe_auto_deliver_free_web_order(order)
+        delivered = self.maybe_auto_deliver_free_web_order(order)
+        if delivered.get("status") == "waiting_payment":
+            self._notify_admins_new_web_order(delivered)
+        return delivered
 
     def create_promo_order(self, promo_code: str, customer_email: str = "") -> dict[str, Any]:
         promo = self.load_valid_promo(promo_code)
@@ -460,7 +463,10 @@ class WebCheckout:
             meta=meta,
         )
         order = self._attach_web_token(order, token)
-        return self.maybe_auto_deliver_free_web_order(order)
+        delivered = self.maybe_auto_deliver_free_web_order(order)
+        if delivered.get("status") == "waiting_payment":
+            self._notify_admins_new_web_order(delivered)
+        return delivered
 
     def create_web_renewal_order(
         self,
@@ -527,7 +533,10 @@ class WebCheckout:
             meta=meta,
         )
         order = self._attach_web_token(order, token)
-        return self.maybe_auto_deliver_free_web_order(order)
+        delivered = self.maybe_auto_deliver_free_web_order(order)
+        if delivered.get("status") == "waiting_payment":
+            self._notify_admins_new_web_order(delivered)
+        return delivered
 
     def check_and_send_expiration_reminders(self) -> None:
         try:
@@ -592,6 +601,40 @@ class WebCheckout:
         order["meta_json"] = meta
         return order
 
+    def _notify_admins_new_web_order(self, order: dict[str, Any]) -> None:
+        if not self.telegram:
+            return
+        try:
+            meta = dict(order.get("meta_json") or {})
+            customer_email = str(order.get("customer_email") or meta.get("customer_email") or "не указан").strip()
+            kind_label = "Продление подписки" if order.get("kind") == "renewal" else "Новый заказ"
+            text = "\n".join(
+                [
+                    f"🛒 {kind_label} на сайте (ожидает оплаты)",
+                    "",
+                    f"Заказ: `{order['public_id']}`",
+                    f"Email: `{customer_email}`",
+                    f"Транспорт: {transport_label(str(order['transport']))}",
+                    f"Срок: {int(order['duration_days'])} дн.",
+                    f"Лимит: {device_limit_label(meta.get('device_limit'))}",
+                    f"Сумма: {money(order['final_price_rub'])}",
+                    "",
+                    "Покупатель перешел к оплате. Реквизиты выдаются оператором в поддержке.",
+                    "При поступлении перевода нажмите кнопку ниже — доступ автоматически активируется и ссылка отправится клиенту на почту.",
+                ]
+            )
+            admin_chats = self.store.list_chat_ids_by_scope("admin")
+            for chat_id in admin_chats:
+                try:
+                    sent = self.telegram.send_message(
+                        chat_id, text, reply_markup=inline_admin_markup(str(order["public_id"]))
+                    )
+                    self.store.attach_manager_message(str(order["public_id"]), chat_id, int(sent["message_id"]))
+                except TelegramApiError:
+                    LOGGER.exception("Failed to notify admin chat %s about new web order %s", chat_id, order["public_id"])
+        except Exception:
+            LOGGER.exception("Error in _notify_admins_new_web_order for order %s", order.get("public_id"))
+
     def mark_paid(self, headers: Any, order: dict[str, Any]) -> str:
         meta = dict(order.get("meta_json") or {})
         if order.get("status") != "waiting_payment":
@@ -616,11 +659,16 @@ class WebCheckout:
             meta={"order_url": self.order_url(headers, {**order, "meta_json": meta})},
         )
 
+        if not self.telegram:
+            return "Уведомление отправлено. После проверки оплаты на этой странице появится доступ."
+
+        customer_email = str(order.get("customer_email") or meta.get("customer_email") or "не указан").strip()
         text = "\n".join(
             [
-                "Покупатель с сайта сообщает об оплате",
+                "🔔 Покупатель с сайта нажал «Оплачено»!",
                 "",
                 f"Заказ: `{order['public_id']}`",
+                f"Email: `{customer_email}`",
                 f"Транспорт: {transport_label(str(order['transport']))}",
                 f"Срок: {int(order['duration_days'])} дн.",
                 f"Лимит: {device_limit_label(meta.get('device_limit'))}",
@@ -2242,22 +2290,17 @@ class WebCheckout:
         status = str(order.get("status") or "")
         if status == "waiting_payment":
             paid_reported = bool(meta.get("web_paid_reported_at"))
-            payment_url = html.escape(self.payment_transfer_url(order), quote=True)
-            bank_note = html.escape(self.payment_bank_note())
-            pay_button = (
-                f'<a class="btn" href="{payment_url}" target="_blank" rel="noopener">Оплатить переводом</a>'
-                if payment_url
-                else f'<a class="btn secondary" href="{html.escape(self.support_url)}">Получить ссылку на оплату</a>'
-            )
+            support_link = html.escape(self.support_url, quote=True)
+            pay_button = f'<a class="btn" href="{support_link}" target="_blank" rel="noopener">💬 Написать оператору для оплаты</a>'
             payment_action = (
                 """
-                <div id="order-live-status" class="notice">Оплата отмечена. Ждём подтверждение админом, эта страница обновится сама.</div>
+                <div id="order-live-status" class="notice">Оплата отмечена. Ждём подтверждение админом, эта страница обновится сама (или ссылка на доступ придёт вам на указанный email).</div>
                 """
                 if paid_reported
                 else f"""
-                <p class="muted">Нажмите кнопку оплаты, переведите ровно {html.escape(money(order['final_price_rub']))}, затем отметьте заказ как оплаченный.</p>
+                <p class="muted">Для оплаты свяжитесь с нашим менеджером в Telegram. Нажмите кнопку ниже, чтобы получить реквизиты перевода, переведите ровно <strong>{html.escape(money(order['final_price_rub']))}</strong>, затем нажмите «Оплачено».</p>
                 <div class="actions">{pay_button}</div>
-                <p class="fine">Комментарий к переводу можно оставить нейтральным: {html.escape(str(order['public_id']))}. {bank_note}</p>
+                <p class="fine">В сообщении оператору укажите номер вашего заказа: <code>{html.escape(str(order['public_id']))}</code>.</p>
                 <form method="post" action="/order/{html.escape(str(order['public_id']))}/{html.escape(str(meta.get('web_token') or ''))}/paid">
                   <button type="submit">Оплачено</button>
                 </form>
@@ -2269,10 +2312,10 @@ class WebCheckout:
               <section class="order">
                 {summary}
                 <div class="card">
-                  <strong>Оплата переводом</strong>
+                  <strong>Оплата через оператора</strong>
                   {payment_action}
                   <div class="actions">
-                    <a class="btn secondary" href="{html.escape(self.support_url)}">Поддержка</a>
+                    <a class="btn secondary" href="{html.escape(self.support_url)}" target="_blank" rel="noopener">Поддержка</a>
                     <form method="post" action="/order/{html.escape(str(order['public_id']))}/{html.escape(str(meta.get('web_token') or ''))}/cancel" style="margin:0;">
                       <button type="submit" class="btn secondary" style="background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.3);">Отменить заказ ✖</button>
                     </form>
