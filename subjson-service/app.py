@@ -6885,6 +6885,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send_html(HTTPStatus.OK, legal_terms_html(), include_body)
                 return
 
+            if len(path) >= 2 and path[-2] == "legal" and path[-1] in ("privacy", "refund"):
+                self._redirect(f"{HAPP_WEB_PAGE_URL}/legal/{path[-1]}", include_body)
+                return
+
             if len(path) == 3 and path[0] == SECRET_SEGMENT:
                 if path[1] == "internal-fragment":
                     secret_header = self.headers.get("X-Internal-Secret", "")
