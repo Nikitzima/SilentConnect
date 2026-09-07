@@ -1019,6 +1019,13 @@ def check_pending_payment_card(sub_id: str) -> str:
                         return ""
                     if order["status"] in ("canceled", "cancelled") and (now - updated_at > 86400 * 3):
                         return ""
+                    meta = json.loads(order["meta_json"] or "{}") if isinstance(order["meta_json"], str) else (order["meta_json"] or {})
+                    dismissed_status = meta.get("notice_dismissed_status")
+                    if dismissed_status:
+                        norm_current = "paid" if order["status"] in ("paid", "delivered") else str(order["status"])
+                        norm_dismissed = "paid" if dismissed_status in ("paid", "delivered") else str(dismissed_status)
+                        if norm_current == norm_dismissed:
+                            return ""
                     return render_payment_notice_html(order)
         finally:
             conn.close()
@@ -5877,6 +5884,19 @@ def setup_page_html(
       try {
         localStorage.setItem("sc_dismissed_notice_" + orderId, currentStatus);
       } catch(e){}
+      try {
+        fetch("/__SECRET_SEGMENT__/dismiss-notice/" + encodeURIComponent(orderId), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          body: JSON.stringify({
+            status: currentStatus,
+            sub_id: "__SUB_ID__"
+          })
+        }).catch(function(){});
+      } catch(e){}
     };
 
     function initNoticeState() {
@@ -5886,7 +5906,9 @@ def setup_page_html(
       const currentStatus = card.getAttribute("data-order-status");
       try {
         const dismissedStatus = localStorage.getItem("sc_dismissed_notice_" + orderId);
-        if (dismissedStatus === currentStatus) {
+        const normCurrent = (currentStatus === "delivered" || currentStatus === "paid") ? "paid" : currentStatus;
+        const normDismissed = (dismissedStatus === "delivered" || dismissedStatus === "paid") ? "paid" : dismissedStatus;
+        if (normDismissed && normDismissed === normCurrent) {
           card.style.display = "none";
         }
       } catch(e){}
@@ -6814,6 +6836,47 @@ class RequestHandler(BaseHTTPRequestHandler):
                     target_sub = sub_id or "default"
                     self._redirect(f"/{SECRET_SEGMENT}/import/{target_sub}", include_body=True)
                     return
+
+            if len(path) == 3 and path[0] == SECRET_SEGMENT and path[1] == "dismiss-notice":
+                order_public_id = path[2]
+                payload = {}
+                length = int(self.headers.get("Content-Length") or 0)
+                if length > 0 and "application/json" in self.headers.get("Content-Type", "").lower():
+                    try:
+                        raw_bytes = self.rfile.read(min(length, 65_536))
+                        payload = json.loads(raw_bytes.decode("utf-8")) if raw_bytes else {}
+                    except Exception:
+                        payload = {}
+                elif length > 0:
+                    form = self._read_form()
+                    payload = dict(form)
+
+                status_val = str(payload.get("status") or "").strip()
+                db_path = find_store_db_path()
+                if Path(db_path).exists():
+                    try:
+                        conn = sqlite3.connect(db_path, timeout=30.0)
+                        conn.execute("PRAGMA busy_timeout = 30000;")
+                        conn.row_factory = sqlite3.Row
+                        try:
+                            order_row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (order_public_id,)).fetchone()
+                            if order_row:
+                                meta = json.loads(order_row["meta_json"] or "{}") if isinstance(order_row["meta_json"], str) else (order_row["meta_json"] or {})
+                                meta = dict(meta)
+                                dismissed_status = status_val or str(order_row["status"] or "dismissed")
+                                meta["notice_dismissed_status"] = dismissed_status
+                                meta["notice_dismissed_at"] = int(time.time())
+                                conn.execute("UPDATE orders SET meta_json = ? WHERE public_id = ?", (json.dumps(meta), order_public_id))
+                                conn.commit()
+                                self._send_json(HTTPStatus.OK, {"ok": True, "dismissed_status": dismissed_status}, True)
+                                return
+                        finally:
+                            conn.close()
+                    except Exception as e:
+                        LOGGER.warning("Failed to record notice dismissal for order %s: %s", order_public_id, e)
+
+                self._send_json(HTTPStatus.OK, {"ok": True}, True)
+                return
 
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False}, include_body=True)
         except ValueError as exc:
