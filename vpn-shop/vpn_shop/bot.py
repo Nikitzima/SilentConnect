@@ -471,37 +471,65 @@ class ShopBot:
             disable_web_page_preview=disable_web_page_preview,
         )
 
-    def _public_home_text(self, *, prefix: str | None = None) -> str:
+    def _public_home_text(self, *, prefix: str | None = None, active_profile: dict[str, Any] | None = None) -> str:
         lines: list[str] = []
         if prefix:
             lines.extend([prefix, ""])
-        lines.extend(
-            [
-                f"🐍 {self.settings.brand_name}",
-                "",
-                "Главное меню",
-                "",
-                "Выберите действие с помощью кнопок ниже:",
-                "",
-                "• Оформить быстрый приватный доступ к интернету",
-                "• Продлить подписку или активировать пробный период",
-                "• Ввести промокод или пригласить друзей",
-                "• Инструкции по настройке и поддержка",
-                "",
-                "[code: mekbuda]",
-            ]
-        )
+        if active_profile and int(active_profile.get("expires_at", 0)) > now_ts():
+            expires_str = self._format_ts(active_profile.get("expires_at"))
+            limit = self._profile_device_limit(active_profile)
+            lines.extend(
+                [
+                    f"🐍 {self.settings.brand_name}",
+                    "",
+                    "Главное меню",
+                    "",
+                    f"✅ Ваша подписка активна до: {expires_str}",
+                    f"Лимит устройств: {self.device_limit_label(limit)}",
+                    "",
+                    "Выберите действие с помощью кнопок ниже:",
+                    "",
+                    "• Личный кабинет (ссылка доступа и подключение)",
+                    "• Продлить подписку или изменить тариф",
+                    "• Инструкции по настройке и поддержка",
+                    "",
+                    "[code: mekbuda]",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    f"🐍 {self.settings.brand_name}",
+                    "",
+                    "Главное меню",
+                    "",
+                    "Выберите действие с помощью кнопок ниже:",
+                    "",
+                    "• Оформить быстрый приватный доступ к интернету",
+                    "• Продлить подписку или активировать пробный период",
+                    "• Ввести промокод или пригласить друзей",
+                    "• Инструкции по настройке и поддержка",
+                    "",
+                    "[code: mekbuda]",
+                ]
+            )
         return "\n".join(lines)
 
-    def _public_home_markup(self) -> dict[str, Any]:
-        return kb(
+    def _public_home_markup(self, *, active_profile: dict[str, Any] | None = None) -> dict[str, Any]:
+        rows: list[list[Any]] = []
+        if active_profile and int(active_profile.get("expires_at", 0)) > now_ts():
+            rows.append([("👤 Личный кабинет", "public:cabinet", "success")])
+            rows.append([("🔄 Продлить подписку", "public:renew", "success"), ("🚀 Выбрать тариф", "public:access", "primary")])
+        else:
+            rows.append([("🚀 Подключить доступ / Выбрать тариф", "public:access", "success")])
+            rows.append([("🔄 Продлить подписку", "public:renew", "success"), ("🎁 Пробный период", "public:trial", "success")])
+        rows.extend(
             [
-                [("🚀 Подключить доступ / Выбрать тариф", "public:access", "success")],
-                [("🔄 Продлить подписку", "public:renew", "success"), ("🎁 Пробный период", "public:trial", "success")],
                 [("🎟 Промокод", "public:promo"), ("🤝 Рефералы", "public:referral", "success")],
                 [("📖 Помощь & FAQ", "public:help", "primary"), ("💬 Поддержка", "public:support", "primary")],
             ]
         )
+        return kb(rows)
 
     def _public_access_markup(self) -> dict[str, Any]:
         price_3 = self.offers["tcp_3_30"].price_rub
@@ -1986,7 +2014,7 @@ class ShopBot:
         self._expire_stale_waiting_orders(chat_id, notify_user=notify_user)
         return self.store.get_active_order_for_chat(chat_id)
 
-    def _resume_public_session(self, chat_id: int | str, session: dict[str, Any]) -> None:
+    def _resume_public_session(self, chat_id: int | str, session: dict[str, Any], *, user: dict[str, Any] | None = None) -> None:
         active_order = self._fresh_active_order_for_chat(chat_id, notify_user=True)
         if active_order:
             self._send_existing_public_order(
@@ -2018,7 +2046,7 @@ class ShopBot:
             if promo:
                 self._send_public_family_privacy_prompt(chat_id, promo)
                 return
-        self.show_public_menu(chat_id, hero=True)
+        self.show_public_menu(chat_id, hero=True, user=user)
 
     def _send_public_subscription(
         self,
@@ -2044,6 +2072,54 @@ class ShopBot:
             ),
             protect_content=True,
         )
+
+    def _active_profile_for_chat(self, chat_id: int | str, user: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        effective_user = user or {"id": chat_id}
+        profile = self._latest_renewable_profile_for_user(effective_user, chat_id)
+        if profile and int(profile.get("expires_at", 0)) > now_ts():
+            return profile
+        return None
+
+    def show_public_cabinet(
+        self,
+        chat_id: int | str,
+        user: dict[str, Any] | None = None,
+        *,
+        message_id: int | None = None,
+    ) -> None:
+        effective_user = user or {"id": chat_id}
+        profile = self._active_profile_for_chat(chat_id, effective_user)
+        if not profile:
+            profile = self._latest_renewable_profile_for_user(effective_user, chat_id)
+        if not profile:
+            self.telegram.send_message(
+                chat_id,
+                "У вас пока нет активной подписки. Выберите тариф для подключения:",
+                reply_markup=self._public_access_markup(),
+            )
+            return
+        try:
+            order_public_id = str(profile.get("source_order_public_id") or "")
+            if order_public_id:
+                order = self.store.get_order(order_public_id)
+                if order and (order.get("meta_json") or {}).get("hybrid"):
+                    result = self._recover_subscription_for_order(order)
+                else:
+                    result = self._recover_subscription_for_profile(str(profile["public_id"]))
+            else:
+                result = self._recover_subscription_for_profile(str(profile["public_id"]))
+            self._send_public_subscription(
+                chat_id,
+                result["subscription_url"],
+                prefix="Личный кабинет",
+            )
+        except Exception:
+            LOGGER.exception("Failed to recover subscription for cabinet (chat_id=%s)", chat_id)
+            self.telegram.send_message(
+                chat_id,
+                "Не удалось загрузить данные подписки. Попробуйте обновить меню или обратитесь в поддержку.",
+                reply_markup=kb([[("Назад в меню", "public:menu")], [("Поддержка", "public:support", "primary")]]),
+            )
 
     def show_public_connect_platform(self, chat_id: int | str, subscription_id: str) -> None:
         subscription_url = self._subscription_url_from_id(subscription_id)
@@ -2228,7 +2304,7 @@ class ShopBot:
             self._send_public_subscription(
                 chat_id,
                 subscription_url,
-                prefix="Ссылка уже была создана, отправляю повторно.",
+                prefix="Личный кабинет",
             )
             return True
         if result_kind == "order" and guard.get("order_public_id"):
@@ -2651,9 +2727,25 @@ class ShopBot:
             parts = text.split(maxsplit=1)
             start_arg = parts[1].strip() if len(parts) > 1 else ""
             if is_admin_user:
+                if start_arg:
+                    self.handle_public_start(chat_id, start_arg, user)
+                    return
+                session = self.store.get_session(chat_id)
+                if session and session.get("scope") == "public":
+                    self.handle_public_start(chat_id, start_arg, user)
+                    return
                 self.send_admin_menu(chat_id)
                 return
             self.handle_public_start(chat_id, start_arg, user)
+            return
+
+        if command in ("/cabinet", "/lk"):
+            self.show_public_cabinet(chat_id, user)
+            return
+
+        if command == "/client" and is_admin_user:
+            self._merge_session_state(chat_id, "public", "menu")
+            self.handle_public_start(chat_id, "", user)
             return
 
         if text == "/admin" and is_admin_user:
@@ -2821,22 +2913,36 @@ class ShopBot:
             return
         if start_arg.startswith("claim_"):
             payload = start_arg.removeprefix("claim_")
-            try:
-                order_public_id, token = payload.rsplit("_", 1)
-            except ValueError:
-                self.show_public_menu(chat_id, "Ссылка привязки недействительна.", hero=True)
+            if payload.startswith("ord_"):
+                rest = payload[4:]
+                if "_" in rest:
+                    ord_suffix, token = rest.split("_", 1)
+                    order_public_id = f"ord_{ord_suffix}"
+                else:
+                    order_public_id, token = "", ""
+            else:
+                try:
+                    order_public_id, token = payload.rsplit("_", 1)
+                except ValueError:
+                    order_public_id, token = "", ""
+            if not order_public_id or not token:
+                self.show_public_menu(chat_id, "Ссылка привязки недействительна.", hero=True, user=user)
                 return
-            order = self.store.get_order(order_public_id)
-            meta = order.get("meta_json") if order else {}
-            if not order or not isinstance(meta, dict) or not meta.get("web") or str(meta.get("web_token") or "") != token:
-                self.show_public_menu(chat_id, "Ссылка привязки недействительна.", hero=True)
+            order = self.store.get_order_by_web_token(order_public_id, token)
+            if not order:
+                candidate = self.store.get_order(order_public_id)
+                meta = candidate.get("meta_json") if candidate else {}
+                if candidate and isinstance(meta, dict) and meta.get("web") and str(meta.get("web_token") or "") == token:
+                    order = candidate
+            if not order:
+                self.show_public_menu(chat_id, "Ссылка привязки недействительна.", hero=True, user=user)
                 return
             if order.get("status") != "delivered" or not order.get("provisioned_profile_id"):
-                self.show_public_menu(chat_id, "Заказ с сайта ещё не подтверждён. После подтверждения оплаты откройте эту ссылку снова.", hero=True)
+                self.show_public_menu(chat_id, "Заказ с сайта ещё не подтверждён. После подтверждения оплаты откройте эту ссылку снова.", hero=True, user=user)
                 return
             profile = self.store.get_profile_for_order(order_public_id)
             if not profile or profile.get("status") == "deleted" or not self.provisioner.xui_db.find_client_by_email(str(profile["xui_email"])):
-                self.show_public_menu(chat_id, "Профиль по этому заказу уже недоступен. Напишите в поддержку.", hero=True)
+                self.show_public_menu(chat_id, "Профиль по этому заказу уже недоступен. Напишите в поддержку.", hero=True, user=user)
                 return
             user_id = (user or {}).get("id") or chat_id
             self.store.link_profile_owner(
@@ -2845,14 +2951,25 @@ class ShopBot:
                 chat_id=chat_id,
                 source_order_public_id=order_public_id,
             )
+            result = self._recover_subscription_for_order(order)
             context = self._context_from_session(session)
             context["public_access"] = True
             context["order_public_id"] = order_public_id
+            context[ACTION_GUARD_KEY] = {
+                "action_key": f"claim:{order_public_id}",
+                "status": "completed",
+                "started_at": now_ts(),
+                "completed_at": now_ts(),
+                "result_kind": "subscription",
+                "order_public_id": order_public_id,
+                "profile_public_id": str(profile["public_id"]),
+                "subscription_url": str(result["subscription_url"]),
+            }
             self.store.set_session(chat_id, "public", "menu", context)
-            self.show_public_menu(
+            self._send_public_subscription(
                 chat_id,
-                "Подписка с сайта привязана к Telegram. Теперь её можно продлевать через бота.",
-                hero=True,
+                result["subscription_url"],
+                prefix="Личный кабинет • Подписка с сайта привязана к Telegram!",
             )
             return
         if start_arg.startswith("ref_"):
@@ -2927,9 +3044,9 @@ class ShopBot:
         if session and session.get("scope") == "public":
             state = str(session.get("state") or "")
             if state in ("", "menu"):
-                self.show_public_menu(chat_id, hero=True)
+                self.show_public_menu(chat_id, hero=True, user=user)
                 return
-            self._resume_public_session(chat_id, session)
+            self._resume_public_session(chat_id, session, user=user)
             return
 
         active_order = self._fresh_active_order_for_chat(chat_id, notify_user=True)
@@ -2941,7 +3058,7 @@ class ShopBot:
             )
             return
 
-        self.show_public_menu(chat_id, hero=True)
+        self.show_public_menu(chat_id, hero=True, user=user)
 
     def show_public_menu(
         self,
@@ -2951,6 +3068,7 @@ class ShopBot:
         drop_keys: tuple[str, ...] = ("pending_promo", "pending_promo_id"),
         hero: bool = False,
         message_id: int | None = None,
+        user: dict[str, Any] | None = None,
     ) -> None:
         self._expire_stale_waiting_orders(chat_id, notify_user=True)
         self._merge_session_state(
@@ -2959,11 +3077,12 @@ class ShopBot:
             "menu",
             drop_keys=drop_keys,
         )
-        text = self._public_home_text(prefix=message)
+        active_profile = self._active_profile_for_chat(chat_id, user)
+        text = self._public_home_text(prefix=message, active_profile=active_profile)
         self._render_or_edit(
             chat_id,
             text,
-            reply_markup=self._public_home_markup(),
+            reply_markup=self._public_home_markup(active_profile=active_profile),
             message_id=message_id,
         )
 
@@ -4409,7 +4528,12 @@ class ShopBot:
 
             if data == "public:menu" and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
-                self.show_public_menu(chat_id, message_id=message_id)
+                self.show_public_menu(chat_id, message_id=message_id, user=user)
+                return
+
+            if data == "public:cabinet" and chat_id is not None:
+                self.telegram.answer_callback_query(callback_id)
+                self.show_public_cabinet(chat_id, user, message_id=message_id)
                 return
 
             if data == "public:access" and chat_id is not None:
