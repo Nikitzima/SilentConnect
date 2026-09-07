@@ -5317,9 +5317,12 @@ def setup_page_html(
     }
     textarea { width:100%; max-width:100%; box-sizing:border-box; min-height:94px; margin-top:14px; border:1px solid var(--line); border-radius:12px; background:rgba(0,0,0,0.3); color:var(--text); padding:14px; font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; resize:vertical; }
     textarea:focus { outline:none; border-color:var(--green); }
-    footer { margin-top:30px; text-align:center; padding:24px 0; color:var(--muted); font-size:14px; border-top:1px solid var(--line); }
-    footer a { color:var(--muted); text-decoration:none; margin:0 8px; }
-    footer a:hover { color:#fff; text-decoration:underline; }
+    footer { margin-top:36px; text-align:center; padding:24px 0 32px; color:var(--muted); font-size:13.5px; border-top:1px solid var(--line); width:100%; box-sizing:border-box; }
+    .footer-wrap { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; text-align:center; width:100%; box-sizing:border-box; }
+    .footer-links { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:10px 18px; width:100%; box-sizing:border-box; }
+    .footer-links a { color:var(--muted); text-decoration:none; font-size:13.5px; margin:0; padding:4px 8px; border-radius:6px; transition:color 0.2s ease, background 0.2s ease; white-space:nowrap; }
+    .footer-links a:hover { color:#fff; text-decoration:underline; }
+    .footer-copy { color:var(--muted); font-size:12.5px; opacity:0.75; margin-top:4px; }
     @media (max-width:640px) {
       main, .shell, main.shell { width:100%; max-width:100%; padding:10px 8px 40px; gap:12px; }
       .shell > section, .shell > div { min-width:0; max-width:100%; }
@@ -5358,6 +5361,11 @@ def setup_page_html(
       .step p { font-size:13px; }
       #renew-header { padding: 14px 16px !important; }
       #renew-content { padding: 0 16px 16px 16px !important; }
+      footer { margin-top:24px; padding:20px 0 28px; }
+      .footer-wrap { gap:12px; padding:0 4px; }
+      .footer-links { display:flex; flex-direction:row; flex-wrap:wrap; justify-content:center; align-items:center; gap:8px 10px; width:100%; }
+      .footer-links a { font-size:12.5px; padding:6px 10px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:8px; white-space:normal; text-align:center; display:inline-flex; align-items:center; justify-content:center; }
+      .footer-copy { font-size:11.5px; margin-top:6px; line-height:1.4; }
     }
   </style>
 </head>
@@ -5550,12 +5558,16 @@ def setup_page_html(
     </section>
 
     <footer>
-      SilentConnect · 
-      <a href="__WEB_PAGE_URL__/about" target="_blank">О сервисе</a> · 
-      <a href="__WEB_PAGE_URL__/contact" target="_blank">Контакты &amp; Поддержка</a> · 
-      <a href="__WEB_PAGE_URL__/legal/privacy" target="_blank">Политика конфиденциальности</a> · 
-      <a href="__WEB_PAGE_URL__/legal/terms" target="_blank">Пользовательское соглашение</a> · 
-      <a href="__WEB_PAGE_URL__/legal/refund" target="_blank">Политика возвратов</a>
+      <div class="footer-wrap">
+        <div class="footer-links">
+          <a href="__WEB_PAGE_URL__/about" target="_blank">О сервисе</a>
+          <a href="__WEB_PAGE_URL__/contact" target="_blank">Контакты &amp; Поддержка</a>
+          <a href="__WEB_PAGE_URL__/legal/privacy" target="_blank">Политика конфиденциальности</a>
+          <a href="__WEB_PAGE_URL__/legal/terms" target="_blank">Пользовательское соглашение</a>
+          <a href="__WEB_PAGE_URL__/legal/refund" target="_blank">Политика возвратов</a>
+        </div>
+        <div class="footer-copy">© 2026 SilentConnect. Все права защищены. [code: mekbuda]</div>
+      </div>
     </footer>
   </main>
   <script>
