@@ -105,22 +105,31 @@ class ShopBot:
         return f"https://t.me/{username}?start={PUBLIC_ACCESS_START_CODE}"
 
     def legal_terms_url(self) -> str:
+        base = (self.settings.web_public_base_url or "").strip().rstrip("/")
+        if base:
+            return f"{base}/legal/terms"
         parsed = urlsplit(self.settings.subscription_base_url)
         if parsed.scheme and parsed.netloc:
             return urlunsplit((parsed.scheme, parsed.netloc, "/legal/terms", "", ""))
-        return f"{self.settings.web_public_base_url}/legal/terms"
+        return "https://example.com/legal/terms"
 
     def legal_privacy_url(self) -> str:
+        base = (self.settings.web_public_base_url or "").strip().rstrip("/")
+        if base:
+            return f"{base}/legal/privacy"
         parsed = urlsplit(self.settings.subscription_base_url)
         if parsed.scheme and parsed.netloc:
             return urlunsplit((parsed.scheme, parsed.netloc, "/legal/privacy", "", ""))
-        return f"{self.settings.web_public_base_url}/legal/privacy"
+        return "https://example.com/legal/privacy"
 
     def legal_refund_url(self) -> str:
+        base = (self.settings.web_public_base_url or "").strip().rstrip("/")
+        if base:
+            return f"{base}/legal/refund"
         parsed = urlsplit(self.settings.subscription_base_url)
         if parsed.scheme and parsed.netloc:
             return urlunsplit((parsed.scheme, parsed.netloc, "/legal/refund", "", ""))
-        return f"{self.settings.web_public_base_url}/legal/refund"
+        return "https://example.com/legal/refund"
 
     def payment_transfer_url(self, order: dict[str, Any] | None = None) -> str:
         return (self.settings.payment_transfer_url or "").strip()
