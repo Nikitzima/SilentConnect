@@ -1477,7 +1477,7 @@ class Store:
         query += """
             ORDER BY
               CASE WHEN p.expires_at >= ? THEN 0 ELSE 1 END ASC,
-              p.expires_at DESC,
+              po.id DESC,
               p.id DESC
             LIMIT 1
         """
