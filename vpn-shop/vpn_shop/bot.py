@@ -161,8 +161,7 @@ class ShopBot:
         else:
             sub_id = parts[-1] if parts else ""
             import_path = f"/import/{target}/{quote(sub_id, safe='')}"
-        query = urlencode({"url": subscription_url})
-        return urlunsplit((parsed.scheme, parsed.netloc, import_path, query, ""))
+        return urlunsplit((parsed.scheme, parsed.netloc, import_path, "", ""))
 
     @staticmethod
     def _subscription_setup_url(subscription_url: str) -> str:
@@ -175,8 +174,7 @@ class ShopBot:
         else:
             sub_id = parts[-1] if parts else ""
             import_path = f"/import/{quote(sub_id, safe='~')}"
-        query = urlencode({"url": subscription_url})
-        return urlunsplit((parsed.scheme, parsed.netloc, import_path, query, ""))
+        return urlunsplit((parsed.scheme, parsed.netloc, import_path, "", ""))
 
     def _subscription_url_from_id(self, subscription_id: str) -> str:
         return f"{self.settings.subscription_base_url}/{quote(subscription_id, safe='')}"
