@@ -148,8 +148,7 @@ def subscription_setup_url(subscription_url: str) -> str:
     else:
         sub_id = parts[-1] if parts else ""
         import_path = f"/import/{quote(sub_id, safe='~')}"
-    query = urlencode({"url": subscription_url})
-    return urlunsplit((parsed.scheme, parsed.netloc, import_path, query, ""))
+    return urlunsplit((parsed.scheme, parsed.netloc, import_path, "", ""))
 
 
 def subscription_url_for_route(base_url: str, route: str, subscription_id: str) -> str:
