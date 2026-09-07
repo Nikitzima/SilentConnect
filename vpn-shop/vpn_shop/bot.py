@@ -4256,7 +4256,13 @@ class ShopBot:
                 promo_reserved = True
 
             try:
-                result = self.provisioner.create_profile_for_order(order)
+                existing_profile = self.store.get_profile_for_order(order["public_id"])
+                if existing_profile:
+                    result = self._recover_subscription_for_order(order) or {}
+                    if not result.get("profile"):
+                        result["profile"] = existing_profile
+                else:
+                    result = self.provisioner.create_profile_for_order(order)
                 self.store.update_order_status(order["public_id"], "delivered", closed=True)
                 self.store.record_admin_action(
                     action_type="complete_order",
