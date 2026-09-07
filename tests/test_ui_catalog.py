@@ -272,6 +272,33 @@ class TestUICatalogAndLayout(unittest.TestCase):
         footer_content = footer_section.group(1)
         self.assertNotIn("·", footer_content, "Footer must not contain raw orphan middle dots (·)")
 
+    def test_lk_footer_centered_flexbox_and_clean_markup(self):
+        """Verify LK / Setup wizard footer uses centered flexbox and no orphan middle dots."""
+        import importlib
+        subjson_app = importlib.import_module("subjson-service.app")
+        html_bytes = subjson_app.setup_page_html(
+            subscription_url="https://sub.example.com/test",
+            subscription_id="test_sub_id",
+            quoted_sub_id="test_sub_id",
+            import_query="url=test",
+        )
+        page_html = html_bytes.decode("utf-8")
+
+        # Assert semantic flexbox classes and responsive rules exist
+        self.assertIn(".footer-wrap {", page_html)
+        self.assertIn(".footer-links {", page_html)
+        self.assertIn(".footer-copy {", page_html)
+        self.assertIn('<div class="footer-wrap">', page_html)
+        self.assertIn('<div class="footer-links">', page_html)
+        self.assertIn('<div class="footer-copy">', page_html)
+
+        # Assert no orphan middle dots in LK footer
+        footer_section = re.search(r"<footer>(.*?)</footer>", page_html, re.DOTALL)
+        self.assertIsNotNone(footer_section, "LK Footer markup not found")
+        footer_content = footer_section.group(1)
+        self.assertNotIn("·", footer_content, "LK Footer must not contain raw orphan middle dots (·)")
+        self.assertIn("[code: mekbuda]", footer_content)
+
     # =========================================================================
     # R3: Tariff Builder Symmetrical 4-Duration Grid (vpn-shop/web.py)
     # =========================================================================
