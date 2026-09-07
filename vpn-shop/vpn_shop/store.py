@@ -292,10 +292,10 @@ SCHEMA_VERSION = 2
 # Order finite-state machine. Any transition not listed here is rejected at the
 # storage layer, regardless of what the caller asks for.
 ORDER_TRANSITIONS: dict[str, frozenset[str]] = {
-    "waiting_payment": frozenset({"provisioning", "cancelled", "expired", "auto_provision"}),
+    "waiting_payment": frozenset({"provisioning", "delivered", "cancelled", "expired", "auto_provision"}),
     "auto_provision": frozenset({"provisioning", "delivered", "failed", "cancelled"}),
     "provisioning": frozenset({"delivered", "failed", "waiting_payment"}),
-    "failed": frozenset({"provisioning", "cancelled"}),
+    "failed": frozenset({"provisioning", "delivered", "cancelled"}),
     # terminal states
     "delivered": frozenset(),
     "cancelled": frozenset(),
