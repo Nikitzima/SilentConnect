@@ -280,10 +280,10 @@ class EmpiricalChallengerTest(unittest.TestCase):
         ]
         self.assertEqual(proxy_names, expected_names)
 
-        # Check FI XHTTP Reality port 39443 & Reality params
+        # Check FI XHTTP Reality port & Reality params
         fi_xhttp = next(p for p in proxies if p["name"] == "🇫🇮 FI Stealth XHTTP Reality")
-        self.assertEqual(fi_xhttp["port"], 39443)
-        self.assertEqual(fi_xhttp["servername"], "sber.ru")
+        self.assertEqual(fi_xhttp["port"], subjson_app.FI_XHTTP_REALITY_PORT)
+        self.assertEqual(fi_xhttp["servername"], subjson_app.FI_XHTTP_REALITY_SNI)
         self.assertEqual(fi_xhttp["reality-opts"]["public-key"], subjson_app.FI_XHTTP_REALITY_PUBLIC_KEY)
         self.assertEqual(fi_xhttp["reality-opts"]["short-id"], subjson_app.FI_XHTTP_REALITY_SHORT_ID)
 
@@ -362,7 +362,7 @@ class EmpiricalChallengerTest(unittest.TestCase):
         self.assertEqual(u2["port"], 443)
         self.assertEqual(u2["query"]["sni"][0], "sub.example.com")
         self.assertEqual(u2["query"]["alpn"][0], "h3")
-        self.assertEqual(u2["query"]["obfs"][0], "salamander")
+        self.assertEqual(u2["query"]["obfs"][0], "gecko")
         self.assertEqual(u2["query"]["obfs-password"][0], "485a96779d1ad79d0fa80ca0")
         self.assertIn("🇳🇱 3. Скоростной Hysteria2 (NL)", u2["tag"])
 
@@ -379,12 +379,12 @@ class EmpiricalChallengerTest(unittest.TestCase):
         u9 = parsed_uris[9]
         self.assertEqual(u9["scheme"], "vless")
         self.assertEqual(u9["hostname"], "fi.example.com")
-        self.assertEqual(u9["port"], 39443)
+        self.assertEqual(u9["port"], subjson_app.FI_XHTTP_REALITY_PORT)
         self.assertEqual(u9["query"]["type"][0], "xhttp")
         self.assertEqual(u9["query"]["security"][0], "reality")
         self.assertEqual(u9["query"]["pbk"][0], subjson_app.FI_XHTTP_REALITY_PUBLIC_KEY)
         self.assertEqual(u9["query"]["sid"][0], subjson_app.FI_XHTTP_REALITY_SHORT_ID)
-        self.assertEqual(u9["query"]["sni"][0], "sber.ru")
+        self.assertEqual(u9["query"]["sni"][0], subjson_app.FI_XHTTP_REALITY_SNI)
         self.assertIn("🇫🇮 10. Незаметный XHTTP Reality (FI)", u9["tag"])
 
     def test_08_streisand_expired_sub_empty_bundle(self):

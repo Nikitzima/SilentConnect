@@ -217,7 +217,11 @@ class TestUICatalogAndLayout(unittest.TestCase):
         self.assertTrue(subjson_app.OFFICIAL_V2RAYN_ICON.startswith("data:image/"))
         self.assertTrue(subjson_app.OFFICIAL_NEKOBOX_ICON.startswith("data:image/png;base64,"))
         self.assertTrue(subjson_app.OFFICIAL_V2RAYNG_ICON.startswith("data:image/png;base64,"))
-        self.assertTrue(subjson_app.OFFICIAL_SINGBOX_ICON.startswith("data:image/png;base64,") or subjson_app.OFFICIAL_SINGBOX_ICON.startswith("https://"))
+        self.assertTrue(
+            subjson_app.OFFICIAL_SINGBOX_ICON.startswith("data:image/svg+xml;base64,")
+            or subjson_app.OFFICIAL_SINGBOX_ICON.startswith("data:image/png;base64,")
+            or subjson_app.OFFICIAL_SINGBOX_ICON.startswith("https://")
+        )
 
     # =========================================================================
     # R3: Mobile Header Height <= 56-64px & Single-Row Flexbox (vpn-shop/web.py)
@@ -267,6 +271,33 @@ class TestUICatalogAndLayout(unittest.TestCase):
         self.assertIsNotNone(footer_section, "Footer markup not found")
         footer_content = footer_section.group(1)
         self.assertNotIn("·", footer_content, "Footer must not contain raw orphan middle dots (·)")
+
+    def test_lk_footer_centered_flexbox_and_clean_markup(self):
+        """Verify LK / Setup wizard footer uses centered flexbox and no orphan middle dots."""
+        import importlib
+        subjson_app = importlib.import_module("subjson-service.app")
+        html_bytes = subjson_app.setup_page_html(
+            subscription_url="https://sub.example.com/test",
+            subscription_id="test_sub_id",
+            quoted_sub_id="test_sub_id",
+            import_query="url=test",
+        )
+        page_html = html_bytes.decode("utf-8")
+
+        # Assert semantic flexbox classes and responsive rules exist
+        self.assertIn(".footer-wrap {", page_html)
+        self.assertIn(".footer-links {", page_html)
+        self.assertIn(".footer-copy {", page_html)
+        self.assertIn('<div class="footer-wrap">', page_html)
+        self.assertIn('<div class="footer-links">', page_html)
+        self.assertIn('<div class="footer-copy">', page_html)
+
+        # Assert no orphan middle dots in LK footer
+        footer_section = re.search(r"<footer>(.*?)</footer>", page_html, re.DOTALL)
+        self.assertIsNotNone(footer_section, "LK Footer markup not found")
+        footer_content = footer_section.group(1)
+        self.assertNotIn("·", footer_content, "LK Footer must not contain raw orphan middle dots (·)")
+        self.assertIn("[code: mekbuda]", footer_content)
 
     # =========================================================================
     # R3: Tariff Builder Symmetrical 4-Duration Grid (vpn-shop/web.py)
@@ -428,6 +459,116 @@ class TestUICatalogAndLayout(unittest.TestCase):
         self.assertIn("ord_test789", card_canceled)
         self.assertIn("Заказ отменен", card_canceled)
         self.assertIn("dismissPaymentNotice('ord_test789')", card_canceled)
+
+    def test_check_pending_payment_card_dismissal(self):
+        import importlib
+        import sqlite3
+        import tempfile
+        import time
+        from unittest.mock import patch
+
+        subjson_app = importlib.import_module("subjson-service.app")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = os.path.join(tmp_dir, "vpn_shop.db")
+            conn = sqlite3.connect(db_path)
+            conn.execute("CREATE TABLE profiles (id INTEGER PRIMARY KEY, public_id TEXT, xui_email TEXT, status TEXT);")
+            conn.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, public_id TEXT, status TEXT, duration_days INTEGER, final_price_rub INTEGER, provisioned_profile_id INTEGER, created_at INTEGER, updated_at INTEGER, meta_json TEXT DEFAULT '{}', customer_email TEXT DEFAULT '');")
+            conn.execute("INSERT INTO profiles VALUES (1, 'prf_123', 'sub_user_1', 'active');")
+            now = int(time.time())
+            conn.execute("INSERT INTO orders VALUES (10, 'ord_test1', 'delivered', 30, 300, 1, ?, ?, ?, '');",
+                         (now, now, json.dumps({"device_limit": 3})))
+            conn.commit()
+            conn.close()
+
+            with patch.object(subjson_app, "find_store_db_path", return_value=db_path), \
+                 patch.object(subjson_app, "find_subscription", return_value=(None, None, None, None, {"email": "sub_user_1"})):
+                # 1. Initial view: card shown
+                card = subjson_app.check_pending_payment_card("sub_xyz")
+                self.assertIn("ord_test1", card)
+                self.assertIn("Оплата подтверждена!", card)
+
+                # 2. Dismissed state: card suppressed
+                conn = sqlite3.connect(db_path)
+                conn.execute("UPDATE orders SET meta_json = ? WHERE public_id = 'ord_test1'",
+                             (json.dumps({"device_limit": 3, "notice_dismissed_status": "delivered", "notice_dismissed_at": now}),))
+                conn.commit()
+                conn.close()
+
+                card_after = subjson_app.check_pending_payment_card("sub_xyz")
+                self.assertEqual(card_after, "")
+
+                # 3. Status changed to canceled: card reappears
+                conn = sqlite3.connect(db_path)
+                conn.execute("UPDATE orders SET status = 'canceled' WHERE public_id = 'ord_test1'")
+                conn.commit()
+                conn.close()
+
+                card_canceled = subjson_app.check_pending_payment_card("sub_xyz")
+                self.assertIn("Заказ отменен", card_canceled)
+
+                # 4. New order arrives: new notice appears
+                conn = sqlite3.connect(db_path)
+                conn.execute("INSERT INTO orders VALUES (11, 'ord_new2', 'delivered', 30, 300, 1, ?, ?, ?, '');",
+                             (now + 10, now + 10, json.dumps({"device_limit": 3})))
+                conn.commit()
+                conn.close()
+
+                card_new = subjson_app.check_pending_payment_card("sub_xyz")
+                self.assertIn("ord_new2", card_new)
+
+    def test_dismiss_notice_endpoint(self):
+        import importlib
+        import io
+        import sqlite3
+        import tempfile
+        import time
+        from http import HTTPStatus
+        from unittest.mock import patch
+
+        subjson_app = importlib.import_module("subjson-service.app")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = os.path.join(tmp_dir, "vpn_shop.db")
+            conn = sqlite3.connect(db_path)
+            conn.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, public_id TEXT, status TEXT, duration_days INTEGER, final_price_rub INTEGER, provisioned_profile_id INTEGER, created_at INTEGER, updated_at INTEGER, meta_json TEXT DEFAULT '{}', customer_email TEXT DEFAULT '');")
+            now = int(time.time())
+            conn.execute("INSERT INTO orders VALUES (20, 'ord_ep1', 'delivered', 30, 300, 1, ?, ?, ?, '');",
+                         (now, now, json.dumps({"device_limit": 3})))
+            conn.commit()
+            conn.close()
+
+            class DummyHandler:
+                def __init__(self, path, body_json):
+                    self.path = path
+                    self.headers = {"Content-Length": str(len(body_json)), "Content-Type": "application/json"}
+                    self.rfile = io.BytesIO(body_json.encode("utf-8"))
+                    self.response_status = None
+                    self.response_data = None
+                    self.command = "POST"
+                    self.client_address = ("127.0.0.1", 12345)
+
+                def _read_form(self):
+                    return {}
+
+                def _send_json(self, status, data, include_body):
+                    self.response_status = status
+                    self.response_data = data
+
+            with patch.object(subjson_app, "find_store_db_path", return_value=db_path):
+                handler = DummyHandler(
+                    f"/{subjson_app.SECRET_SEGMENT}/dismiss-notice/ord_ep1",
+                    json.dumps({"status": "delivered", "sub_id": "sub_xyz"})
+                )
+                subjson_app.RequestHandler.do_POST(handler)
+                self.assertEqual(handler.response_status, HTTPStatus.OK)
+                self.assertTrue(handler.response_data.get("ok"))
+                self.assertEqual(handler.response_data.get("dismissed_status"), "delivered")
+
+                conn = sqlite3.connect(db_path)
+                row = conn.execute("SELECT meta_json FROM orders WHERE public_id = 'ord_ep1'").fetchone()
+                conn.close()
+                meta = json.loads(row[0])
+                self.assertEqual(meta.get("notice_dismissed_status"), "delivered")
+                self.assertIn("notice_dismissed_at", meta)
 
 
 if __name__ == "__main__":
