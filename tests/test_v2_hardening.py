@@ -292,8 +292,21 @@ class SecurityHelperTests(unittest.TestCase):
         store, _ = make_store()
         tok = security.sign_token({"email": "c@d"}, purpose="magic_link", ttl_seconds=60)
         store.create_magic_link(email="c@d", token=tok, ttl_seconds=60, request_ip="127.0.0.1")
-        self.assertEqual(store.consume_magic_link(tok), "c@d")
-        self.assertIsNone(store.consume_magic_link(tok))
+        self.assertEqual(store.consume_magic_link(tok, single_use=True), "c@d")
+        self.assertIsNone(store.consume_magic_link(tok, single_use=True))
+
+    def test_magic_link_reusable_window(self):
+        store, _ = make_store()
+        tok = security.sign_token({"email": "reuse@domain.com"}, purpose="magic_link", ttl_seconds=60)
+        store.create_magic_link(email="reuse@domain.com", token=tok, ttl_seconds=60, request_ip="127.0.0.1")
+        # First visit (PC)
+        self.assertEqual(store.consume_magic_link(tok, single_use=False), "reuse@domain.com")
+        # Second visit (Mobile / refresh)
+        self.assertEqual(store.consume_magic_link(tok, single_use=False), "reuse@domain.com")
+        # Expired token simulation: update expires_at into the past
+        with store.transaction() as conn:
+            conn.execute("UPDATE magic_links SET expires_at = ? WHERE email = ?", (0, "reuse@domain.com"))
+        self.assertIsNone(store.consume_magic_link(tok, single_use=False))
 
 
 class FailbackMergeTests(unittest.TestCase):
