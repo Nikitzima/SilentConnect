@@ -551,9 +551,8 @@ class ShopBot:
             rows.append([("🔄 Продлить подписку", "public:renew", "success"), ("🎁 Пробный период", "public:trial", "success")])
         rows.extend(
             [
-                [("🎟 Промокод", "public:promo"), ("🤝 Рефералы", "public:referral", "success")],
-                [("⚡ Boost / Ускорение", "public:boost", "primary"), ("📖 Помощь & FAQ", "public:help", "primary")],
-                [("💬 Поддержка", "public:support", "primary")],
+                [("🎟 Промокод", "public:promo"), ("🤝 Рефералы", "public:referral", "success"), ("⚡ Boost", "public:boost", "primary")],
+                [("📖 Помощь & FAQ", "public:help", "primary"), ("💬 Поддержка", "public:support", "primary")],
             ]
         )
         return kb(rows)
