@@ -1049,7 +1049,7 @@ class ShopBot:
         user_id = user.get("id") or chat_id
         profile = self.store.get_latest_renewable_profile_for_user(
             user_id,
-            excluded_notes=(TEST_PROFILE_NOTES, ADMIN_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES),
+            excluded_notes=(TEST_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES),
         )
         if not profile:
             return None
@@ -1111,7 +1111,7 @@ class ShopBot:
             except Exception:
                 return None, None, "Подписка есть на сервере, но бот не нашёл её в магазине. Напишите в поддержку, я привяжу вручную."
         notes = str(profile.get("notes") or "").lower()
-        if profile.get("notes") in {TEST_PROFILE_NOTES, ADMIN_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES} or "trial" in notes or "test" in notes or "auto_delete" in notes:
+        if "admin_personal" not in notes and (profile.get("notes") in {TEST_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES} or "trial" in notes or "test" in notes or "auto_delete" in notes):
             return None, None, "Пробную подписку (7 дней) или тестовый профиль нельзя продлить через обычную оплату."
         order = self.store.get_order_for_profile(str(profile["public_id"]))
         return profile, str(order["public_id"]) if order else None, ""
@@ -1121,7 +1121,7 @@ class ShopBot:
         if not profile or profile.get("status") == "deleted":
             return None
         notes = str(profile.get("notes") or "").lower()
-        if profile.get("notes") in {TEST_PROFILE_NOTES, ADMIN_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES} or "trial" in notes or "test" in notes or "auto_delete" in notes:
+        if "admin_personal" not in notes and (profile.get("notes") in {TEST_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES} or "trial" in notes or "test" in notes or "auto_delete" in notes):
             return None
         if not self.provisioner.xui_db.find_client_by_email(str(profile["xui_email"])):
             self.store.mark_profile_deleted(profile_public_id)
@@ -3532,7 +3532,7 @@ class ShopBot:
             self._send_renewal_target_missing(chat_id)
             return
         profile = target["profile"]
-        if profile.get("notes") in {TEST_PROFILE_NOTES, ADMIN_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES}:
+        if "admin_personal" not in str(profile.get("notes") or "").lower() and profile.get("notes") in {TEST_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES}:
             self.telegram.send_message(chat_id, "Этот тип профиля нельзя продлить через обычную оплату.")
             return
         renewal_transport = str(target["transport"])

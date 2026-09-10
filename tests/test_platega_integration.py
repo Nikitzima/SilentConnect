@@ -18,6 +18,7 @@ from vpn_shop.platega import PlategaClient, PlategaApiError, PlategaAuthError
 from vpn_shop.store import Store
 from vpn_shop.web import WebCheckout, RequestHandler
 from vpn_shop.bot import ShopBot
+from vpn_shop.provisioning import ADMIN_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES, Provisioner
 
 
 class DummyTelegram:
@@ -567,6 +568,103 @@ class TestPlategaWebAndBotIntegration(unittest.TestCase):
             self.assertEqual(mock_req.call_count, 2)
             self.assertEqual(mock_req.call_args_list[0][0][2], "bad-bot-merchant")
             self.assertEqual(mock_req.call_args_list[1][0][2], "good-web-merchant")
+
+    def test_issue_a_bot_handle_message_no_name_error(self):
+        """Test Issue A: handle_message defines is_admin_user and does not crash with NameError."""
+        self.bot.handle_public_start = MagicMock()
+        self.bot.send_admin_menu = MagicMock()
+
+        # 1. Non-admin user sending /start
+        normal_msg = {
+            "message_id": 1,
+            "chat": {"id": 11111},
+            "from": {"id": 11111, "username": "normaluser"},
+            "text": "/start",
+        }
+        self.bot.handle_message(normal_msg)
+        self.bot.handle_public_start.assert_called_once()
+        self.bot.send_admin_menu.assert_not_called()
+
+        # 2. Admin user sending /start
+        self.bot.handle_public_start.reset_mock()
+        admin_msg = {
+            "message_id": 2,
+            "chat": {"id": 999},
+            "from": {"id": 999, "username": "admin"},
+            "text": "/start",
+        }
+        self.bot.handle_message(admin_msg)
+        self.bot.send_admin_menu.assert_called_once()
+
+    def test_issue_b_render_order_layout_has_payment_options_wrapper(self):
+        """Test Issue B: render_order groups payment cards in .payment-options to prevent empty layout gap."""
+        order = self.checkout.create_order("tcp_3_30")
+        meta = dict(order.get("meta_json") or {})
+        meta["platega_url"] = "https://pay.platega.io/?id=test-order"
+        order["meta_json"] = meta
+
+        html_bytes = self.checkout.render_order({}, order)
+        html = html_bytes.decode("utf-8")
+
+        self.assertIn('<div class="payment-options">', html)
+        self.assertIn("Быстрая онлайн-оплата", html)
+        self.assertIn("Оплата через оператора", html)
+        self.assertIn(".payment-options", html)
+
+    def test_issue_b_render_order_delivered_safe(self):
+        """Test Issue B: render_order for delivered order does not reference undefined platega_card."""
+        order = self.checkout.create_order("tcp_3_30")
+        self.checkout.recover_subscription = MagicMock(return_value="https://test.example.com/sub/abc12345")
+        order["status"] = "delivered"
+
+        html_bytes = self.checkout.render_order({}, order)
+        html = html_bytes.decode("utf-8")
+        self.assertIn("Доступ готов", html)
+        self.assertIn("Активировать доступ", html)
+        self.assertNotIn("Оплатить онлайн", html)
+
+    def test_issue_c_admin_personal_profile_renewal_allowed(self):
+        """Test Issue C: Admin personal long-lived profiles are renewable and not blocked as trials."""
+        xui_mock = MagicMock()
+        xui_mock.find_client_by_email.return_value = {
+            "inbound_id": 1,
+            "client": {"id": "test-client-id", "email": "admin-nikitzima-if840m", "subId": "sub-123", "expiryTime": 0},
+        }
+        provisioner = Provisioner(self.settings, self.store)
+        provisioner.xui_db = xui_mock
+
+        admin_prof = self.store.create_profile(
+            xui_inbound_id=1,
+            transport="tcp",
+            profile_mode="family",
+            family_label=None,
+            xui_email="admin-nikitzima-if840m",
+            xui_client_id="test-client-id",
+            expires_at=1700000000,
+            notes=ADMIN_PROFILE_NOTES,
+        )
+
+        res = provisioner.renew_profile(str(admin_prof["public_id"]), 30)
+        self.assertEqual(res["profile"]["notes"], ADMIN_PROFILE_NOTES)
+        self.assertGreater(res["expires_at"], 1700000000)
+
+        trial_prof = self.store.create_profile(
+            xui_inbound_id=1,
+            transport="tcp",
+            profile_mode="family",
+            family_label=None,
+            xui_email="trial-user-123",
+            xui_client_id="test-client-id-2",
+            expires_at=1700000000,
+            notes=PUBLIC_TRIAL_PROFILE_NOTES,
+        )
+        xui_mock.find_client_by_email.return_value = {
+            "inbound_id": 1,
+            "client": {"id": "test-client-id-2", "email": "trial-user-123", "expiryTime": 0},
+        }
+        with self.assertRaises(RuntimeError) as cm:
+            provisioner.renew_profile(str(trial_prof["public_id"]), 30)
+        self.assertIn("Trial profile", str(cm.exception))
 
 
 if __name__ == "__main__":

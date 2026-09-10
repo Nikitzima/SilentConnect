@@ -1292,8 +1292,10 @@ class WebCheckout:
       color: #fff; font-size: 15px; 
       backdrop-filter: blur(8px);
     }}
-    .order {{ display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: stretch; }}
-    .order > .card {{ display: flex; flex-direction: column; justify-content: space-between; height: 100%; box-sizing: border-box; }}
+    .order {{ display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }}
+    .order > .card {{ display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; }}
+    .payment-options {{ display: flex; flex-direction: column; gap: 24px; }}
+    .payment-options > .card {{ display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; }}
     .field {{ width: 100%; min-height: 48px; color: #fff; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 10px; padding: 12px 14px; font-size: 16px; margin-bottom: 12px; }}
     .field:focus {{ outline: none; border-color: var(--green); }}
     textarea {{ 
@@ -2467,15 +2469,17 @@ class WebCheckout:
               <section class="section" style="padding: 24px 0 16px;"><h2>Оплата заказа</h2>{flash_html}</section>
               <section class="order">
                 {summary}
-                {platega_card}
-                <div class="card">
-                  <strong>Оплата через оператора</strong>
-                  {payment_action}
-                  <div class="actions">
-                    <a class="btn secondary" href="{html.escape(self.support_url)}" target="_blank" rel="noopener">Поддержка</a>
-                    <form method="post" action="/order/{html.escape(str(order['public_id']))}/{html.escape(str(meta.get('web_token') or ''))}/cancel" style="margin:0;">
-                      <button type="submit" class="btn secondary" style="background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.3);">Отменить заказ ✖</button>
-                    </form>
+                <div class="payment-options">
+                  {platega_card}
+                  <div class="card">
+                    <strong>Оплата через оператора</strong>
+                    {payment_action}
+                    <div class="actions">
+                      <a class="btn secondary" href="{html.escape(self.support_url)}" target="_blank" rel="noopener">Поддержка</a>
+                      <form method="post" action="/order/{html.escape(str(order['public_id']))}/{html.escape(str(meta.get('web_token') or ''))}/cancel" style="margin:0;">
+                        <button type="submit" class="btn secondary" style="background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.3);">Отменить заказ ✖</button>
+                      </form>
+                    </div>
                   </div>
                 </div>
               </section>
@@ -2496,7 +2500,6 @@ class WebCheckout:
               <section class="section" style="padding: 24px 0 16px;"><h2>Доступ готов</h2>{flash_html}</section>
               <section class="order">
                 {summary}
-                {platega_card}
                 <div class="card">
                   <strong>Активировать доступ</strong>
                   <p class="muted">Откройте страницу подключения. Она определит устройство, предложит подходящие приложения и покажет запасной способ через копирование.</p>

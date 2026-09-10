@@ -757,7 +757,7 @@ def create_inline_renewal_order(
             raise ValueError("Профиль подписки не найден или удалён.")
 
         notes = str(prof["notes"] or "").lower()
-        if notes in {"public_trial_7d_auto_delete", "admin_test_24h_auto_delete", "admin_personal_long_lived"} or "trial" in notes or "test" in notes or "auto_delete" in notes:
+        if "admin_personal" not in notes and (notes in {"public_trial_7d_auto_delete", "admin_test_24h_auto_delete"} or "trial" in notes or "test" in notes or "auto_delete" in notes):
             raise ValueError("Пробную подписку (7 дней) нельзя продлить. Пожалуйста, оформите новую подписку на главной странице.")
 
         prof_dict = dict(prof)
