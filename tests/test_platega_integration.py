@@ -219,6 +219,16 @@ class TestPlategaWebAndBotIntegration(unittest.TestCase):
             "xui_email": "test@example.com",
             "expires_at": 1800000000,
         }
+        with self.store._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO profiles(
+                    public_id, xui_inbound_id, transport, profile_mode, family_label,
+                    xui_email, xui_client_id, created_at, expires_at, status, notes
+                ) VALUES(?, 1, 'tcp', 'family', 'Family', 'test@example.com', 'client-uuid', 1000, 1800000000, 'active', '')
+                """,
+                (self.mock_profile["public_id"],),
+            )
         self.checkout.provisioner.create_profile_for_order = MagicMock(return_value={
             "profile": self.mock_profile,
             "subscription_url": "https://example.com/sub/json/prof_test123",
@@ -443,6 +453,122 @@ class TestPlategaWebAndBotIntegration(unittest.TestCase):
         self.assertIn("https://pay.platega.io/?id=test-order-url", html_str)
         self.assertIn("Оплатить онлайн", html_str)
 
+    def test_pending_callback_does_not_block_subsequent_confirmed_callback(self):
+        """CRITICAL: A PENDING status callback must not prevent later CONFIRMED callback from fulfilling order."""
+        order = self.checkout.create_order("tcp_3_30")
+        order_public_id = str(order["public_id"])
+        tx_id = "tx-lifecycle-12345"
+
+        # 1. Simulate initial PENDING callback
+        pending_payload = {
+            "id": tx_id,
+            "status": "PENDING",
+            "amount": 100,
+            "payload": order_public_id,
+        }
+        res1 = self.checkout.handle_platega_callback(pending_payload, raw_body=json.dumps(pending_payload).encode("utf-8"))
+        self.assertEqual(res1["status"], "ok")
+        self.assertEqual(self.store.get_order(order_public_id)["status"], "waiting_payment")
+
+        # 2. Simulate subsequent CONFIRMED callback for same tx_id
+        confirmed_payload = {
+            "id": tx_id,
+            "status": "CONFIRMED",
+            "amount": 100,
+            "payload": order_public_id,
+        }
+        res2 = self.checkout.handle_platega_callback(confirmed_payload, raw_body=json.dumps(confirmed_payload).encode("utf-8"))
+        self.assertEqual(res2["status"], "ok")
+        self.assertEqual(res2["message"], "confirmed")
+        # Crucial check: Order must be delivered now!
+        self.assertEqual(self.store.get_order(order_public_id)["status"], "delivered")
+
+    def test_payment_details_amount_extraction(self):
+        """Platega sending amount in paymentDetails.amount must be parsed correctly."""
+        order = self.checkout.create_order("tcp_3_30")
+        order_public_id = str(order["public_id"])
+
+        callback_payload = {
+            "id": "tx-details-999",
+            "status": "CONFIRMED",
+            "paymentDetails": {"amount": 100, "currency": "RUB"},
+            "payload": order_public_id,
+        }
+        res = self.checkout.handle_platega_callback(callback_payload, raw_body=json.dumps(callback_payload).encode("utf-8"))
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(res["message"], "confirmed")
+        updated = self.store.get_order(order_public_id)
+        self.assertEqual(updated["status"], "delivered")
+        self.assertEqual(updated["meta_json"]["platega_confirmed_amount"], 100.0)
+
+    def test_boost_command_with_botname_suffix(self):
+        """Telegram client sending /boost@SilentConnectVPNBot must be recognized."""
+        chat_id = 987655
+        message = {
+            "chat": {"id": chat_id},
+            "from": {"id": chat_id, "username": "tester"},
+            "text": "/boost@SilentConnectVPNBot",
+        }
+        self.bot.handle_message(message)
+        self.assertTrue(len(self.dummy_tg.sent_messages) > 0)
+        last_msg = self.dummy_tg.sent_messages[-1]
+        self.assertIn("Boost", last_msg["text"])
+
+    def test_bot_check_payment_callback_handling(self):
+        """User tapping 'Проверить зачисление' checks status via Platega and confirms order."""
+        order = self.store.create_order(
+            kind="standard",
+            status="waiting_payment",
+            transport="tcp",
+            duration_days=30,
+            profile_mode="family",
+            family_label="Family",
+            base_price_rub=100,
+            final_price_rub=100,
+            promo_id=None,
+            invite_id=None,
+            customer_chat_id=123456,
+            privacy_ack=True,
+            loss_policy_ack=True,
+            terms_version="2026-04-20",
+        )
+        order_public_id = str(order["public_id"])
+        meta = dict(order.get("meta_json") or {})
+        meta["platega_transaction_id"] = "tx-live-999"
+        self.store.update_order_meta(order_public_id, meta)
+
+        with patch.object(self.bot.platega, "get_transaction_status") as mock_status:
+            mock_status.return_value = {"id": "tx-live-999", "status": "CONFIRMED"}
+            cb = {
+                "id": "cb_check_1",
+                "from": {"id": 123456},
+                "data": f"public:check_payment:{order_public_id}",
+                "message": {"chat": {"id": 123456}, "message_id": 99},
+            }
+            self.bot.handle_callback(cb)
+
+            updated = self.store.get_order(order_public_id)
+            self.assertEqual(updated["status"], "delivered")
+
+    def test_platega_candidate_fallback(self):
+        """When merchant_id_bot fails auth, PlategaClient automatically falls back to merchant_id_web."""
+        client = PlategaClient(
+            merchant_id_bot="bad-bot-merchant",
+            merchant_id_web="good-web-merchant",
+            secret="shared_or_web_secret",
+        )
+        with patch.object(client, "_request") as mock_req:
+            mock_req.side_effect = [
+                PlategaAuthError("Bad key", status_code=401),
+                {"transactionId": "tx-fallback-ok", "url": "https://pay.platega.io/?id=tx-fallback-ok"},
+            ]
+            res = client.create_transaction(amount=100, is_bot=True)
+            self.assertEqual(res["transactionId"], "tx-fallback-ok")
+            self.assertEqual(mock_req.call_count, 2)
+            self.assertEqual(mock_req.call_args_list[0][0][2], "bad-bot-merchant")
+            self.assertEqual(mock_req.call_args_list[1][0][2], "good-web-merchant")
+
 
 if __name__ == "__main__":
     unittest.main()
+
