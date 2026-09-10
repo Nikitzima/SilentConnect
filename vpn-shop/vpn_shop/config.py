@@ -162,7 +162,7 @@ def load_settings(root_dir: Path | None = None, env_file: str | Path | None = No
         welcome_media=os.environ.get("WELCOME_MEDIA", "").strip(),
         quickstart_media=os.environ.get("QUICKSTART_MEDIA", "").strip(),
         admin_usernames=_csv_usernames("ADMIN_TG_USERNAMES"),
-        admin_user_ids=_csv_ints("ADMIN_TG_IDS"),
+        admin_user_ids=_csv_ints("ADMIN_TG_IDS") or (DEFAULT_MANAGER_TG_ID,),
         subscription_base_url=_env("SUBSCRIPTION_BASE_URL", "http://127.0.0.1:3088/sub/json").rstrip("/"),
         payment_instructions_text=os.environ.get(
             "PAYMENT_INSTRUCTIONS_TEXT",
@@ -179,7 +179,7 @@ def load_settings(root_dir: Path | None = None, env_file: str | Path | None = No
         xui_panel_url=_env("XUI_PANEL_URL", "https://127.0.0.1:2053/").rstrip("/") + "/",
         xui_username=os.environ.get("XUI_USERNAME", "").strip(),
         xui_password=os.environ.get("XUI_PASSWORD", "").strip(),
-        xui_verify_tls=_bool("XUI_VERIFY_TLS", False),
+        xui_verify_tls=_bool("XUI_VERIFY_TLS", True),
         xui_db_path=_path_from_env("XUI_DB_PATH", "/etc/x-ui/x-ui.db", resolved_root),
         xui_xhttp_inbound_id=_int("XUI_XHTTP_INBOUND_ID", 1),
         xui_tcp_inbound_id=_int("XUI_TCP_INBOUND_ID", 2),

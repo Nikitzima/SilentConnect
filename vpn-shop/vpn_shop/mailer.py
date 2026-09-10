@@ -6,7 +6,9 @@ from email.headerregistry import Address
 import html
 import json
 import logging
+import os
 from pathlib import Path
+import queue
 import smtplib
 import threading
 from typing import Any
@@ -16,6 +18,51 @@ import urllib.request
 from .config import Settings
 
 LOGGER = logging.getLogger("vpn-shop-mailer")
+
+_EMAIL_QUEUE: queue.Queue[tuple[Any, tuple, dict] | None] = queue.Queue(maxsize=1000)
+_EMAIL_WORKERS: list[threading.Thread] = []
+_EMAIL_WORKERS_LOCK = threading.Lock()
+NUM_EMAIL_WORKERS = 4
+
+
+def _email_worker_loop() -> None:
+    while True:
+        try:
+            item = _EMAIL_QUEUE.get()
+            if item is None:
+                _EMAIL_QUEUE.task_done()
+                break
+            func, args, kwargs = item
+            try:
+                func(*args, **kwargs)
+            except Exception as exc:
+                LOGGER.exception("Unhandled error in email worker: %s", exc)
+            finally:
+                _EMAIL_QUEUE.task_done()
+        except Exception:
+            pass
+
+
+def _ensure_workers_started() -> None:
+    with _EMAIL_WORKERS_LOCK:
+        alive = [w for w in _EMAIL_WORKERS if w.is_alive()]
+        _EMAIL_WORKERS.clear()
+        _EMAIL_WORKERS.extend(alive)
+        while len(_EMAIL_WORKERS) < NUM_EMAIL_WORKERS:
+            t = threading.Thread(target=_email_worker_loop, daemon=True)
+            t.start()
+            _EMAIL_WORKERS.append(t)
+
+
+def enqueue_email_task(func: Any, *args: Any, **kwargs: Any) -> bool:
+    """Enqueue an email dispatch task to the bounded background worker pool."""
+    _ensure_workers_started()
+    try:
+        _EMAIL_QUEUE.put_nowait((func, args, kwargs))
+        return True
+    except queue.Full:
+        LOGGER.error("Email worker queue is full (maxsize=1000). Dropping email task: %s", getattr(func, "__name__", str(func)))
+        return False
 
 MONTHS_RU = [
     "", "января", "февраля", "марта", "апреля", "мая", "июня",
@@ -348,6 +395,7 @@ def send_subscription_email_sync(
     bind_tg_url: str = "",
     expires_ts: int | float | None = None,
     expires_at_str: str = "",
+    subject: str | None = None,
 ) -> bool:
     if not customer_email or "@" not in customer_email:
         LOGGER.warning("Invalid target email for order %s: %r", order_public_id, customer_email)
@@ -368,7 +416,8 @@ def send_subscription_email_sync(
     password = (settings.smtp_password or "").strip()
     from_email = (settings.smtp_from_email or "SilentConnect <support@example.com>").strip()
 
-    subject = f"Ваша подписка SilentConnect готова! (#{order_public_id})"
+    if not subject:
+        subject = f"Ваша подписка SilentConnect готова! (#{order_public_id})"
 
     html_content = render_subscription_email_html(
         customer_email=customer_email,
@@ -463,25 +512,23 @@ def send_subscription_email_async(
     bind_tg_url: str = "",
     expires_ts: int | float | None = None,
     expires_at_str: str = "",
+    subject: str | None = None,
 ) -> None:
-    t = threading.Thread(
-        target=send_subscription_email_sync,
-        kwargs={
-            "settings": settings,
-            "customer_email": customer_email,
-            "order_public_id": order_public_id,
-            "plan_name": plan_name,
-            "duration_days": duration_days,
-            "setup_url": setup_url,
-            "json_url": json_url,
-            "cabinet_url": cabinet_url,
-            "bind_tg_url": bind_tg_url,
-            "expires_ts": expires_ts,
-            "expires_at_str": expires_at_str,
-        },
-        daemon=True,
+    enqueue_email_task(
+        send_subscription_email_sync,
+        settings,
+        customer_email=customer_email,
+        order_public_id=order_public_id,
+        plan_name=plan_name,
+        duration_days=duration_days,
+        setup_url=setup_url,
+        json_url=json_url,
+        cabinet_url=cabinet_url,
+        bind_tg_url=bind_tg_url,
+        expires_ts=expires_ts,
+        expires_at_str=expires_at_str,
+        subject=subject,
     )
-    t.start()
 
 
 def send_cabinet_access_email_sync(
@@ -628,14 +675,10 @@ def send_cabinet_access_email_async(
     customer_email: str,
     profiles_data: list[dict[str, Any]],
 ) -> None:
-    t = threading.Thread(
-        target=send_cabinet_access_email_sync,
-        kwargs={
-            "settings": settings,
-            "customer_email": customer_email,
-            "profiles_data": profiles_data,
-        },
-        daemon=True,
+    enqueue_email_task(
+        send_cabinet_access_email_sync,
+        settings,
+        customer_email=customer_email,
+        profiles_data=profiles_data,
     )
-    t.start()
 

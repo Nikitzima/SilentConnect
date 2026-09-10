@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import os
+
 from .config import Settings
 
 
@@ -17,12 +19,57 @@ class Offer:
     beta: bool = False
 
 
+def quote_price(
+    device_limit: int = 3,
+    duration_days: int = 30,
+    settings: Settings | None = None,
+) -> int:
+    """Authoritative pricing calculator for SilentConnect subscriptions and renewals.
+
+    Applies tier base pricing, multi-month discounts (-10% for 3mo, -20% for 6mo, -30% for 12mo),
+    and psychological 9-ending rounding (e.g. 540 -> 539).
+    """
+    if settings is not None:
+        device_prices = {
+            3: settings.monthly_price_3_devices_rub,
+            6: settings.monthly_price_6_devices_rub,
+            9: settings.monthly_price_9_devices_rub,
+        }
+    else:
+        device_prices = {
+            3: int(os.environ.get("MONTHLY_PRICE_3_DEVICES_RUB", os.environ.get("MONTHLY_PRICE_TCP_RUB", 100))),
+            6: int(os.environ.get("MONTHLY_PRICE_6_DEVICES_RUB", 150)),
+            9: int(os.environ.get("MONTHLY_PRICE_9_DEVICES_RUB", 200)),
+        }
+
+    monthly_price = device_prices.get(device_limit, device_prices.get(3, 100))
+    months = max(duration_days // 30, 1)
+
+    discount = 0
+    if duration_days >= 360:
+        discount = 30
+    elif duration_days >= 180:
+        discount = 20
+    elif duration_days >= 90:
+        discount = 10
+
+    raw_price = (monthly_price * months * (100 - discount)) // 100
+    if raw_price <= 0:
+        return 0
+    return max(((raw_price + 5) // 10) * 10 - 1, 9)
+
+
+def calculate_renewal_price(
+    device_limit: int = 3,
+    duration_days: int = 30,
+    settings: Settings | None = None,
+) -> int:
+    """Alias for quote_price for renewal pricing calculations."""
+    return quote_price(device_limit=device_limit, duration_days=duration_days, settings=settings)
+
+
 def build_offers(settings: Settings) -> dict[str, Offer]:
-    device_prices = {
-        3: settings.monthly_price_3_devices_rub,
-        6: settings.monthly_price_6_devices_rub,
-        9: settings.monthly_price_9_devices_rub,
-    }
+    device_limits = (3, 6, 9)
     durations = {
         30: "1 месяц",
         90: "3 месяца",
@@ -30,28 +77,9 @@ def build_offers(settings: Settings) -> dict[str, Offer]:
         360: "12 месяцев",
     }
     offers: dict[str, Offer] = {}
-    for device_limit, monthly_price in device_prices.items():
+    for device_limit in device_limits:
         for duration_days, duration_label in durations.items():
-            months = max(duration_days // 30, 1)
-            
-            # Apply duration discounts: 3mo (-10%), 6mo (-20%), 12mo (-30%)
-            discount = 0
-            if duration_days == 90:
-                discount = 10
-            elif duration_days == 180:
-                discount = 20
-            elif duration_days == 360:
-                discount = 30
-                
-            raw_price = (monthly_price * months * (100 - discount)) // 100
-            
-            # Round psychologically to end with 9 (e.g. 537 -> 539)
-            if raw_price <= 0:
-                standard_price = 0
-            else:
-                standard_price = max(((raw_price + 5) // 10) * 10 - 1, 9)
-                
-            # Collapse hybrid mode price to match standard price for simplicity
+            standard_price = quote_price(device_limit, duration_days, settings=settings)
             universal_price = standard_price
 
             offers[f"tcp_{device_limit}_{duration_days}"] = Offer(
