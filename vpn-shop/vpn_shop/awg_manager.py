@@ -53,32 +53,12 @@ SERVERS: dict[str, dict[str, Any]] = {
         "container": os.environ.get("AWG_FI_CONTAINER", "amnezia-awg2"),
         "conf_path": "/opt/amnezia/awg/awg0.conf",
         "subnet": os.environ.get("AWG_FI_SUBNET", "10.8.2"),
-        "endpoint_host": os.environ.get("AWG_FI_ENDPOINT_HOST", os.environ.get("AWG_FI_ENDPOINT", "fi.example.com")),
+        "endpoint_host": os.environ.get("AWG_FI_ENDPOINT_HOST", "fi.example.com"),
         "endpoint_port": os.environ.get("AWG_FI_ENDPOINT_PORT", "49752"),
         "allowed_ips_file": os.environ.get("AWG_FI_ALLOWED_IPS_FILE", os.environ.get("AWG_ALLOWED_IPS_FILE", "/root/vpn-shop/awg/allowed-ips.txt")),
         "client_dns": os.environ.get("AWG_CLIENT_DNS", "1.1.1.1, 1.0.0.1"),
         "client_mtu": os.environ.get("AWG_CLIENT_MTU", "1280"),
         "reserved_ips": {"10.8.2.1", "10.8.2.2", "10.8.2.3", "10.8.2.4", "10.8.2.6"},
-    },
-    "pl": {
-        "code": "pl",
-        "name": "Польша 🇵🇱",
-        "flag": "🇵🇱",
-        "mode": "ssh",
-        "exec_mode": "ssh",
-        "host": os.environ.get("AWG_PL_HOST", "2.56.125.177"),  # PLACEHOLDER
-        "ssh_host": os.environ.get("AWG_PL_HOST", "2.56.125.177"),  # PLACEHOLDER
-        "ssh_user": os.environ.get("AWG_PL_SSH_USER", "root"),
-        "ssh_port": int(os.environ.get("AWG_PL_SSH_PORT", "22")),
-        "container": os.environ.get("AWG_PL_CONTAINER", "amnezia-awg2"),
-        "conf_path": "/opt/amnezia/awg/awg0.conf",
-        "subnet": os.environ.get("AWG_PL_SUBNET", "10.8.3"),
-        "endpoint_host": os.environ.get("AWG_PL_ENDPOINT_HOST", "pl.silentconnect.net"),  # PLACEHOLDER
-        "endpoint_port": os.environ.get("AWG_PL_ENDPOINT_PORT", "44121"),
-        "allowed_ips_file": os.environ.get("AWG_PL_ALLOWED_IPS_FILE", os.environ.get("AWG_ALLOWED_IPS_FILE", "/root/vpn-shop/awg/allowed-ips.txt")),
-        "client_dns": os.environ.get("AWG_CLIENT_DNS", "1.1.1.1, 1.0.0.1"),
-        "client_mtu": os.environ.get("AWG_CLIENT_MTU", "1280"),
-        "reserved_ips": {"10.8.3.1", "10.8.3.2", "10.8.3.3", "10.8.3.4", "10.8.3.6"},
     },
 }
 
@@ -103,11 +83,6 @@ def _get_server(server_code: str = "nl") -> dict[str, Any]:
             srv["ssh_host"] = os.environ.get("AWG_NL_HOST", os.environ.get("NL_MASTER_IP", "192.0.2.1"))
             srv["ssh_user"] = os.environ.get("AWG_NL_SSH_USER", "root")
             srv["ssh_port"] = int(os.environ.get("AWG_NL_SSH_PORT", "22"))
-    elif local_server == "pl":
-        if code == "pl":
-            srv["mode"] = "local"
-            srv["exec_mode"] = "local"
-            srv["host"] = "127.0.0.1"
     return srv
 
 

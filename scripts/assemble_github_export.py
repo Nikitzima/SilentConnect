@@ -57,7 +57,7 @@ FORBIDDEN_EXTENSIONS = {
 
 FORBIDDEN_EXACT_FILENAMES = {
     ".env", ".env.local", ".env.production", ".env.staging", ".env.silentconnect", ".env.platega", "subjson.env",
-    "outage_metrics.json",
+    "outage_metrics.json", "cluster_doctor.py",
 }
 
 ALLOWED_EXEMPT_NAMES = {

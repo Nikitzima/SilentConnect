@@ -19,6 +19,7 @@ from . import awg_manager
 from .catalog import Offer, build_offers
 from .config import DEFAULT_MANAGER_TG_ID, REFERRAL_INVITEE_DISCOUNT_PERCENT, Settings
 from .mailer import send_subscription_email_async
+from .platega import PlategaClient
 from .provisioning import ADMIN_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES, TEST_PROFILE_NOTES, Provisioner
 from .security import days_from_now, normalize_username, now_ts
 from .store import Store
@@ -80,6 +81,11 @@ class ShopBot:
         self.telegram = TelegramBotClient(settings.telegram_bot_token)
         self.provisioner = Provisioner(settings, store)
         self.offers = build_offers(settings)
+        self.platega = PlategaClient(
+            merchant_id_bot=settings.platega_merchant_id_bot,
+            merchant_id_web=settings.platega_merchant_id_web,
+            secret=settings.platega_secret,
+        )
         self._last_test_profile_cleanup_at = 0
         self._periodic_task_lock = threading.Lock()
         self._background_executor = concurrent.futures.ThreadPoolExecutor(
@@ -685,14 +691,62 @@ class ShopBot:
     def _notify_action_in_flight(self, chat_id: int | str) -> None:
         self.telegram.send_message(chat_id, "Уже обрабатывается. Новый дубль не создаю.")
 
-    def _public_waiting_payment_markup(self, order_public_id: str) -> dict[str, Any]:
+    def get_or_create_platega_payment_url(self, order: dict[str, Any]) -> str:
+        if not self.settings.platega_enabled or not self.platega.is_configured:
+            return ""
+        meta = dict(order.get("meta_json") or {})
+        existing_url = str(meta.get("platega_url") or "").strip()
+        if existing_url:
+            return existing_url
+        try:
+            amount = int(order.get("final_price_rub") or 0)
+            if amount <= 0:
+                return ""
+            duration = int(order.get("duration_days") or 30)
+            desc = f"SilentConnect #{order['public_id']} ({duration} дн.)"
+            tx = self.platega.create_transaction(
+                amount=amount,
+                currency="RUB",
+                description=desc,
+                payload=str(order["public_id"]),
+                metadata={
+                    "order_id": str(order["public_id"]),
+                    "chat_id": str(order.get("customer_chat_id") or ""),
+                },
+                is_bot=True,
+            )
+            url = str(tx.get("url") or "").strip()
+            tx_id = str(tx.get("transactionId") or "").strip()
+            if url:
+                meta["platega_url"] = url
+                if tx_id:
+                    meta["platega_transaction_id"] = tx_id
+                self.store.update_order_meta(str(order["public_id"]), meta)
+                return url
+        except Exception:
+            LOGGER.exception("Failed to create Platega payment URL for bot order %s", order["public_id"])
+        return ""
+
+    def _public_waiting_payment_markup(self, order_public_id: str, order: dict[str, Any] | None = None) -> dict[str, Any]:
         support_url = (self.settings.support_tg_url or "").strip() or "https://t.me/SilentConnectHelp"
-        rows: list[list[Any]] = [
-            [("💬 Написать оператору для оплаты", support_url)],
-            [("Оплачено", f"public:payment_sent:{order_public_id}", "success")],
-            [("Отменить заказ", f"public:cancel_waiting:{order_public_id}", "danger")],
-            [("У меня есть промокод", f"public:promo_switch:{order_public_id}")],
-        ]
+        if order is None:
+            order = self.store.get_order(order_public_id)
+
+        platega_url = ""
+        if order and self.settings.platega_enabled:
+            platega_url = self.get_or_create_platega_payment_url(order)
+
+        rows: list[list[Any]] = []
+        if platega_url:
+            rows.append([("💳 Оплатить онлайн (СБП / Карты / Крипта)", platega_url)])
+            rows.append([("Отменить заказ", f"public:cancel_waiting:{order_public_id}", "danger")])
+            rows.append([("У меня есть промокод", f"public:promo_switch:{order_public_id}")])
+            rows.append([("💬 Написать в поддержку", support_url)])
+        else:
+            rows.append([("💬 Написать оператору для оплаты", support_url)])
+            rows.append([("Оплачено", f"public:payment_sent:{order_public_id}", "success")])
+            rows.append([("Отменить заказ", f"public:cancel_waiting:{order_public_id}", "danger")])
+            rows.append([("У меня есть промокод", f"public:promo_switch:{order_public_id}")])
         return kb(rows)
 
     @staticmethod
@@ -732,15 +786,32 @@ class ShopBot:
         device_limit = self.order_device_limit(order)
         lines.append(f"Лимит: {self.device_limit_label(device_limit)}.")
         lines.append(f"Сумма к оплате: {int(order['final_price_rub'])} RUB.")
-        lines.extend(
-            [
-                "",
-                "Для оплаты нажмите кнопку «💬 Написать оператору для оплаты» и отправьте менеджеру номер заказа.",
-                f"Номер заказа: `{order['public_id']}`.",
-                "",
-                "После оплаты нажмите «Оплачено». Мы подтвердим заказ и бот сразу пришлёт ссылку доступа.",
-            ]
-        )
+
+        platega_url = str(meta.get("platega_url") or "").strip()
+        if not platega_url and self.settings.platega_enabled:
+            platega_url = self.get_or_create_platega_payment_url(order)
+
+        if platega_url:
+            lines.extend(
+                [
+                    "",
+                    "Для быстрой оплаты нажмите кнопку «💳 Оплатить онлайн» ниже.",
+                    "Поддерживаются СБП, банковские карты и криптовалюта.",
+                    "Комиссия сервиса эквайринга рассчитывается на форме оплаты.",
+                    "",
+                    "После подтверждения оплаты доступ будет выдан автоматически!",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "",
+                    "Для оплаты нажмите кнопку «💬 Написать оператору для оплаты» и отправьте менеджеру номер заказа.",
+                    f"Номер заказа: `{order['public_id']}`.",
+                    "",
+                    "После оплаты нажмите «Оплачено». Мы подтвердим заказ и бот сразу пришлёт ссылку доступа.",
+                ]
+            )
         return "\n".join(lines)
 
     def _send_public_terms(self, chat_id: int | str, context: dict[str, Any] | None = None) -> None:
@@ -1536,6 +1607,33 @@ class ShopBot:
                 ]
             ),
             reply_markup=self._support_markup(),
+            message_id=message_id,
+        )
+
+    def show_public_boost(self, chat_id: int | str, *, message_id: int | None = None) -> None:
+        text = "\n".join(
+            [
+                "⚡ Ускорение и стабильность подключения (Boost)",
+                "",
+                "В сервисе SilentConnect доступны передовые протоколы с маскировкой трафика, обеспечивающие:",
+                "• Высокую скорость и защиту от замедлений провайдеров",
+                "• Оптимальный пинг и стабильный туннель для любых устройств",
+                "• Автоматическую балансировку и резервирование серверов",
+                "",
+                "Выберите действие:",
+            ]
+        )
+        markup = kb(
+            [
+                [("💳 Оформить доступ", "public:access")],
+                [("🔑 Мой кабинет", "public:cabinet")],
+                [("💬 Поддержка", (self.settings.support_tg_url or "").strip() or "https://t.me/SilentConnectHelp")],
+            ]
+        )
+        self._render_or_edit(
+            chat_id,
+            text,
+            reply_markup=markup,
             message_id=message_id,
         )
 
@@ -2770,6 +2868,10 @@ class ShopBot:
 
         if command == "/support":
             self.show_public_support(chat_id)
+            return
+
+        if command == "/boost":
+            self.show_public_boost(chat_id)
             return
 
         session = self.store.get_session(chat_id)
@@ -4539,6 +4641,11 @@ class ShopBot:
             if data == "public:access" and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
                 self.show_public_access_menu(chat_id, message_id=message_id)
+                return
+
+            if data in ("public:boost", "public_boost") and chat_id is not None:
+                self.telegram.answer_callback_query(callback_id)
+                self.show_public_boost(chat_id, message_id=message_id)
                 return
 
             if data.startswith("public:buy_devices:") and chat_id is not None:

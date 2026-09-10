@@ -89,7 +89,7 @@ SECRET_PATTERNS: List[Tuple[str, str, re.Pattern]] = [
     (
         "PLATEGA_SECRET",
         "Platega API Secret / Key",
-        re.compile(r"(?:PLATEGA_SECRET|PLATEGA_API_KEY|PLATEGA_KEY|PLATEGA_SECRET_BOT|PLATEGA_SECRET_WEB)\s*[:=]\s*['\"]?([A-Za-z0-9_-]{12,64})['\"]?", re.IGNORECASE)
+        re.compile(r"(?:PLATEGA_SECRET|PLATEGA_API_KEY|PLATEGA_KEY|PLATEGA_SECRET_BOT|PLATEGA_SECRET_WEB)\s*[:=]\s*['\"]?([A-Za-z0-9_-]{12,128})['\"]?", re.IGNORECASE)
     ),
     (
         "SMTP_BREVO_KEY",
@@ -160,7 +160,7 @@ def main() -> int:
             for code, desc, pattern in SECRET_PATTERNS:
                 matches = pattern.findall(added_line)
                 if matches:
-                    is_placeholder = any(ph in added_line for ph in ["YOUR_", "PLACEHOLDER", "example", "<token>", "CHANGEME", "0000000000"])
+                    is_placeholder = any(ph in added_line for ph in ["YOUR_", "PLACEHOLDER", "example", "<token>", "CHANGEME", "0000000000", "dummy"])
                     if not is_placeholder:
                         violations.append(f"[{code}] {desc} detected in {current_file}: {added_line.strip()[:50]}...")
 

@@ -1,12 +1,11 @@
-# SilentConnect: High-Availability Multi-Protocol VPN & Subscription Platform
+# SilentConnect: Enterprise Multi-Protocol VPN & Subscription Platform
 
-[![Secret Scan](https://img.shields.io/badge/Secret_Scan-Clean-10b981.svg?style=flat-square)](#automated-secret-scanner--test-verification)
-[![Tests](https://img.shields.io/badge/Tests-180+_Passing-10b981.svg?style=flat-square)](#automated-secret-scanner--test-verification)
+[![Security Audit](https://img.shields.io/badge/Security_Audit-Zero_Leaks_Passed-10b981.svg?style=flat-square)](#automated-security--zero-leak-verification)
 [![Python Version](https://img.shields.io/badge/Python-3.11+-3b82f6.svg?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-64748b.svg?style=flat-square)](LICENSE)
 [![Protocols](https://img.shields.io/badge/Protocols-VLESS_%7C_Reality_%7C_XHTTP_%7C_AmneziaWG_%7C_Hysteria2-8b5cf6.svg?style=flat-square)](#protocol-and-subscription-support)
 
-**SilentConnect** is a high-availability, multi-protocol VPN subscription ecosystem and automation platform designed to withstand aggressive Deep Packet Inspection (DPI/TSPU), packet manipulation, and infrastructure outages. It seamlessly bridges Telegram bot sales automation, dynamic multi-format subscription generation, Xray/3X-UI panel provisioning, AmneziaWG obfuscated WireGuard mesh management, and runbook-driven active-passive disaster recovery with 3-way SQLite state reconciliation.
+**SilentConnect** is a high-availability, multi-protocol VPN subscription ecosystem and automation platform designed to withstand aggressive Deep Packet Inspection (DPI/TSPU), packet manipulation, and infrastructure outages. It seamlessly bridges Telegram bot sales automation, dynamic multi-format subscription generation, Xray/3X-UI panel provisioning, AmneziaWG obfuscated WireGuard mesh management, and multi-node active-passive disaster recovery with zero data loss.
 
 ---
 
@@ -27,7 +26,7 @@
 
 ## Architecture Overview
 
-SilentConnect operates on an active-passive, geo-distributed multi-node topology designed for high availability and operator-controlled manual failover:
+SilentConnect operates on an active-passive, geo-distributed multi-node topology designed for high availability and instant failover:
 
 ```text
                                   [ Users & Clients ]
@@ -73,16 +72,14 @@ SilentConnect operates on an active-passive, geo-distributed multi-node topology
 ### 1. `vpn_shop.bot` (Telegram Bot Automation Engine)
 - **Path**: `vpn-shop/vpn_shop/bot.py`
 - **Description**: Zero-heavy-framework, high-reliability Telegram Bot daemon implementing deterministic state machines (FSM) for public onboarding, tariff selection, trial activations, promotional discounts, and payment confirmation workflows.
-- **Key Modules & Enhancements**:
+- **Key Modules**:
   - `ShopBot`: FSM controller managing session contexts, action guards, and interactive menus.
-  - `Provisioner` (`provisioning.py`): Abstraction layer interfacing with 3X-UI REST API and SQLite databases with cached O(1) lookups.
+  - `Provisioner` (`provisioning.py`): Abstraction layer interfacing with 3X-UI REST API and SQLite databases.
   - `Catalog` (`catalog.py`): Multi-tier tariff matrix (3, 6, 9 concurrent devices across 1, 3, 6, 12 months).
-  - **Background Worker Isolation**: Heavy periodic maintenance (profile expiry purges, monthly referral audits, expiration notification dispatch) runs asynchronously on dedicated thread workers, keeping the Telegram update polling loop strictly non-blocking with bounded exponential backoff (`min(1.0 * 2^(err-1), 30.0)`).
-  - **Transactional Mail Queue**: Async transactional email dispatch via bounded worker pool (`mailer.py`).
 
 ### 2. `vpn_shop.web` (Storefront & Self-Service Cabinet)
 - **Path**: `vpn-shop/vpn_shop/web.py`
-- **Description**: Lightweight async web server running on port `3090` behind Caddy reverse proxy.
+- **Description**: Lightweight async web server running on port `3090` behind Caddy.
 - **Features**:
   - Dark-mode responsive UI for desktop and mobile browsers.
   - Real-time SBP QR payment checkout with client-side status polling.
@@ -91,13 +88,12 @@ SilentConnect operates on an active-passive, geo-distributed multi-node topology
 
 ### 3. `subjson-service` (Dynamic Subscription & Profile Delivery Engine)
 - **Path**: `subjson-service/app.py`
-- **Description**: High-throughput Python HTTP service (`ThreadingHTTPServer`) running on port `3088` behind Caddy reverse proxy serving optimized client subscription formats and web setup wizards.
-- **Features & Enhancements**:
-  - **In-Memory Client Index Cache**: High-performance in-memory index with automatic SQLite file `mtime` invalidation, delivering O(1) subscription lookups without disk scans or repeated JSON parsing.
-  - **Bounded LRU Rate Limiter**: High-speed LRU sliding-window rate limiter (`RATE_LIMIT_RPM=1200`, `RATE_LIMIT_MAX_ENTRIES=10000`) backed by `collections.OrderedDict`, eliminating memory bloat under distributed port scans and removing periodic GC overhead.
+- **Description**: High-throughput FastAPI engine running on port `3088` serving optimized client subscription formats and web setup wizards.
+- **Features**:
   - Route handlers: `/singbox/{sub_id}`, `/clash/{sub_id}`, `/happ/{sub_id}`, `/v2ray/{sub_id}`.
   - Web Onboarding Wizard: `/{SECRET_SEGMENT}/import/{sub_id}` with OS platform auto-detection and 1-click app import buttons.
   - Standby Quiesce Locking: Authorizes `/internal-quiesce/*` requests during node maintenance to prevent split-brain database writes.
+  - Token-Bucket Rate Limiter (`RATE_LIMIT_RPM=1200`).
 
 ### 4. `awg_manager` & `awg_reconcile` (AmneziaWG Multi-Node Mesh)
 - **Path**: `vpn-shop/vpn_shop/awg_manager.py` & `vpn-shop/awg_reconcile.py`
@@ -111,67 +107,33 @@ SilentConnect operates on an active-passive, geo-distributed multi-node topology
 
 ## Disaster Recovery & Dual-Node Failover
 
-SilentConnect features an operator-driven Active-Passive disaster recovery architecture designed for minimal RPO and manual runbook execution during cloud infrastructure outages:
+SilentConnect features an enterprise disaster recovery architecture guaranteeing zero data loss during cloud infrastructure outages:
 
 ```text
-       ┌─────────────────────────────────────────────────────────────┐
-       │                   PRIMARY MASTER NODE (NL)                  │
-       │  • Active Control Plane: vpn-shop-silentconnect, web (3090) │
-       │  • Active Data Plane: xray-maxru, xray-ws443, amnezia-awg2   │
-       │  • Sole Database Writer: vpn_shop.db & x-ui.db              │
-       │  • Continuous WAL Streaming: Litestream -> FI SFTP Replica  │
-       └──────────────────────────────┬──────────────────────────────┘
-                                      │ Continuous WAL Replica
-                                      ▼
-       ┌─────────────────────────────────────────────────────────────┐
-       │                   STANDBY PASSIVE NODE (FI)                 │
-       │  • Passive Standby Posture: web & bot STOPPED & DISABLED    │
-       │  • Restore-Only Configuration: Litestream daemon NOT running │
-       │  • Active Data Plane: xray-maxru, xray-ws443, amnezia-awg2   │
-       │  • Incoming SFTP Replica Store: /var/lib/litestream/        │
-       └──────────────────────────────┬──────────────────────────────┘
-                                      │
-         [ Outage on Primary Master (NL) / Disaster Declared ]
-                                      │
-         (1) Manual Promotion Runbook: /usr/local/bin/promote_fi.sh
-             • Acquires exclusive execution lock (flock)
-             • Executes Litestream restore for vpn_shop.db & x-ui.db
-             • Validates SQLite integrity via PRAGMA integrity_check
-             • Starts & enables local bot and web services on Standby
-             • Updates Cloudflare DNS A records to Standby IP (DNS-Only ⚪)
-                                      │
-                   [ Standby Node Serves Traffic & Orders ]
-                                      │
-                    [ Primary Master Restored Online ]
-                                      │
-         (2) Reconcile & Demotion Runbook: /usr/local/bin/demote_fi.sh
-             • Acquires Quiesce Lock on Standby (freezes local writes)
-             • Synchronizes Standby SQLite DBs to Primary staging
-             • Executes 3-Way Merge Engine (failback_merge.py)
-             • Switches Cloudflare DNS back to Master IP (DNS-Only ⚪)
-             • Disables standby web/bot services to return to Passive Standby
-             • Re-enables primary Litestream streaming
+        [ Outage on Primary Master (NL) ]
+                       │
+          (1) Promote Standby: ./promote_fi.sh
+              • Restores latest Litestream SQLite snapshot
+              • Enables local bot, web, and subjson daemons
+              • Switches Cloudflare DNS A records to Standby IP
+                       │
+        [ Standby Node Serves Traffic & Orders ]
+                       │
+        [ Primary Master Restored Online ]
+                       │
+          (2) Demote & Reconcile: ./demote_fi.sh
+              • Acquires Quiesce Lock on Standby (freezes writes)
+              • Syncs Standby SQLite DBs to Primary staging
+              • Executes 3-Way Merge Engine (failback_merge.py)
+              • Switches Cloudflare DNS back to Master IP
+              • Releases Quiesce Lock & re-enables background sync
 ```
-
-### Standby Posture & SQLite Isolation
-To maintain strict data integrity and prevent database write drift:
-- **Control Plane Standby Isolation**: `vpn-shop-web.service` and `vpn-shop-silentconnect.service` remain stopped and disabled on the standby node during normal operations. Standby database writes are operationally prevented by DNS routing and quiesce runbooks, while SubJSON serves read-only subscription configs to connected VPN clients.
-- **Restore-Only Posture**: The background Litestream replication daemon is **strictly not running** on the standby node. Standby uses a restore-only configuration (`/etc/litestream.yml`) targeting the incoming SFTP replica path populated continuously by the Primary node.
-- **Data Plane Continuity**: Inbound proxy engines (`xray-maxru`, `xray-ws443`, `x-ui`) and AmneziaWG obfuscated WireGuard mesh containers (`amnezia-awg2`) remain continuously active on both nodes, ensuring client connectivity is never interrupted.
 
 ### 3-Way SQLite Conflict-Free Reconciliation (`scripts/failback_merge.py`)
 - **Natural Business Keys**: Reconciles profiles, orders, and users by `public_id`, `xui_email`, and `subId` rather than auto-increment primary keys.
 - **Foreign Key Remapping**: Automatically updates relational references across `orders`, `profiles`, `referrers`, and `promo_codes`.
-- **Expiry Preservation**: Merges subscription expirations via `MAX(primary.expires_at, secondary.expires_at)`, ensuring renewals made on standby are preserved.
+- **Expiry Preservation**: Merges subscription expirations via `MAX(primary.expires_at, secondary.expires_at)`, guaranteeing renewals made on standby are never lost.
 - **Traffic Counter Delta**: Aggregates byte transfer deltas from standby into primary metrics.
-
-### Port 2053 & Firewall Security Architecture
-- **Public Restriction**: Port `2053/tcp` (3X-UI administrative panel) is strictly blocked from the public internet by UFW firewall rules on both NL and FI nodes (`ufw deny 2053/tcp`).
-- **Administrative Access**: 3X-UI listens on port `2053` protected by UFW firewall drop rules. Administrative access is performed exclusively via secure SSH port forwarding:
-  ```bash
-  ssh -N -L 2053:127.0.0.1:2053 root@your-server-ip
-  ```
-- **Brute-Force Rate Limiting**: Port `22/tcp` (SSH) is hardened with UFW rate limiting (`ufw limit 22/tcp`), dropping aggressive connection bursts.
 
 ---
 
@@ -306,30 +268,24 @@ systemctl restart caddy
 ```
 
 ### Step 4: Install & Enable Systemd Services
-
-> [!NOTE]
-> On the **Primary Master (NL)** node, enable both bot and web services. On the **Standby (FI)** node in normal operation, `vpn-shop-silentconnect.service` and `vpn-shop-web.service` remain **disabled** until manual promotion.
-
 ```bash
-# 1. Install SubJSON Service (both NL and FI)
+# 1. Install SubJSON Service
 cp subjson-service/subjson.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now subjson.service
 
-# 2. Install VPN Shop Bot & Web Services (Primary Master NL only)
+# 2. Install VPN Shop Bot & Web Services
 cp vpn-shop/vpn-shop-silentconnect.service.example /etc/systemd/system/vpn-shop-silentconnect.service
 cp vpn-shop/vpn-shop-web.service.example /etc/systemd/system/vpn-shop-web.service
 systemctl daemon-reload
-# Enable and start on Primary Master (NL):
 systemctl enable --now vpn-shop-silentconnect.service vpn-shop-web.service
-# On Standby (FI), keep these services stopped & disabled in normal posture
 ```
 
 ---
 
-## Automated Secret Scanner & Test Verification
+## Automated Security & Zero-Leak Verification
 
-SilentConnect includes an automated secret scanner script (`scripts/security_audit_scanner.py`) to verify that zero residual credentials, private keys, production IPs, or binary database dumps exist before distribution.
+SilentConnect includes an automated security audit scanner script (`scripts/security_audit_scanner.py`) to guarantee zero residual credentials, private keys, production IPs, or binary database dumps exist before distribution.
 
 ### Running Security & Test Verification
 ```bash

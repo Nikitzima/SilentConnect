@@ -137,13 +137,13 @@ SECRET_PATTERNS: List[Tuple[str, str, re.Pattern, bool]] = [
     (
         "SEC-008",
         "SMTP Password / Brevo API Key",
-        re.compile(r"\b" + "xkey" + r"sib-[a-f0-9]{64}-[a-zA-Z0-9]{16}\b|(?:SMTP_PASSWORD|BREVO_API_KEY|MAIL_PASSWORD)\s*[:=]\s*['\"]?([^\s'\"]{8,})['\"]?", re.IGNORECASE),
+        re.compile(r"\bxkeysib-[a-f0-9]{64}-[a-zA-Z0-9]{16}\b|(?:SMTP_PASSWORD|BREVO_API_KEY|MAIL_PASSWORD)\s*[:=]\s*['\"]?([^\s'\"]{8,})['\"]?", re.IGNORECASE),
         False,
     ),
     (
         "SEC-010",
         "Platega API Secret / Key",
-        re.compile(r"(?:PLATEGA_SECRET|PLATEGA_API_KEY|PLATEGA_KEY|PLATEGA_SECRET_BOT|PLATEGA_SECRET_WEB)\s*[:=]\s*['\"]?([A-Za-z0-9_-]{12,64})['\"]?", re.IGNORECASE),
+        re.compile(r"(?:PLATEGA_SECRET|PLATEGA_API_KEY|PLATEGA_KEY|PLATEGA_SECRET_BOT|PLATEGA_SECRET_WEB)\s*[:=]\s*['\"]?([A-Za-z0-9_-]{12,128})['\"]?", re.IGNORECASE),
         False,
     ),
     (
@@ -235,7 +235,7 @@ SAFE_WHITELIST_TOKENS: Set[str] = {
     "192.0.2.1",
     "00000000-0000-0000-0000-000000000000",
     "034d060d-8f33-4280-b22c-6b128813646f",
-    "your_smtp_password_or_token_here",
+    "dummy_smtp_password_placeholder",
     "+79990000000",
     "+79001234567",
     "+7 (999) 000-00-00",
