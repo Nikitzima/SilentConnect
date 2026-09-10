@@ -41,14 +41,34 @@ _vpn_shop_path = str(Path(__file__).resolve().parent.parent / "vpn-shop")
 if _vpn_shop_path not in sys.path:
     sys.path.insert(0, _vpn_shop_path)
 
+if "MONTHLY_PRICE_3_DEVICES_RUB" not in os.environ:
+    for _env_cand in (
+        Path(__file__).resolve().parent.parent / "vpn-shop" / ".env",
+        Path(__file__).resolve().parent.parent / "vpn-shop" / ".env.silentconnect",
+        Path("/root/vpn-shop/.env"),
+        Path("/root/vpn-shop/.env.silentconnect"),
+    ):
+        if _env_cand.is_file():
+            try:
+                with open(_env_cand, "r", encoding="utf-8") as _ef:
+                    for _line in _ef:
+                        _line = _line.strip()
+                        if _line and not _line.startswith("#") and "=" in _line:
+                            _k, _v = _line.split("=", 1)
+                            _k = _k.strip()
+                            if _k.startswith("MONTHLY_PRICE_") and _k not in os.environ:
+                                os.environ[_k] = _v.strip().strip('"').strip("'")
+            except Exception:
+                pass
+
 try:
     from vpn_shop.catalog import calculate_renewal_price, quote_price
     from vpn_shop.security import hash_secret, hash_token
     from vpn_shop.web import subscription_setup_url, verify_cf_turnstile
 except ImportError:
     def quote_price(device_limit: int = 3, duration_days: int = 30, settings: Any = None) -> int:
-        prices = {3: 100, 6: 150, 9: 200}
-        monthly = prices.get(device_limit, 100)
+        prices = {3: 149, 6: 199, 9: 235}
+        monthly = prices.get(device_limit, 149)
         months = max(duration_days // 30, 1)
         discount = 0
         if duration_days >= 360:
@@ -783,8 +803,8 @@ def create_inline_renewal_order(
         # Centralized catalog pricing based on device limit & duration
         final_price = quote_price(device_limit, duration_days)
         months = max(duration_days // 30, 1)
-        device_base_prices = {3: 100, 6: 150, 9: 200}
-        base_price = device_base_prices.get(device_limit, 100) * months
+        device_base_prices = {3: 149, 6: 199, 9: 235}
+        base_price = device_base_prices.get(device_limit, 149) * months
 
         # Promo discount check
         discount_percent = 0
@@ -5814,7 +5834,7 @@ def setup_page_html(
       if (!devInput || !durInput) return;
       const dev = parseInt(devInput.value, 10) || 3;
       const dur = parseInt(durInput.value, 10) || 360;
-      const baseMonthly = dev === 9 ? 349 : (dev === 6 ? 249 : 149);
+      const baseMonthly = dev === 9 ? 235 : (dev === 6 ? 199 : 149);
       const months = Math.max(Math.floor(dur / 30), 1);
       let discount = 0;
       if (dur === 90) discount = 10;

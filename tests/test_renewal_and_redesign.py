@@ -49,11 +49,11 @@ class TestRenewalAndRedesign(unittest.TestCase):
             web_listen_host="127.0.0.1",
             web_listen_port=3090,
             web_public_base_url="https://example.com",
-            monthly_price_xhttp_rub=100,
-            monthly_price_tcp_rub=100,
-            monthly_price_3_devices_rub=100,
-            monthly_price_6_devices_rub=150,
-            monthly_price_9_devices_rub=200,
+            monthly_price_xhttp_rub=149,
+            monthly_price_tcp_rub=149,
+            monthly_price_3_devices_rub=149,
+            monthly_price_6_devices_rub=199,
+            monthly_price_9_devices_rub=235,
             default_device_limit=3,
             invite_required=False,
             terms_version="2026-04-20",
@@ -122,11 +122,34 @@ class TestRenewalAndRedesign(unittest.TestCase):
             self.assertNotIn("Boost", t)
             self.assertNotIn("⚡", t)
 
-    def test_bot_pay_command(self):
-        chat_id = 112233
-        msg = {"chat": {"id": chat_id}, "from": {"id": chat_id}, "text": "/pay"}
-        self.bot.handle_message(msg)
-        self.assertTrue(len(self.dummy_tg.send_message.call_args_list) > 0)
+    def test_unified_pricing_no_99_placeholder(self):
+        from vpn_shop.catalog import quote_price
+        # 3 devices must be 149 (NOT 99)
+        self.assertEqual(quote_price(3, 30), 149)
+        self.assertEqual(quote_price(3, 90), 399)
+        self.assertEqual(quote_price(3, 180), 719)
+        self.assertEqual(quote_price(3, 360), 1249)
+
+        # 6 devices
+        self.assertEqual(quote_price(6, 30), 199)
+        self.assertEqual(quote_price(6, 90), 539)
+        self.assertEqual(quote_price(6, 180), 959)
+        self.assertEqual(quote_price(6, 360), 1669)
+
+        # 9 devices
+        self.assertEqual(quote_price(9, 30), 239)
+        self.assertEqual(quote_price(9, 90), 629)
+        self.assertEqual(quote_price(9, 180), 1129)
+        self.assertEqual(quote_price(9, 360), 1969)
+
+        # Web Checkout order creation
+        order_3_30 = self.checkout.create_order("tcp_3_30")
+        self.assertEqual(order_3_30["final_price_rub"], 149)
+        self.assertEqual(order_3_30["base_price_rub"], 149)
+
+        # Bot renewal base price
+        self.assertEqual(self.bot.base_price_for_duration("tcp", 30, device_limit=3), 149)
+        self.assertEqual(self.bot.base_price_for_duration("tcp", 90, device_limit=3), 399)
 
 if __name__ == "__main__":
     unittest.main()

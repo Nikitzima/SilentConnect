@@ -405,10 +405,9 @@ class WebCheckout:
         return self.settings.monthly_price_9_devices_rub
 
     def base_price_for_duration(self, transport: str, duration_days: int, *, device_limit: int | str | None = None) -> int:
-        monthly_price = self.base_price_for_device_limit(device_limit)
-        if transport == "hybrid":
-            monthly_price = (monthly_price * 120 + 99) // 100
-        return max((monthly_price * int(duration_days) + 29) // 30, 0)
+        from .catalog import quote_price
+        limit = int(self.settings.default_device_limit if device_limit is None else device_limit)
+        return quote_price(limit, duration_days, settings=self.settings)
 
     @staticmethod
     def fixed_promo_final_price(promo: dict[str, Any], base_price: int) -> int:
@@ -1644,9 +1643,9 @@ class WebCheckout:
         "operatingSystem": "iOS, Android, Windows, macOS, Linux",
         "offers": {{
           "@type": "Offer",
-          "price": "199",
+          "price": "149",
           "priceCurrency": "RUB",
-          "description": "Тарифы от 199 RUB/месяц для защищенного доступа к интернету"
+          "description": "Тарифы от 149 RUB/месяц для защищенного доступа к интернету"
         }},
         "url": "https://silentconnect.net", "comment": "PLACEHOLDER"
       }}
