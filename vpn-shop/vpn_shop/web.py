@@ -1093,16 +1093,6 @@ class WebCheckout:
                 {status_badge}
               </div>
 
-              <div class="cabinet-key-box">
-                <div class="cabinet-key-val">
-                  <span style="color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Ключ профиля</span>
-                  <span id="key-{idx}" style="font-weight: 700; color: #fff;">{html.escape(pid)}</span>
-                </div>
-                <button type="button" class="btn secondary cabinet-copy-btn" onclick="copyCabinetKey('key-{idx}', this)">
-                  Копировать 📋
-                </button>
-              </div>
-
               <table class="cabinet-table">
                 <tr>
                   <td>Лимит устройств:</td>
@@ -1115,6 +1105,10 @@ class WebCheckout:
                 <tr>
                   <td>Действует до:</td>
                   <td>{expiry_date_str} ({days_str})</td>
+                </tr>
+                <tr>
+                  <td>ID профиля:</td>
+                  <td style="font-family: monospace; font-size: 12px; color: var(--muted);">{html.escape(pid)}</td>
                 </tr>
               </table>
 
@@ -1140,15 +1134,11 @@ class WebCheckout:
         body = f"""
         <section class="section cabinet-section">
           <div class="cabinet-topbar">
-            <div>
-              <h2 class="cabinet-heading">Личный кабинет</h2>
-              <div class="cabinet-meta-row">
-                <span class="cabinet-email-badge">✉️ {html.escape(email)}</span>
-                <span class="cabinet-timer-badge">⏱ Сессия активна (ссылка действует 30 мин)</span>
-              </div>
-            </div>
-            <div class="cabinet-sub-count">
-              Всего подписок: <strong>{count}</strong>
+            <h2 class="cabinet-heading">Личный кабинет</h2>
+            <div class="cabinet-meta-row">
+              <span class="cabinet-sub-badge">🔑 Подписок: <strong>{count}</strong></span>
+              <span class="cabinet-email-badge">✉️ {html.escape(email)}</span>
+              <span class="cabinet-timer-badge">⏱ Сессия активна (30 мин)</span>
             </div>
           </div>
 
@@ -1173,27 +1163,6 @@ class WebCheckout:
             </div>
           </div>
         </section>
-
-        <script>
-        function copyCabinetKey(elementId, btn) {{
-          const el = document.getElementById(elementId);
-          if (!el) return;
-          const text = el.textContent.trim();
-          navigator.clipboard.writeText(text).then(() => {{
-            const orig = btn.innerHTML;
-            btn.innerHTML = "Скопировано! ✓";
-            btn.style.borderColor = "var(--green)";
-            btn.style.color = "var(--green)";
-            setTimeout(() => {{
-              btn.innerHTML = orig;
-              btn.style.borderColor = "";
-              btn.style.color = "";
-            }}, 2000);
-          }}).catch(() => {{
-            prompt("Скопируйте ключ вручную:", text);
-          }});
-        }}
-        </script>
         """
         return self.render_page("Личный кабинет", body)
 
@@ -1513,16 +1482,21 @@ class WebCheckout:
     }}
     .cabinet-section {{ max-width: 980px; margin: 0 auto; }}
     .cabinet-topbar {{
-      display: flex; justify-content: space-between; align-items: flex-start;
-      flex-wrap: wrap; gap: 16px; margin-bottom: 28px;
+      margin-bottom: 28px;
       padding-bottom: 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     }}
     .cabinet-heading {{
-      font-size: clamp(24px, 4vw, 34px); margin: 0 0 8px 0; font-weight: 800;
+      font-size: clamp(24px, 4vw, 34px); margin: 0 0 10px 0; font-weight: 800;
       background: linear-gradient(to right, #fff, #34d399);
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     }}
     .cabinet-meta-row {{ display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }}
+    .cabinet-sub-badge {{
+      display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px;
+      background: rgba(47, 191, 113, 0.12); border: 1px solid rgba(47, 191, 113, 0.35);
+      border-radius: 20px; font-size: 13px; color: #2fbf71; font-weight: 600;
+    }}
+    .cabinet-sub-badge strong {{ color: #fff; font-size: 13px; font-weight: 700; }}
     .cabinet-email-badge {{
       display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px;
       background: rgba(255, 255, 255, 0.06); border: 1px solid var(--glass-border);
@@ -1533,11 +1507,6 @@ class WebCheckout:
       background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3);
       border-radius: 20px; font-size: 13px; color: #34d399; font-weight: 500;
     }}
-    .cabinet-sub-count {{
-      font-size: 14px; color: var(--muted); background: rgba(255, 255, 255, 0.04);
-      padding: 8px 16px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.06);
-    }}
-    .cabinet-sub-count strong {{ color: #fff; font-size: 16px; }}
     .cabinet-cards-grid {{
       display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
       gap: 20px; margin-bottom: 32px;
@@ -1579,20 +1548,6 @@ class WebCheckout:
       background: rgba(239, 68, 68, 0.15); color: #f87171;
       border: 1px solid rgba(239, 68, 68, 0.35);
     }}
-    .cabinet-key-box {{
-      display: flex; justify-content: space-between; align-items: center; gap: 8px;
-      background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(255, 255, 255, 0.07);
-      border-radius: 10px; padding: 10px 12px; min-width: 0; box-sizing: border-box;
-    }}
-    .cabinet-key-val {{ display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow: hidden; }}
-    .cabinet-key-val span:first-child {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }}
-    .cabinet-key-val span:last-child {{
-      font-family: monospace; font-size: 13px; word-break: break-all; overflow-wrap: break-word;
-    }}
-    .cabinet-copy-btn {{
-      min-height: 34px; padding: 6px 12px; font-size: 12px; width: auto;
-      flex-shrink: 0; border-radius: 8px; white-space: nowrap;
-    }}
     .cabinet-table {{ width: 100%; border-collapse: collapse; font-size: 13.5px; }}
     .cabinet-table td {{ padding: 6px 0; vertical-align: top; }}
     .cabinet-table td:first-child {{ color: var(--muted); padding-right: 8px; }}
@@ -1610,15 +1565,12 @@ class WebCheckout:
     }}
     .cabinet-bottom-actions {{ display: flex; gap: 12px; flex-wrap: wrap; }}
     @media (max-width: 640px) {{
-      .cabinet-topbar {{ margin-bottom: 20px; padding-bottom: 16px; gap: 12px; }}
+      .cabinet-topbar {{ margin-bottom: 20px; padding-bottom: 16px; }}
       .cabinet-heading {{ font-size: 24px; }}
       .cabinet-meta-row {{ gap: 8px; }}
-      .cabinet-email-badge, .cabinet-timer-badge {{ font-size: 12px; padding: 4px 10px; }}
+      .cabinet-sub-badge, .cabinet-email-badge, .cabinet-timer-badge {{ font-size: 12px; padding: 4px 10px; }}
       .cabinet-cards-grid {{ grid-template-columns: 1fr; gap: 16px; margin-bottom: 24px; }}
-      .cabinet-card {{ padding: 16px 14px; gap: 14px; }}
-      .cabinet-key-box {{ padding: 8px 10px; }}
-      .cabinet-key-val span:last-child {{ font-size: 12px; }}
-      .cabinet-copy-btn {{ min-height: 32px; padding: 4px 10px; font-size: 11px; }}
+      .cabinet-card {{ padding: 18px 16px; gap: 14px; }}
       .cabinet-table {{ font-size: 12.5px; }}
       .cabinet-btn-primary {{ min-height: 42px; font-size: 13.5px; }}
       .cabinet-bottom-box {{ padding: 14px 16px; flex-direction: column; align-items: stretch; gap: 14px; }}
@@ -1627,8 +1579,6 @@ class WebCheckout:
     }}
     @media (max-width: 390px) {{
       .cabinet-card {{ padding: 14px 12px; }}
-      .cabinet-key-box {{ flex-direction: column; align-items: stretch; gap: 8px; }}
-      .cabinet-copy-btn {{ width: 100%; min-height: 34px; justify-content: center; }}
       .cabinet-table td {{ font-size: 12px; }}
     }}
     .order-link-input {{
