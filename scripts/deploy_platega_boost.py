@@ -129,44 +129,54 @@ class NodeSession:
                 return remote_exec.run_cmd(self.target, cmd, timeout=timeout)
         return res.returncode, res.stdout, res.stderr
 
-    def upload_modules_tar(self, local_vpn_shop: str, remote_dir: str = "/root/vpn-shop/vpn_shop"):
-        self.run(f"mkdir -p '{remote_dir}'")
-        time.sleep(1)
-        tar_cmd = ["tar", "-czf", "-", "-C", local_vpn_shop] + PYTHON_MODULES
-        ssh_cmd = [
-            "ssh",
-            "-o", "ConnectTimeout=8",
-            "-o", "StrictHostKeyChecking=no",
-            f"root@{self.ip}",
-            f"tar -xzf - -C '{remote_dir}' && chmod 0644 '{remote_dir}'/*.py",
-        ]
-        p_tar = subprocess.Popen(tar_cmd, stdout=subprocess.PIPE)
-        p_ssh = subprocess.Popen(ssh_cmd, stdin=p_tar.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        p_tar.stdout.close()
-        out, err = p_ssh.communicate(timeout=60)
-        p_tar.wait()
-        if p_ssh.returncode != 0:
+    def upload_modules_tar(self, local_vpn_shop: str, remote_dir: str = "/root/vpn-shop/vpn_shop", retries: int = 4):
+        time.sleep(4)
+        for attempt in range(retries):
+            tar_cmd = ["tar", "-czf", "-", "-C", local_vpn_shop] + PYTHON_MODULES
+            ssh_cmd = [
+                "ssh",
+                "-o", "ConnectTimeout=8",
+                "-o", "StrictHostKeyChecking=no",
+                f"root@{self.ip}",
+                f"mkdir -p '{remote_dir}' && tar -xzf - -C '{remote_dir}' && chmod 0644 '{remote_dir}'/*.py",
+            ]
+            p_tar = subprocess.Popen(tar_cmd, stdout=subprocess.PIPE)
+            p_ssh = subprocess.Popen(ssh_cmd, stdin=p_tar.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            p_tar.stdout.close()
+            out, err = p_ssh.communicate(timeout=60)
+            p_tar.wait()
+            if p_ssh.returncode == 0:
+                return
+            if attempt < retries - 1:
+                log(f"[{self.target.upper()}] Tar upload reset/failed (code {p_ssh.returncode}), retrying in {attempt + 5}s...")
+                time.sleep(attempt + 5)
+                continue
             err_msg = err.decode("utf-8", errors="replace")
             raise RuntimeError(f"Tar streaming upload failed with code {p_ssh.returncode}: {err_msg}")
 
-    def upload_file(self, local_path: str, remote_path: str):
+    def upload_file(self, local_path: str, remote_path: str, retries: int = 4):
         remote_dir = os.path.dirname(remote_path)
-        self.run(f"mkdir -p '{remote_dir}'")
-        time.sleep(1)
-        tar_cmd = ["tar", "-czf", "-", "-C", os.path.dirname(local_path), os.path.basename(local_path)]
-        ssh_cmd = [
-            "ssh",
-            "-o", "ConnectTimeout=8",
-            "-o", "StrictHostKeyChecking=no",
-            f"root@{self.ip}",
-            f"tar -xzf - -C '{remote_dir}' && chmod 0644 '{remote_path}'",
-        ]
-        p_tar = subprocess.Popen(tar_cmd, stdout=subprocess.PIPE)
-        p_ssh = subprocess.Popen(ssh_cmd, stdin=p_tar.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        p_tar.stdout.close()
-        out, err = p_ssh.communicate(timeout=60)
-        p_tar.wait()
-        if p_ssh.returncode != 0:
+        time.sleep(4)
+        for attempt in range(retries):
+            tar_cmd = ["tar", "-czf", "-", "-C", os.path.dirname(local_path), os.path.basename(local_path)]
+            ssh_cmd = [
+                "ssh",
+                "-o", "ConnectTimeout=8",
+                "-o", "StrictHostKeyChecking=no",
+                f"root@{self.ip}",
+                f"mkdir -p '{remote_dir}' && tar -xzf - -C '{remote_dir}' && chmod 0644 '{remote_path}'",
+            ]
+            p_tar = subprocess.Popen(tar_cmd, stdout=subprocess.PIPE)
+            p_ssh = subprocess.Popen(ssh_cmd, stdin=p_tar.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            p_tar.stdout.close()
+            out, err = p_ssh.communicate(timeout=60)
+            p_tar.wait()
+            if p_ssh.returncode == 0:
+                return
+            if attempt < retries - 1:
+                log(f"[{self.target.upper()}] File upload reset/failed (code {p_ssh.returncode}), retrying in {attempt + 5}s...")
+                time.sleep(attempt + 5)
+                continue
             err_msg = err.decode("utf-8", errors="replace")
             raise RuntimeError(f"Tar streaming upload of {local_path} failed with code {p_ssh.returncode}: {err_msg}")
 
@@ -218,7 +228,6 @@ fi
     # Phase 2: Upload Code (Atomic Tar Stream)
     # --------------------------------------------------------------------------
     log(f"[{target.upper()}] >>> PHASE 2: Uploading {len(PYTHON_MODULES)} modules to /root/vpn-shop/vpn_shop/...")
-    session.run("chmod 755 /root/vpn-shop/vpn_shop")
     session.upload_modules_tar(local_vpn_shop, "/root/vpn-shop/vpn_shop")
     log(f"[{target.upper()}] All modules uploaded cleanly and permissions set to 0644.")
 
