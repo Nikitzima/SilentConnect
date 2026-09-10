@@ -11,6 +11,7 @@
 *.prod.env
 *.dev.env
 subjson.env
+.env.platega
 
 # Logs & runtime outputs
 *.log
