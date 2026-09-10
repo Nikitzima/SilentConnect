@@ -2452,18 +2452,29 @@ class WebCheckout:
         meta = order.get("meta_json") or {}
         order_url = self.order_url(headers, order)
         flash_html = f'<div class="notice">{html.escape(flash)}</div>' if flash else ""
+        status = str(order.get("status") or "")
         customer_email = str(order.get("customer_email") or meta.get("customer_email") or "").strip()
         customer_email_row = f'<div style="display:flex; justify-content:space-between; font-size:14px;"><span style="color:var(--muted);">Email</span><span style="font-weight:600; color:#fff;">{html.escape(customer_email)}</span></div>' if customer_email else ""
+
+        if status == "delivered":
+            status_badge = '<span style="background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.4); color:#10b981; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap;">Оплачен ✓</span>'
+            price_label = "Оплаченная сумма:"
+        elif status in ("cancelled", "canceled"):
+            status_badge = '<span style="background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); color:#ef4444; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap;">Отменён ✖</span>'
+            price_label = "Сумма заказа:"
+        else:
+            status_badge = '<span style="background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.4); color:#f59e0b; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap;">Ожидает оплаты</span>'
+            price_label = "Сумма к оплате:"
 
         summary = f"""
         <div class="card order-summary-card">
           <div>
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; gap:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; gap:8px; flex-wrap:wrap;">
               <div>
                 <div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px; color:var(--muted); margin-bottom:4px;">Информация о заказе</div>
                 <div style="font-size:20px; font-weight:800; color:#fff;">Заказ #{html.escape(str(order['public_id']))}</div>
               </div>
-              <span style="background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.4); color:#f59e0b; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap;">Ожидает оплаты</span>
+              {status_badge}
             </div>
             <div style="display:flex; flex-direction:column; gap:10px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:14px 0; margin-bottom:16px;">
               <div style="display:flex; justify-content:space-between; font-size:14px;">
@@ -2481,7 +2492,7 @@ class WebCheckout:
               {customer_email_row}
             </div>
             <div style="margin-bottom:18px;">
-              <div style="font-size:12px; color:var(--muted); margin-bottom:2px;">Сумма к оплате:</div>
+              <div style="font-size:12px; color:var(--muted); margin-bottom:2px;">{price_label}</div>
               <div style="font-size:36px; font-weight:800; color:var(--green); line-height:1.1;">{html.escape(money(order['final_price_rub']))}</div>
             </div>
           </div>
@@ -2497,7 +2508,6 @@ class WebCheckout:
           </div>
         </div>
         """
-        status = str(order.get("status") or "")
         if status == "waiting_payment":
             platega_url = self.get_or_create_platega_payment_url(
                 order,
@@ -2529,7 +2539,7 @@ class WebCheckout:
                 </div>
                 <div style="font-size:19px; font-weight:700; color:#fff; margin-bottom:6px;">Моментальное зачисление</div>
                 <p style="color:var(--muted); font-size:13.5px; margin:0 0 16px; line-height:1.45;">
-                  Банковские карты РФ (МИР, Visa, Mastercard), СБП или криптовалюта. Без комиссии для покупателя:
+                  Банковские карты РФ (МИР, Visa, Mastercard), СБП или криптовалюта. Моментальное зачисление сразу после оплаты:
                 </p>
                 <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px;">
                   <span style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:#e2e8f0; font-size:12px; font-weight:600; padding:4px 10px; border-radius:6px;">⚡ СБП</span>
@@ -2553,11 +2563,11 @@ class WebCheckout:
                 Хотите оплатить переводом без комиссии шлюза напрямую менеджеру или у вас есть вопрос? Напишите нам в поддержку, указав номер заказа <code>#{html.escape(str(order['public_id']))}</code>.
               </p>
               <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                <a class="btn secondary" href="{support_url}" target="_blank" rel="noopener" style="flex:1; min-width:180px; min-height:42px; font-size:13.5px;">
-                  💬 Поддержка @SilentConnectSupport
+                <a class="btn secondary" href="{support_url}" target="_blank" rel="noopener" style="flex:1; min-width:180px; min-height:42px; font-size:13.5px; display:inline-flex; align-items:center; justify-content:center;">
+                  💬 Написать оператору для оплаты (@SilentConnectSupport)
                 </a>
-                <form method="post" action="/order/{html.escape(str(order['public_id']))}/{html.escape(str(meta.get('web_token') or ''))}/cancel" style="margin:0;">
-                  <button type="submit" class="btn secondary" style="min-height:42px; font-size:13.5px; background:rgba(239,68,68,0.08); color:#ef4444; border:1px solid rgba(239,68,68,0.25);">
+                <form method="post" action="/order/{html.escape(str(order['public_id']))}/{html.escape(str(meta.get('web_token') or ''))}/cancel" style="margin:0; flex:1; min-width:130px;">
+                  <button type="submit" class="btn secondary" style="width:100%; min-height:42px; font-size:13.5px; background:rgba(239,68,68,0.08); color:#ef4444; border:1px solid rgba(239,68,68,0.25); cursor:pointer;">
                     Отменить заказ ✖
                   </button>
                 </form>
