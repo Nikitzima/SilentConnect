@@ -531,48 +531,55 @@ def send_subscription_email_async(
     )
 
 
-def send_cabinet_access_email_sync(
-    settings: Settings,
+def build_cabinet_access_email_html(
     *,
     customer_email: str,
     profiles_data: list[dict[str, Any]],
-) -> bool:
-    if not settings.smtp_host or not customer_email:
-        return False
+    support_email: str = "support@example.com",
+    cabinet_url: str = "",
+    default_device_limit: int = 3,
+) -> tuple[str, str]:
+    """Returns (subject, html_content) for cabinet access email."""
+    target_cabinet_url = (cabinet_url or "").strip()
+    if not target_cabinet_url and profiles_data:
+        target_cabinet_url = str(profiles_data[0].get("setup_url") or "").strip()
+    if not target_cabinet_url:
+        target_cabinet_url = "https://example.com/"
 
-    cards_html = ""
+    profiles_count = len(profiles_data)
+    if profiles_count == 1:
+        profile_word = "подписка"
+    elif 2 <= profiles_count <= 4:
+        profile_word = "подписки"
+    else:
+        profile_word = "подписок"
+
+    items_html = ""
     for idx, p in enumerate(profiles_data, 1):
         pid = html.escape(str(p.get("public_id") or "---"))
-        created_at = p.get("created_at")
         expires_at = p.get("expires_at")
-        last_renewed_at = p.get("last_renewed_at")
-
-        created_str = format_expiry_ru(0, expires_ts=created_at) if created_at else "---"
         expires_str = format_expiry_ru(0, expires_ts=expires_at) if expires_at else "---"
-        renewed_str = format_expiry_ru(0, expires_ts=last_renewed_at) if last_renewed_at else "---"
+        device_limit = int(p.get("device_limit") or default_device_limit)
+        transport_raw = str(p.get("transport") or "tcp")
+        transport_lbl = "Гибридный" if "hybrid" in transport_raw else ("TCP / Reality" if transport_raw == "tcp" else "XHTTP")
 
-        setup_url = html.escape(str(p.get("setup_url") or "#"))
-
-        cards_html += f"""
-        <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 20px; margin-bottom: 20px; text-align: left;">
-          <h3 style="margin-top:0; margin-bottom: 12px; color: #2fbf71; font-size: 18px;">🔑 Подписка #{idx} (Ключ {pid})</h3>
-          <table style="width: 100%; border-collapse: collapse; font-size: 14px; color: #e1e1e1;">
-            <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
-              <td style="padding: 6px 0; color: #888;">Первая покупка:</td>
-              <td style="padding: 6px 0; text-align: right; font-weight: bold; color: #fff;">{created_str}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
-              <td style="padding: 6px 0; color: #888;">Последнее продление:</td>
-              <td style="padding: 6px 0; text-align: right; font-weight: bold; color: #fff;">{renewed_str}</td>
+        items_html += f"""
+        <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; text-align: left; box-sizing: border-box;">
+          <table class="item-table" style="width: 100%; border-collapse: collapse; font-size: 14px;">
+            <tr>
+              <td class="col-title" style="color: #ffffff; font-weight: 700; padding: 3px 0;">
+                🔑 Подписка #{idx}
+                <span style="font-family: monospace; font-size: 13px; color: #2fbf71; background: rgba(47,191,113,0.12); padding: 2px 8px; border-radius: 5px; margin-left: 6px; display: inline-block;">{pid}</span>
+              </td>
+              <td class="col-meta" style="text-align: right; color: #94a3b8; font-size: 12px; padding: 3px 0;">
+                до {device_limit} устр. · {transport_lbl}
+              </td>
             </tr>
             <tr>
-              <td style="padding: 6px 0; color: #888;">Действует до:</td>
-              <td style="padding: 6px 0; text-align: right; font-weight: bold; color: #2fbf71;">{expires_str}</td>
+              <td class="col-label" style="color: #64748b; font-size: 13px; padding-top: 6px;">Срок действия:</td>
+              <td class="col-expiry" style="text-align: right; color: #2fbf71; font-weight: 700; font-size: 13px; padding-top: 6px;">до {expires_str}</td>
             </tr>
           </table>
-          <div style="margin-top: 16px; text-align: center;">
-            <a href="{setup_url}" target="_blank" style="display: inline-block; background: linear-gradient(135deg, #2fbf71, #1b8a4f); color: #ffffff; font-weight: bold; text-decoration: none; padding: 10px 20px; border-radius: 8px; font-size: 14px;">🚀 Открыть мастер настройки подписки #{idx}</a>
-          </div>
         </div>
         """
 
@@ -581,35 +588,97 @@ def send_cabinet_access_email_sync(
     <html>
     <head>
       <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0f1219; color: #e1e1e1; margin: 0; padding: 20px; }}
-        .container {{ max-width: 600px; margin: 0 auto; background: #171b26; border-radius: 16px; padding: 32px; border: 1px solid #2a3142; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }}
+        * {{ box-sizing: border-box; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #080b11; color: #e1e7f0; margin: 0; padding: 20px 10px; }}
+        .container {{ max-width: 600px; width: 100%; margin: 0 auto; background: #0e141f; border-radius: 16px; padding: 32px 24px; border: 1px solid #1c2638; box-shadow: 0 16px 40px rgba(0,0,0,0.6); box-sizing: border-box; }}
         .header {{ text-align: center; margin-bottom: 24px; }}
-        .title {{ font-size: 24px; font-weight: bold; color: #ffffff; margin-top: 12px; margin-bottom: 4px; }}
-        .subtitle {{ font-size: 14px; color: #94a3b8; }}
-        .footer {{ text-align: center; margin-top: 28px; font-size: 12px; color: #64748b; border-top: 1px solid #2a3142; padding-top: 16px; }}
+        .title {{ font-size: 22px; font-weight: 800; color: #ffffff; margin-top: 10px; margin-bottom: 4px; letter-spacing: -0.3px; }}
+        .subtitle {{ font-size: 14px; color: #94a3b8; line-height: 1.5; }}
+        .footer {{ text-align: center; margin-top: 28px; font-size: 12px; color: #64748b; border-top: 1px solid #1c2638; padding-top: 18px; line-height: 1.5; }}
+        .btn-cta {{ display: inline-block; background: linear-gradient(135deg, #2fbf71 0%, #1f804c 100%); color: #ffffff !important; font-weight: 800; text-decoration: none; padding: 15px 32px; border-radius: 10px; font-size: 16px; box-shadow: 0 4px 18px rgba(47, 191, 113, 0.4); letter-spacing: 0.3px; text-align: center; max-width: 100%; box-sizing: border-box; }}
+        @media only screen and (max-width: 480px) {{
+          body {{ padding: 12px 6px; }}
+          .container {{ padding: 20px 14px; border-radius: 12px; }}
+          .item-table td {{ display: block !important; width: 100% !important; text-align: left !important; box-sizing: border-box; }}
+          .item-table td.col-meta {{ text-align: left !important; padding-top: 2px !important; color: #8ea89a !important; }}
+          .item-table td.col-expiry {{ text-align: left !important; padding-top: 2px !important; }}
+          .btn-cta {{ display: block !important; width: 100% !important; padding: 14px 12px !important; font-size: 15px !important; }}
+        }}
       </style>
     </head>
     <body>
       <div class="container">
         <div class="header">
-          <div style="font-size: 32px;">🔑</div>
-          <div class="title">Ваши ссылки доступа SilentConnect</div>
-          <div class="subtitle">По вашему запросу найдены следующие активные подписки:</div>
+          <div style="display: inline-block; width: 44px; height: 44px; line-height: 44px; background: rgba(47,191,113,0.12); border: 1px solid rgba(47,191,113,0.3); border-radius: 12px; font-size: 22px;">🔑</div>
+          <div class="title">SilentConnect</div>
+          <div class="subtitle">Вход в личный кабинет для <strong>{html.escape(customer_email)}</strong></div>
         </div>
 
-        {cards_html}
+        <div style="margin-bottom: 20px;">
+          <div style="font-size: 13px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px;">
+            Найдено активных подписок: <span style="color: #2fbf71;">{profiles_count}</span>
+          </div>
+          {items_html}
+        </div>
+
+        <div style="text-align: center; margin: 28px 0 20px;">
+          <a class="btn-cta" href="{html.escape(target_cabinet_url, quote=True)}" target="_blank">
+            🔐 Войти в личный кабинет ({profiles_count} {profile_word}) →
+          </a>
+        </div>
+
+        <div style="background: rgba(47, 191, 113, 0.08); border: 1px solid rgba(47, 191, 113, 0.25); border-radius: 10px; padding: 14px 18px; text-align: center; margin-bottom: 24px;">
+          <p style="margin: 0; font-size: 13px; color: #e2e8f0; line-height: 1.5;">
+            ⏱ <strong>Ссылка активна в течение 30 минут</strong>.<br>
+            <span style="color: #8ea89a; font-size: 12px;">В течение этого времени вы можете открывать её повторно с любого своего устройства (ПК, смартфон, планшет).</span>
+          </p>
+        </div>
+
+        <div style="text-align: left;">
+          <p style="margin: 0 0 6px 0; color: #64748b; font-size: 12px;">Если кнопка не нажимается, скопируйте прямую ссылку в адресную строку браузера:</p>
+          <div style="background: #060a0f; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 10px 12px; font-family: monospace; font-size: 11px; word-break: break-all;">
+            <a href="{html.escape(target_cabinet_url, quote=True)}" style="color: #2fbf71; text-decoration: none;">{html.escape(target_cabinet_url)}</a>
+          </div>
+        </div>
 
         <div class="footer">
-          Если вы не запрашивали восстановление доступа, просто проигнорируйте это письмо.<br>
-          Служба поддержки: <a href="mailto:{html.escape(settings.support_email)}" style="color: #2fbf71;">{html.escape(settings.support_email)}</a>
+          Если вы не запрашивали доступ, просто проигнорируйте это письмо. Ваши данные в безопасности.<br>
+          Служба поддержки: <a href="mailto:{html.escape(support_email)}" style="color: #2fbf71; text-decoration: none;">{html.escape(support_email)}</a>
         </div>
       </div>
     </body>
     </html>
     """
 
-    subject = f"🔑 Ваши ссылки доступа SilentConnect ({len(profiles_data)} подписк{'и' if len(profiles_data) > 1 else 'а'})"
+    subject = f"🔐 Вход в личный кабинет SilentConnect ({profiles_count} {profile_word})"
+    return subject, html_content
+
+
+def send_cabinet_access_email_sync(
+    settings: Settings,
+    *,
+    customer_email: str,
+    profiles_data: list[dict[str, Any]],
+    cabinet_url: str = "",
+) -> bool:
+    if not settings.smtp_host or not customer_email:
+        return False
+
+    target_cabinet_url = (cabinet_url or "").strip()
+    if not target_cabinet_url and profiles_data:
+        target_cabinet_url = str(profiles_data[0].get("setup_url") or "").strip()
+    if not target_cabinet_url:
+        target_cabinet_url = f"{settings.web_public_base_url}/"
+
+    subject, html_content = build_cabinet_access_email_html(
+        customer_email=customer_email,
+        profiles_data=profiles_data,
+        support_email=settings.support_email,
+        cabinet_url=target_cabinet_url,
+        default_device_limit=settings.default_device_limit,
+    )
     from_email = settings.smtp_from_email or "SilentConnect <support@example.com>"
     smtp_host = settings.smtp_host or "smtp.resend.com"
     user = settings.smtp_user or "resend"
@@ -627,7 +696,7 @@ def send_cabinet_access_email_sync(
                     "to": [customer_email],
                     "subject": subject,
                     "html": html_content,
-                    "text": f"Ваши активные подписки SilentConnect ({len(profiles_data)} шт.). Откройте письмо в HTML-формате.",
+                    "text": f"Ваши активные подписки SilentConnect ({profiles_count} шт.). Ссылка для входа в личный кабинет (действует 30 минут): {target_cabinet_url}",
                 }).encode("utf-8"),
                 headers={
                     "Authorization": f"Bearer {api_key}",
@@ -674,11 +743,13 @@ def send_cabinet_access_email_async(
     *,
     customer_email: str,
     profiles_data: list[dict[str, Any]],
+    cabinet_url: str = "",
 ) -> None:
     enqueue_email_task(
         send_cabinet_access_email_sync,
         settings,
         customer_email=customer_email,
         profiles_data=profiles_data,
+        cabinet_url=cabinet_url,
     )
 

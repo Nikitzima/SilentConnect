@@ -955,7 +955,7 @@ class WebCheckout:
         # and always answer with the same message: v1 returned "not found" for
         # unknown e-mails and only throttled successful lookups, i.e. an
         # unlimited customer e-mail enumeration oracle (audit S-04).
-        ttl = int(getattr(self.settings, "magic_link_ttl_seconds", 900) or 900)
+        ttl = int(getattr(self.settings, "magic_link_ttl_seconds", 1800) or 1800)
         recent = self.store.count_recent_magic_links(email=clean_email, request_ip=client_ip, window_seconds=120)
         generic_ok = {
             "ok": True,
@@ -973,36 +973,47 @@ class WebCheckout:
         if not profiles:
             return generic_ok
 
+        cabinet_origin = public_origin(headers, self.settings.web_public_base_url, getattr(self.settings, "allowed_hosts", ()))
+        cabinet_url = f"{cabinet_origin}/cabinet/{quote(magic_token, safe='')}"
+
         profiles_data = []
         for p in profiles:
             pid = str(p.get("public_id") or "")
             xui_email = str(p.get("xui_email") or "")
             found = self.provisioner.xui_db.find_client_by_email(xui_email)
             sub_id = str((found.get("client") or {}).get("subId") or "") if found else ""
+            transport = str(p.get("transport") or "tcp")
             if sub_id:
-                transport = str(p.get("transport") or "tcp")
                 kind = "json-hybrid" if "hybrid" in transport or p.get("profile_mode") == "hybrid" else ("json" if transport == "tcp" else "xhttp-json")
                 sub_url = subscription_url_for_route(self.settings.subscription_base_url, kind, sub_id)
                 setup_url = subscription_setup_url(sub_url)
             else:
                 setup_url = self.settings.subscription_base_url or f"{self.settings.web_public_base_url}/"
 
+            order_meta = p.get("order_meta") or {}
+            if isinstance(order_meta, str):
+                try:
+                    order_meta = json.loads(order_meta)
+                except Exception:
+                    order_meta = {}
+            device_limit = int(order_meta.get("device_limit") or self.settings.default_device_limit)
+
             profiles_data.append({
                 "public_id": pid,
                 "created_at": p.get("created_at"),
                 "expires_at": p.get("expires_at"),
                 "last_renewed_at": p.get("last_renewed_at"),
+                "transport": transport,
+                "device_limit": device_limit,
+                "sub_id": sub_id,
                 "setup_url": setup_url,
             })
 
-        cabinet_origin = public_origin(headers, self.settings.web_public_base_url, getattr(self.settings, "allowed_hosts", ()))
-        cabinet_url = f"{cabinet_origin}/cabinet/{quote(magic_token, safe='')}"
-        # The e-mail carries only the short-lived single-use link; the permanent
-        # subscription URLs are revealed after redemption (audit S-05).
         send_cabinet_access_email_async(
             self.settings,
             customer_email=clean_email,
-            profiles_data=[{**p, "setup_url": cabinet_url} for p in profiles_data],
+            profiles_data=profiles_data,
+            cabinet_url=cabinet_url,
         )
 
         return generic_ok
@@ -1014,33 +1025,175 @@ class WebCheckout:
             xui_email = str(p.get("xui_email") or "")
             found = self.provisioner.xui_db.find_client_by_email(xui_email)
             sub_id = str((found.get("client") or {}).get("subId") or "") if found else ""
+            transport = str(p.get("transport") or "tcp")
             if sub_id:
-                transport = str(p.get("transport") or "tcp")
                 kind = "json-hybrid" if "hybrid" in transport or p.get("profile_mode") == "hybrid" else ("json" if transport == "tcp" else "xhttp-json")
                 sub_url = subscription_url_for_route(self.settings.subscription_base_url, kind, sub_id)
                 setup_url = subscription_setup_url(sub_url)
             else:
                 setup_url = self.settings.subscription_base_url or f"{self.settings.web_public_base_url}/"
+
+            order_meta = p.get("order_meta") or {}
+            if isinstance(order_meta, str):
+                try:
+                    order_meta = json.loads(order_meta)
+                except Exception:
+                    order_meta = {}
+            device_limit = int(order_meta.get("device_limit") or self.settings.default_device_limit)
+
             items.append({
                 "public_id": str(p.get("public_id") or ""),
+                "created_at": p.get("created_at"),
                 "expires_at": p.get("expires_at"),
+                "last_renewed_at": p.get("last_renewed_at"),
+                "transport": transport,
+                "device_limit": device_limit,
+                "sub_id": sub_id,
                 "setup_url": setup_url,
             })
         return items
 
     def render_cabinet(self, email: str, profiles: list[dict[str, Any]]) -> bytes:
-        rows = "".join(
-            f'<li><a class="btn" href="{html.escape(str(p["setup_url"]))}">Подписка {html.escape(str(p["public_id"]))}'
-            f' · до {time.strftime("%d.%m.%Y", time.localtime(int(p.get("expires_at") or 0)))}</a></li>'
-            for p in profiles
-        ) or "<li class='muted'>Активных подписок не найдено.</li>"
+        now = now_ts()
+        count = len(profiles)
+
+        cards_html = []
+        for idx, p in enumerate(profiles, 1):
+            pid = str(p.get("public_id") or "---")
+            expires_at = int(p.get("expires_at") or 0)
+            is_active = expires_at > now
+            days_left = max(0, (expires_at - now) // 86400) if is_active else 0
+
+            if not is_active:
+                status_badge = '<span class="cabinet-badge expired">🔴 Срок истёк</span>'
+                days_str = '<span style="color: #ef4444; font-weight: 700;">Истекла</span>'
+            elif days_left <= 3:
+                status_badge = f'<span class="cabinet-badge warning">🟡 Истекает ({days_left} дн.)</span>'
+                days_str = f'<span style="color: #fbbf24; font-weight: 700;">Осталось {days_left} дн.</span>'
+            elif days_left > 365 * 10:
+                status_badge = '<span class="cabinet-badge active">🟢 Активна</span>'
+                days_str = '<span style="color: #34d399; font-weight: 700;">Бессрочно</span>'
+            else:
+                status_badge = '<span class="cabinet-badge active">🟢 Активна</span>'
+                days_str = f'<span style="color: #34d399; font-weight: 700;">Осталось {days_left} дн.</span>'
+
+            expiry_date_str = time.strftime("%d.%m.%Y", time.localtime(expires_at)) if expires_at else "---"
+            device_limit = int(p.get("device_limit") or self.settings.default_device_limit)
+            transport_raw = str(p.get("transport") or "tcp")
+            transport_label = "Гибридный (TCP + XHTTP)" if "hybrid" in transport_raw else ("VLESS Reality (TCP)" if transport_raw == "tcp" else "VLESS XHTTP")
+            setup_url = html.escape(str(p.get("setup_url") or "#"), quote=True)
+
+            cards_html.append(f"""
+            <div class="cabinet-card">
+              <div class="cabinet-card-header">
+                <div class="cabinet-card-title">
+                  <span style="font-size: 20px;">🔑</span>
+                  <span>Подписка #{idx}</span>
+                </div>
+                {status_badge}
+              </div>
+
+              <div class="cabinet-key-box">
+                <div class="cabinet-key-val">
+                  <span style="color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Ключ профиля</span>
+                  <span id="key-{idx}" style="font-weight: 700; color: #fff;">{html.escape(pid)}</span>
+                </div>
+                <button type="button" class="btn secondary cabinet-copy-btn" onclick="copyCabinetKey('key-{idx}', this)">
+                  Копировать 📋
+                </button>
+              </div>
+
+              <table class="cabinet-table">
+                <tr>
+                  <td>Лимит устройств:</td>
+                  <td>до {device_limit} устройств</td>
+                </tr>
+                <tr>
+                  <td>Протокол / сеть:</td>
+                  <td>{html.escape(transport_label)}</td>
+                </tr>
+                <tr>
+                  <td>Действует до:</td>
+                  <td>{expiry_date_str} ({days_str})</td>
+                </tr>
+              </table>
+
+              <div class="cabinet-card-actions">
+                <a class="btn cabinet-btn-primary" href="{setup_url}" target="_blank" rel="noopener">
+                  🚀 Мастер настройки и подключения →
+                </a>
+              </div>
+            </div>
+            """)
+
+        cards_str = "".join(cards_html) if cards_html else """
+        <div class="cabinet-empty" style="text-align: center; padding: 48px 24px; background: var(--card); border-radius: 16px; border: 1px solid var(--glass-border);">
+          <div style="font-size: 36px; margin-bottom: 12px;">🔍</div>
+          <h3 style="margin-top: 0; color: #fff;">Активных подписок не найдено</h3>
+          <p class="muted">На этот email адрес пока не оформлено действующих подписок.</p>
+          <a class="btn" href="/" style="margin-top: 16px; max-width: 260px; display: inline-flex;">Оформить подписку</a>
+        </div>
+        """
+
+        support_url = (self.settings.support_tg_url or "").strip() or "https://t.me/SilentConnectSupport"
+
         body = f"""
-        <section class="section">
-          <h2>Личный кабинет</h2>
-          <p class="muted">{html.escape(email)}</p>
-          <ul class="cabinet-list">{rows}</ul>
-          <p class="muted">Ссылка входа одноразовая. Для повторного входа запросите новую на главной странице.</p>
+        <section class="section cabinet-section">
+          <div class="cabinet-topbar">
+            <div>
+              <h2 class="cabinet-heading">Личный кабинет</h2>
+              <div class="cabinet-meta-row">
+                <span class="cabinet-email-badge">✉️ {html.escape(email)}</span>
+                <span class="cabinet-timer-badge">⏱ Сессия активна (ссылка действует 30 мин)</span>
+              </div>
+            </div>
+            <div class="cabinet-sub-count">
+              Всего подписок: <strong>{count}</strong>
+            </div>
+          </div>
+
+          <div class="cabinet-cards-grid">
+            {cards_str}
+          </div>
+
+          <div class="cabinet-bottom-box">
+            <div class="cabinet-bottom-info">
+              <div style="font-weight: 700; color: #fff; margin-bottom: 4px;">Нужна ещё одна подписка или есть вопросы?</div>
+              <div style="font-size: 13.5px; color: var(--muted);">
+                Вы можете оформить новый профиль на главном сайте или обратиться к нашему менеджеру.
+              </div>
+            </div>
+            <div class="cabinet-bottom-actions">
+              <a class="btn secondary" href="/" style="width: auto; min-height: 42px; padding: 8px 18px; font-size: 14px;">
+                ➕ Новая подписка
+              </a>
+              <a class="btn secondary" href="{html.escape(support_url, quote=True)}" target="_blank" rel="noopener" style="width: auto; min-height: 42px; padding: 8px 18px; font-size: 14px;">
+                💬 Поддержка в Telegram
+              </a>
+            </div>
+          </div>
         </section>
+
+        <script>
+        function copyCabinetKey(elementId, btn) {{
+          const el = document.getElementById(elementId);
+          if (!el) return;
+          const text = el.textContent.trim();
+          navigator.clipboard.writeText(text).then(() => {{
+            const orig = btn.innerHTML;
+            btn.innerHTML = "Скопировано! ✓";
+            btn.style.borderColor = "var(--green)";
+            btn.style.color = "var(--green)";
+            setTimeout(() => {{
+              btn.innerHTML = orig;
+              btn.style.borderColor = "";
+              btn.style.color = "";
+            }}, 2000);
+          }}).catch(() => {{
+            prompt("Скопируйте ключ вручную:", text);
+          }});
+        }}
+        </script>
         """
         return self.render_page("Личный кабинет", body)
 
@@ -1357,6 +1510,126 @@ class WebCheckout:
       padding: 18px 20px; background: rgba(255, 255, 255, 0.03);
       border: 1px solid var(--glass-border); border-radius: 14px;
       backdrop-filter: blur(8px);
+    }}
+    .cabinet-section {{ max-width: 980px; margin: 0 auto; }}
+    .cabinet-topbar {{
+      display: flex; justify-content: space-between; align-items: flex-start;
+      flex-wrap: wrap; gap: 16px; margin-bottom: 28px;
+      padding-bottom: 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }}
+    .cabinet-heading {{
+      font-size: clamp(24px, 4vw, 34px); margin: 0 0 8px 0; font-weight: 800;
+      background: linear-gradient(to right, #fff, #34d399);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }}
+    .cabinet-meta-row {{ display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }}
+    .cabinet-email-badge {{
+      display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px;
+      background: rgba(255, 255, 255, 0.06); border: 1px solid var(--glass-border);
+      border-radius: 20px; font-size: 13px; color: #cbd5e1;
+    }}
+    .cabinet-timer-badge {{
+      display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px;
+      background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3);
+      border-radius: 20px; font-size: 13px; color: #34d399; font-weight: 500;
+    }}
+    .cabinet-sub-count {{
+      font-size: 14px; color: var(--muted); background: rgba(255, 255, 255, 0.04);
+      padding: 8px 16px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.06);
+    }}
+    .cabinet-sub-count strong {{ color: #fff; font-size: 16px; }}
+    .cabinet-cards-grid {{
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px; margin-bottom: 32px;
+    }}
+    .cabinet-card {{
+      background: var(--card); border: 1px solid var(--glass-border);
+      border-radius: 16px; padding: 22px; display: flex; flex-direction: column;
+      justify-content: space-between; gap: 16px; backdrop-filter: blur(12px);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+      min-width: 0; overflow: hidden; box-sizing: border-box;
+      transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+    }}
+    .cabinet-card:hover {{
+      transform: translateY(-3px); border-color: rgba(52, 211, 153, 0.4);
+      box-shadow: 0 12px 32px rgba(0,0,0,0.4), 0 0 24px rgba(16, 185, 129, 0.12);
+    }}
+    .cabinet-card-header {{
+      display: flex; justify-content: space-between; align-items: center; gap: 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06); padding-bottom: 12px;
+      flex-wrap: wrap; min-width: 0;
+    }}
+    .cabinet-card-title {{
+      font-size: 17px; font-weight: 700; color: #fff; margin: 0;
+      display: flex; align-items: center; gap: 8px;
+    }}
+    .cabinet-badge {{
+      display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px;
+      border-radius: 12px; font-size: 12px; font-weight: 700; white-space: nowrap;
+    }}
+    .cabinet-badge.active {{
+      background: rgba(16, 185, 129, 0.15); color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.35);
+    }}
+    .cabinet-badge.warning {{
+      background: rgba(245, 158, 11, 0.15); color: #fbbf24;
+      border: 1px solid rgba(245, 158, 11, 0.35);
+    }}
+    .cabinet-badge.expired {{
+      background: rgba(239, 68, 68, 0.15); color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.35);
+    }}
+    .cabinet-key-box {{
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
+      background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 10px; padding: 10px 12px; min-width: 0; box-sizing: border-box;
+    }}
+    .cabinet-key-val {{ display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow: hidden; }}
+    .cabinet-key-val span:first-child {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }}
+    .cabinet-key-val span:last-child {{
+      font-family: monospace; font-size: 13px; word-break: break-all; overflow-wrap: break-word;
+    }}
+    .cabinet-copy-btn {{
+      min-height: 34px; padding: 6px 12px; font-size: 12px; width: auto;
+      flex-shrink: 0; border-radius: 8px; white-space: nowrap;
+    }}
+    .cabinet-table {{ width: 100%; border-collapse: collapse; font-size: 13.5px; }}
+    .cabinet-table td {{ padding: 6px 0; vertical-align: top; }}
+    .cabinet-table td:first-child {{ color: var(--muted); padding-right: 8px; }}
+    .cabinet-table td:last-child {{ text-align: right; color: #e2e8f0; font-weight: 600; word-break: normal; }}
+    .cabinet-card-actions {{ margin-top: 4px; }}
+    .cabinet-btn-primary {{
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      min-height: 46px; font-size: 14.5px; font-weight: 700; width: 100%;
+      border-radius: 10px; text-decoration: none; box-sizing: border-box; text-align: center;
+    }}
+    .cabinet-bottom-box {{
+      display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;
+      gap: 16px; background: rgba(255, 255, 255, 0.025); border: 1px solid var(--glass-border);
+      border-radius: 14px; padding: 18px 24px; box-sizing: border-box;
+    }}
+    .cabinet-bottom-actions {{ display: flex; gap: 12px; flex-wrap: wrap; }}
+    @media (max-width: 640px) {{
+      .cabinet-topbar {{ margin-bottom: 20px; padding-bottom: 16px; gap: 12px; }}
+      .cabinet-heading {{ font-size: 24px; }}
+      .cabinet-meta-row {{ gap: 8px; }}
+      .cabinet-email-badge, .cabinet-timer-badge {{ font-size: 12px; padding: 4px 10px; }}
+      .cabinet-cards-grid {{ grid-template-columns: 1fr; gap: 16px; margin-bottom: 24px; }}
+      .cabinet-card {{ padding: 16px 14px; gap: 14px; }}
+      .cabinet-key-box {{ padding: 8px 10px; }}
+      .cabinet-key-val span:last-child {{ font-size: 12px; }}
+      .cabinet-copy-btn {{ min-height: 32px; padding: 4px 10px; font-size: 11px; }}
+      .cabinet-table {{ font-size: 12.5px; }}
+      .cabinet-btn-primary {{ min-height: 42px; font-size: 13.5px; }}
+      .cabinet-bottom-box {{ padding: 14px 16px; flex-direction: column; align-items: stretch; gap: 14px; }}
+      .cabinet-bottom-actions {{ flex-direction: column; width: 100%; }}
+      .cabinet-bottom-actions .btn {{ width: 100% !important; justify-content: center; }}
+    }}
+    @media (max-width: 390px) {{
+      .cabinet-card {{ padding: 14px 12px; }}
+      .cabinet-key-box {{ flex-direction: column; align-items: stretch; gap: 8px; }}
+      .cabinet-copy-btn {{ width: 100%; min-height: 34px; justify-content: center; }}
+      .cabinet-table td {{ font-size: 12px; }}
     }}
     .order-link-input {{
       width: 100%; min-height: 40px; background: rgba(0, 0, 0, 0.35);
@@ -2861,12 +3134,13 @@ class RequestHandler(BaseHTTPRequestHandler):
             if len(path) == 2 and path[0] == "cabinet":
                 token = path[1]
                 payload = verify_token(token, purpose="magic_link")
-                email = self.checkout.store.consume_magic_link(token) if payload else None
+                email = self.checkout.store.consume_magic_link(token, single_use=False) if payload else None
                 if not payload or not email or email != str(payload.get("email") or ""):
                     self._send(HTTPStatus.NOT_FOUND, self.checkout.render_page(
                         "Ссылка недействительна",
-                        '<section class="section"><h2>Ссылка недействительна или устарела</h2>'
-                        '<p class="muted">Запросите новую ссылку входа на главной странице.</p></section>',
+                        '<section class="section"><h2>Ссылка недействительна или её срок действия истёк</h2>'
+                        '<p class="muted">Ссылка для входа в личный кабинет действует 30 минут с момента отправки. Пожалуйста, запросите новую ссылку на главной странице.</p>'
+                        '<p style="margin-top: 16px;"><a class="btn primary" href="/" style="display: inline-flex; width: auto; padding: 10px 20px;">На главную</a></p></section>',
                     ))
                     return
                 self._send(HTTPStatus.OK, self.checkout.render_cabinet(email, self.checkout.cabinet_profiles_for_email(email)))

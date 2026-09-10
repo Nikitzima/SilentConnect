@@ -757,20 +757,35 @@ class Store:
             # Housekeeping: drop expired links older than a day.
             conn.execute("DELETE FROM magic_links WHERE expires_at < ?", (now - 86400,))
 
-    def consume_magic_link(self, token: str) -> str | None:
-        """Single-use redemption; returns the e-mail or None."""
+    def consume_magic_link(self, token: str, *, single_use: bool = False) -> str | None:
+        """
+        Validates magic link.
+        If single_use is True, burns the link immediately (single-use).
+        If single_use is False (default), allows multiple visits within the active TTL window
+        (recording used_at on first visit for audit/logging), expiring only after expires_at.
+        """
         from .security import hash_token
 
         now = now_ts()
         with self.transaction() as conn:
-            cur = conn.execute(
-                """
-                UPDATE magic_links SET used_at = ?
-                WHERE token_hash = ? AND used_at IS NULL AND expires_at >= ?
-                RETURNING email
-                """,
-                (now, hash_token(token, purpose="magic_link"), now),
-            )
+            if single_use:
+                cur = conn.execute(
+                    """
+                    UPDATE magic_links SET used_at = ?
+                    WHERE token_hash = ? AND used_at IS NULL AND expires_at >= ?
+                    RETURNING email
+                    """,
+                    (now, hash_token(token, purpose="magic_link"), now),
+                )
+            else:
+                cur = conn.execute(
+                    """
+                    UPDATE magic_links SET used_at = coalesce(used_at, ?)
+                    WHERE token_hash = ? AND expires_at >= ?
+                    RETURNING email
+                    """,
+                    (now, hash_token(token, purpose="magic_link"), now),
+                )
             row = cur.fetchone()
         return str(row["email"]) if row else None
 
