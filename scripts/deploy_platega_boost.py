@@ -120,6 +120,9 @@ class NodeSession:
                     log(f"[{self.target.upper()}] SSH connection reset/closed, backing off {attempt + 2}s (attempt {attempt + 1}/{retries})...")
                     time.sleep(attempt + 2)
                     continue
+                if res.returncode == 255:
+                    log(f"[{self.target.upper()}] OpenSSH exited 255 on final attempt, falling back to remote_exec...")
+                    return remote_exec.run_cmd(self.target, cmd, timeout=timeout)
                 return res.returncode, res.stdout, res.stderr
             except Exception as exc:
                 if attempt < retries - 1:
