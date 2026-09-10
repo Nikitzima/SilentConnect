@@ -672,6 +672,7 @@ def send_cabinet_access_email_sync(
     if not target_cabinet_url:
         target_cabinet_url = f"{settings.web_public_base_url}/"
 
+    profiles_count = len(profiles_data)
     subject, html_content = build_cabinet_access_email_html(
         customer_email=customer_email,
         profiles_data=profiles_data,
