@@ -556,7 +556,6 @@ def build_cabinet_access_email_html(
 
     items_html = ""
     for idx, p in enumerate(profiles_data, 1):
-        pid = html.escape(str(p.get("public_id") or "---"))
         expires_at = p.get("expires_at")
         expires_str = format_expiry_ru(0, expires_ts=expires_at) if expires_at else "---"
         device_limit = int(p.get("device_limit") or default_device_limit)
@@ -564,93 +563,191 @@ def build_cabinet_access_email_html(
         transport_lbl = "Гибридный" if "hybrid" in transport_raw else ("TCP / Reality" if transport_raw == "tcp" else "XHTTP")
 
         items_html += f"""
-        <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; text-align: left; box-sizing: border-box;">
-          <table class="item-table" style="width: 100%; border-collapse: collapse; font-size: 14px;">
+        <div class="sub-item">
+          <table class="item-table" role="presentation">
             <tr>
-              <td class="col-title" style="color: #ffffff; font-weight: 700; padding: 3px 0;">
+              <td style="color: #ffffff; font-weight: bold; padding: 2px 0;">
                 🔑 Подписка #{idx}
-                <span style="font-family: monospace; font-size: 13px; color: #2fbf71; background: rgba(47,191,113,0.12); padding: 2px 8px; border-radius: 5px; margin-left: 6px; display: inline-block;">{pid}</span>
               </td>
-              <td class="col-meta" style="text-align: right; color: #94a3b8; font-size: 12px; padding: 3px 0;">
+              <td class="col-meta" style="text-align: right; color: #8ea89a; font-size: 12px; padding: 2px 0;">
                 до {device_limit} устр. · {transport_lbl}
               </td>
             </tr>
             <tr>
-              <td class="col-label" style="color: #64748b; font-size: 13px; padding-top: 6px;">Срок действия:</td>
-              <td class="col-expiry" style="text-align: right; color: #2fbf71; font-weight: 700; font-size: 13px; padding-top: 6px;">до {expires_str}</td>
+              <td style="color: #8ea89a; font-size: 13px; padding-top: 4px;">Срок действия:</td>
+              <td class="col-expiry" style="text-align: right; color: #2fbf71; font-weight: bold; font-size: 13px; padding-top: 4px;">до {expires_str}</td>
             </tr>
           </table>
         </div>
         """
 
-    html_content = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <style>
-        * {{ box-sizing: border-box; }}
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #080b11; color: #e1e7f0; margin: 0; padding: 20px 10px; }}
-        .container {{ max-width: 600px; width: 100%; margin: 0 auto; background: #0e141f; border-radius: 16px; padding: 32px 24px; border: 1px solid #1c2638; box-shadow: 0 16px 40px rgba(0,0,0,0.6); box-sizing: border-box; }}
-        .header {{ text-align: center; margin-bottom: 24px; }}
-        .title {{ font-size: 22px; font-weight: 800; color: #ffffff; margin-top: 10px; margin-bottom: 4px; letter-spacing: -0.3px; }}
-        .subtitle {{ font-size: 14px; color: #94a3b8; line-height: 1.5; }}
-        .footer {{ text-align: center; margin-top: 28px; font-size: 12px; color: #64748b; border-top: 1px solid #1c2638; padding-top: 18px; line-height: 1.5; }}
-        .btn-cta {{ display: inline-block; background: linear-gradient(135deg, #2fbf71 0%, #1f804c 100%); color: #ffffff !important; font-weight: 800; text-decoration: none; padding: 15px 32px; border-radius: 10px; font-size: 16px; box-shadow: 0 4px 18px rgba(47, 191, 113, 0.4); letter-spacing: 0.3px; text-align: center; max-width: 100%; box-sizing: border-box; }}
-        @media only screen and (max-width: 480px) {{
-          body {{ padding: 12px 6px; }}
-          .container {{ padding: 20px 14px; border-radius: 12px; }}
-          .item-table td {{ display: block !important; width: 100% !important; text-align: left !important; box-sizing: border-box; }}
-          .item-table td.col-meta {{ text-align: left !important; padding-top: 2px !important; color: #8ea89a !important; }}
-          .item-table td.col-expiry {{ text-align: left !important; padding-top: 2px !important; }}
-          .btn-cta {{ display: block !important; width: 100% !important; padding: 14px 12px !important; font-size: 15px !important; }}
-        }}
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <div style="display: inline-block; width: 44px; height: 44px; line-height: 44px; background: rgba(47,191,113,0.12); border: 1px solid rgba(47,191,113,0.3); border-radius: 12px; font-size: 22px;">🔑</div>
-          <div class="title">SilentConnect</div>
-          <div class="subtitle">Вход в личный кабинет для <strong>{html.escape(customer_email)}</strong></div>
-        </div>
+    html_content = f"""<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Вход в личный кабинет SilentConnect</title>
+  <style>
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #050a08;
+      color: #f4f7f5;
+      margin: 0;
+      padding: 20px 10px;
+    }}
+    .container {{
+      max-width: 600px;
+      margin: 0 auto;
+      background-color: #14231c;
+      border: 1px solid #2fbf71;
+      border-radius: 12px;
+      padding: 4px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }}
+    .titlebar {{
+      background: linear-gradient(90deg, #14231c 0%, #2fbf71 100%);
+      color: #ffffff;
+      font-weight: bold;
+      padding: 12px 18px;
+      font-size: 16px;
+      border-radius: 8px 8px 0 0;
+      letter-spacing: 0.3px;
+    }}
+    .content {{
+      padding: 20px;
+      background-color: #0a1410;
+      border-radius: 0 0 8px 8px;
+    }}
+    .box {{
+      background-color: #14231c;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      padding: 18px;
+      margin-bottom: 16px;
+    }}
+    .summary-card {{
+      background-color: rgba(47, 191, 113, 0.08);
+      border: 1px solid rgba(47, 191, 113, 0.3);
+      border-radius: 8px;
+      padding: 16px 18px;
+      margin-bottom: 18px;
+    }}
+    .sub-item {{
+      background-color: #14231c;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+    }}
+    .sub-item:last-child {{
+      margin-bottom: 0;
+    }}
+    .item-table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13.5px;
+    }}
+    h2 {{
+      margin-top: 0;
+      color: #2fbf71;
+      font-size: 20px;
+    }}
+    h3 {{
+      margin-top: 0;
+      color: #ffffff;
+      font-size: 16px;
+    }}
+    p {{
+      line-height: 1.5;
+      font-size: 14px;
+      color: #8ea89a;
+    }}
+    .btn {{
+      display: inline-block;
+      background-color: #2fbf71;
+      color: #000000 !important;
+      text-decoration: none;
+      font-weight: bold;
+      padding: 14px 28px;
+      border-radius: 8px;
+      font-size: 16px;
+      text-align: center;
+      box-shadow: 0 4px 12px rgba(47, 191, 113, 0.3);
+    }}
+    .code-box {{
+      background-color: #050a08;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-family: monospace;
+      word-break: break-all;
+      font-size: 12px;
+      color: #2fbf71;
+    }}
+    .code-box a {{
+      color: #2fbf71;
+      text-decoration: none;
+    }}
+    .footer {{
+      margin-top: 20px;
+      font-size: 12px;
+      color: #8ea89a;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      padding-top: 12px;
+    }}
+    @media only screen and (max-width: 480px) {{
+      body {{ padding: 10px 6px; }}
+      .content {{ padding: 16px 12px; }}
+      .item-table td {{ display: block !important; width: 100% !important; text-align: left !important; }}
+      .item-table td.col-meta {{ text-align: left !important; padding-top: 2px !important; color: #8ea89a !important; }}
+      .item-table td.col-expiry {{ text-align: left !important; padding-top: 2px !important; }}
+      .btn {{ display: block !important; width: 100% !important; box-sizing: border-box !important; padding: 14px 12px !important; font-size: 15px !important; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="titlebar">
+      🔑 &nbsp;SilentConnect &nbsp;&nbsp;·&nbsp;&nbsp; Личный кабинет
+    </div>
+    <div class="content">
+      <h2>Вход в личный кабинет 🔐</h2>
+      <p style="margin-bottom: 16px;">По вашему запросу для <strong>{html.escape(customer_email)}</strong> сформирован доступ к управлению подписками.</p>
 
-        <div style="margin-bottom: 20px;">
-          <div style="font-size: 13px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px;">
-            Найдено активных подписок: <span style="color: #2fbf71;">{profiles_count}</span>
-          </div>
-          {items_html}
-        </div>
+      <div class="summary-card">
+        <h3 style="color: #2fbf71; font-size: 15px; margin-bottom: 12px; margin-top: 0;">📋 Активные подписки ({profiles_count}):</h3>
+        {items_html}
+      </div>
 
-        <div style="text-align: center; margin: 28px 0 20px;">
-          <a class="btn-cta" href="{html.escape(target_cabinet_url, quote=True)}" target="_blank">
-            🔐 Войти в личный кабинет ({profiles_count} {profile_word}) →
-          </a>
-        </div>
+      <div style="text-align: center; margin: 24px 0 18px;">
+        <a href="{html.escape(target_cabinet_url, quote=True)}" class="btn" target="_blank">
+          Войти в личный кабинет ({profiles_count} {profile_word}) →
+        </a>
+      </div>
 
-        <div style="background: rgba(47, 191, 113, 0.08); border: 1px solid rgba(47, 191, 113, 0.25); border-radius: 10px; padding: 14px 18px; text-align: center; margin-bottom: 24px;">
-          <p style="margin: 0; font-size: 13px; color: #e2e8f0; line-height: 1.5;">
-            ⏱ <strong>Ссылка активна в течение 30 минут</strong>.<br>
-            <span style="color: #8ea89a; font-size: 12px;">В течение этого времени вы можете открывать её повторно с любого своего устройства (ПК, смартфон, планшет).</span>
-          </p>
-        </div>
+      <div class="box" style="text-align: center; margin-bottom: 18px;">
+        <p style="margin: 0; font-size: 13px; color: #ffffff; line-height: 1.5;">
+          ⏱ <strong>Ссылка активна в течение 30 минут</strong>.<br>
+          <span style="color: #8ea89a; font-size: 12px;">В течение этого времени вы можете открывать её повторно с любого своего устройства (ПК, смартфон, планшет).</span>
+        </p>
+      </div>
 
-        <div style="text-align: left;">
-          <p style="margin: 0 0 6px 0; color: #64748b; font-size: 12px;">Если кнопка не нажимается, скопируйте прямую ссылку в адресную строку браузера:</p>
-          <div style="background: #060a0f; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 10px 12px; font-family: monospace; font-size: 11px; word-break: break-all;">
-            <a href="{html.escape(target_cabinet_url, quote=True)}" style="color: #2fbf71; text-decoration: none;">{html.escape(target_cabinet_url)}</a>
-          </div>
-        </div>
-
-        <div class="footer">
-          Если вы не запрашивали доступ, просто проигнорируйте это письмо. Ваши данные в безопасности.<br>
-          Служба поддержки: <a href="mailto:{html.escape(support_email)}" style="color: #2fbf71; text-decoration: none;">{html.escape(support_email)}</a>
+      <div style="text-align: left;">
+        <p style="margin: 0 0 6px 0; color: #8ea89a; font-size: 12px;">Прямая ссылка для входа:</p>
+        <div class="code-box">
+          <a href="{html.escape(target_cabinet_url, quote=True)}">{html.escape(target_cabinet_url)}</a>
         </div>
       </div>
-    </body>
-    </html>
-    """
+
+      <div class="footer">
+        Если вы не запрашивали доступ, просто проигнорируйте это письмо. Ваши данные в безопасности.<br>
+        Служба поддержки: <a href="mailto:{html.escape(support_email)}" style="color: #2fbf71; text-decoration: none;">{html.escape(support_email)}</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+"""
 
     subject = f"🔐 Вход в личный кабинет SilentConnect ({profiles_count} {profile_word})"
     return subject, html_content
