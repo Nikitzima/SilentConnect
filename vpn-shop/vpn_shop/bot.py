@@ -85,12 +85,32 @@ class ShopBot:
             merchant_id_bot=settings.platega_merchant_id_bot,
             merchant_id_web=settings.platega_merchant_id_web,
             secret=settings.platega_secret,
+            secret_bot=settings.platega_secret_bot,
+            secret_web=settings.platega_secret_web,
         )
+        self.sync_commands()
         self._last_test_profile_cleanup_at = 0
         self._periodic_task_lock = threading.Lock()
         self._background_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=4, thread_name_prefix="bot_bg_worker"
         )
+
+    def sync_commands(self) -> None:
+        try:
+            commands = [
+                {"command": "start", "description": "Главное меню"},
+                {"command": "prices", "description": "Тарифы и варианты доступа"},
+                {"command": "boost", "description": "Ускорение и стабильность (Boost)"},
+                {"command": "cabinet", "description": "Личный кабинет и ссылки"},
+                {"command": "help", "description": "Как подключить"},
+                {"command": "faq", "description": "Частые вопросы"},
+                {"command": "rules", "description": "Правила и приватность"},
+                {"command": "support", "description": "Поддержка"},
+            ]
+            self.telegram.set_my_commands(commands)
+        except Exception:
+            LOGGER.debug("Failed to sync bot commands via setMyCommands", exc_info=True)
+
 
     def invite_link(self, invite_code: str) -> str:
         username = (self.settings.telegram_bot_username or "").strip()
@@ -532,7 +552,8 @@ class ShopBot:
         rows.extend(
             [
                 [("🎟 Промокод", "public:promo"), ("🤝 Рефералы", "public:referral", "success")],
-                [("📖 Помощь & FAQ", "public:help", "primary"), ("💬 Поддержка", "public:support", "primary")],
+                [("⚡ Boost / Ускорение", "public:boost", "primary"), ("📖 Помощь & FAQ", "public:help", "primary")],
+                [("💬 Поддержка", "public:support", "primary")],
             ]
         )
         return kb(rows)
@@ -739,6 +760,7 @@ class ShopBot:
         rows: list[list[Any]] = []
         if platega_url:
             rows.append([("💳 Оплатить онлайн (СБП / Карты / Крипта)", platega_url)])
+            rows.append([("🔄 Проверить зачисление", f"public:check_payment:{order_public_id}", "primary")])
             rows.append([("Отменить заказ", f"public:cancel_waiting:{order_public_id}", "danger")])
             rows.append([("У меня есть промокод", f"public:promo_switch:{order_public_id}")])
             rows.append([("💬 Написать в поддержку", support_url)])
@@ -1616,20 +1638,34 @@ class ShopBot:
                 "⚡ Ускорение и стабильность подключения (Boost)",
                 "",
                 "В сервисе SilentConnect доступны передовые протоколы с маскировкой трафика, обеспечивающие:",
-                "• Высокую скорость и защиту от замедлений провайдеров",
+                "• Высокую скорость и защиту от замедлений провайдеров (XHTTP Reality / Hysteria 2)",
                 "• Оптимальный пинг и стабильный туннель для любых устройств",
-                "• Автоматическую балансировку и резервирование серверов",
+                "• Автоматическую балансировку и резервирование серверов (Failover)",
                 "",
                 "Выберите действие:",
             ]
         )
-        markup = kb(
-            [
-                [("💳 Оформить доступ", "public:access")],
-                [("🔑 Мой кабинет", "public:cabinet")],
-                [("💬 Поддержка", (self.settings.support_tg_url or "").strip() or "https://t.me/SilentConnectHelp")],
-            ]
-        )
+        active_profile = self._active_profile_for_chat(int(chat_id) if str(chat_id).isdigit() else chat_id)
+        if active_profile and int(active_profile.get("expires_at", 0)) > now_ts():
+            markup = kb(
+                [
+                    [("👤 Личный кабинет", "public:cabinet", "success")],
+                    [("🔄 Продлить подписку", "public:renew", "success"), ("🚀 Сменить тариф", "public:access", "primary")],
+                    [("📖 Инструкция по подключению", "public:help", "primary")],
+                    [("💬 Поддержка", (self.settings.support_tg_url or "").strip() or "https://t.me/SilentConnectHelp")],
+                    [("Назад в меню", "public:menu")],
+                ]
+            )
+        else:
+            markup = kb(
+                [
+                    [("🚀 Подключить доступ / Выбрать тариф", "public:access", "success")],
+                    [("🎁 Бесплатный период", "public:trial", "primary")],
+                    [("📖 Как это работает", "public:help", "primary")],
+                    [("💬 Поддержка", (self.settings.support_tg_url or "").strip() or "https://t.me/SilentConnectHelp")],
+                    [("Назад в меню", "public:menu")],
+                ]
+            )
         self._render_or_edit(
             chat_id,
             text,
@@ -2818,8 +2854,9 @@ class ShopBot:
         self._remember_user(chat_id, user)
         text = (message.get("text") or "").strip()
         reply_to_message = message.get("reply_to_message") or {}
-        is_admin_user = self.is_admin(user)
-        command = text.split(maxsplit=1)[0].lower() if text.startswith("/") else ""
+        raw_cmd = text.split(maxsplit=1)[0].lower() if text.startswith("/") else ""
+        command = raw_cmd.split("@")[0] if raw_cmd else ""
+
 
         if text.startswith("/start"):
             parts = text.split(maxsplit=1)
@@ -4926,6 +4963,37 @@ class ShopBot:
                         else "Уведомление об оплате уже отправлено. Я проверю поступление и подтвержу заказ."
                     ),
                     reply_markup=self._public_waiting_payment_markup(str(order["public_id"])),
+                )
+                return
+
+            if data.startswith("public:check_payment:") and chat_id is not None:
+                self.telegram.answer_callback_query(callback_id, text="Проверяю статус платежа...")
+                order_public_id = data.split(":")[-1]
+                order = self.store.get_order(order_public_id)
+                if not order or str(order.get("customer_chat_id") or "") != str(chat_id):
+                    self.telegram.send_message(chat_id, "Заказ не найден или уже завершён.")
+                    return
+                if order.get("status") == "delivered":
+                    self.telegram.send_message(chat_id, "Оплата уже подтверждена! Данные доступа отправлены выше.")
+                    return
+                meta = dict(order.get("meta_json") or {})
+                tx_id = str(meta.get("platega_transaction_id") or "").strip()
+                if tx_id and self.platega.is_configured:
+                    try:
+                        tx_status = self.platega.get_transaction_status(tx_id, is_bot=True)
+                        status = str(tx_status.get("status") or "").strip().upper()
+                        if status == "CONFIRMED":
+                            meta["platega_confirmed_at"] = now_ts()
+                            self.store.update_order_meta(str(order["public_id"]), meta)
+                            self.complete_order(order, actor="user_check_payment")
+                            self.telegram.send_message(chat_id, "✅ Оплата успешно подтверждена! Доступ активирован.")
+                            return
+                    except Exception:
+                        LOGGER.exception("Failed to query Platega status on check_payment for order %s", order_public_id)
+                self.telegram.send_message(
+                    chat_id,
+                    "Платёж ещё обрабатывается платёжным шлюзом. Как только банк подтвердит зачисление, бот моментально выдаст вам доступ.",
+                    reply_markup=self._public_waiting_payment_markup(str(order["public_id"]), order=order),
                 )
                 return
 

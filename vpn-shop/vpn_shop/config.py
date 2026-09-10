@@ -124,6 +124,8 @@ class Settings:
     platega_merchant_id_bot: str = "c3393290-d96e-4a5e-aca3-12015a843b0e"
     platega_merchant_id_web: str = "e4d5af52-9c18-444b-b8bf-db1a26f0c61d"
     platega_secret: str = ""
+    platega_secret_bot: str = ""
+    platega_secret_web: str = ""
     platega_enabled: bool = False
 
 
@@ -131,6 +133,15 @@ def load_settings(root_dir: Path | None = None, env_file: str | Path | None = No
     resolved_root = (root_dir or Path(__file__).resolve().parents[1]).resolve()
     _load_dotenv(resolved_root / ".env")
     _load_dotenv(resolved_root / ".env.platega")
+    if not os.environ.get("PLATEGA_SECRET") and not os.environ.get("PLATEGA_SECRET_BOT") and not os.environ.get("PLATEGA_SECRET_WEB"):
+        for alt in (
+            resolved_root.parent / ".env.platega",
+            resolved_root.parent / "vpn-shop" / ".env.platega",
+            resolved_root.parent.parent / "vpn-shop" / ".env.platega",
+        ):
+            if alt.exists():
+                _load_dotenv(alt)
+                break
     selected_env_file = env_file or os.environ.get("VPN_SHOP_ENV_FILE")
     if selected_env_file:
         selected_path = Path(selected_env_file)
@@ -196,5 +207,12 @@ def load_settings(root_dir: Path | None = None, env_file: str | Path | None = No
         platega_merchant_id_bot=os.environ.get("PLATEGA_MERCHANT_ID_BOT", "c3393290-d96e-4a5e-aca3-12015a843b0e").strip(),
         platega_merchant_id_web=os.environ.get("PLATEGA_MERCHANT_ID_WEB", "e4d5af52-9c18-444b-b8bf-db1a26f0c61d").strip(),
         platega_secret=os.environ.get("PLATEGA_SECRET", "").strip(),
-        platega_enabled=_bool("PLATEGA_ENABLED", False) and bool(os.environ.get("PLATEGA_SECRET", "").strip()),
+        platega_secret_bot=os.environ.get("PLATEGA_SECRET_BOT", "").strip() or os.environ.get("PLATEGA_SECRET", "").strip(),
+        platega_secret_web=os.environ.get("PLATEGA_SECRET_WEB", "").strip() or os.environ.get("PLATEGA_SECRET", "").strip(),
+        platega_enabled=_bool("PLATEGA_ENABLED", False) and bool(
+            os.environ.get("PLATEGA_SECRET", "").strip()
+            or os.environ.get("PLATEGA_SECRET_BOT", "").strip()
+            or os.environ.get("PLATEGA_SECRET_WEB", "").strip()
+        ),
     )
+

@@ -215,3 +215,11 @@ class TelegramBotClient:
             "show_alert": show_alert,
         }
         return bool(self._call("answerCallbackQuery", payload))
+
+    def set_my_commands(self, commands: list[dict[str, str]]) -> bool:
+        payload = {"commands": commands}
+        try:
+            return bool(self._call("setMyCommands", payload))
+        except Exception:
+            return False
+

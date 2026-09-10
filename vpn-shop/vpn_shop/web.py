@@ -183,6 +183,8 @@ class WebCheckout:
             merchant_id_bot=settings.platega_merchant_id_bot,
             merchant_id_web=settings.platega_merchant_id_web,
             secret=settings.platega_secret,
+            secret_bot=settings.platega_secret_bot,
+            secret_web=settings.platega_secret_web,
         )
         self._bot: Any = None
 
@@ -240,7 +242,7 @@ class WebCheckout:
     def handle_platega_callback(self, data: dict[str, Any], raw_body: bytes = b"") -> dict[str, Any]:
         status = str(data.get("status") or "").strip().upper()
         tx_id = str(data.get("id") or data.get("transactionId") or "").strip()
-        raw_amount = data.get("amount")
+        raw_amount = data.get("amount") if data.get("amount") is not None else (data.get("paymentDetails") or {}).get("amount")
         try:
             amount = float(raw_amount) if raw_amount is not None else 0.0
         except (ValueError, TypeError):
@@ -261,7 +263,8 @@ class WebCheckout:
             return {"status": "error", "message": "order_not_found"}
 
         order_public_id = str(order["public_id"])
-        event_id = tx_id or f"{order_public_id}:{status}"
+        # Event ID must include status to ensure PENDING callbacks do not block subsequent CONFIRMED payments
+        event_id = f"{tx_id}:{status}" if tx_id else f"{order_public_id}:{status}"
 
         payload_sha256 = hashlib.sha256(raw_body).hexdigest() if raw_body else None
         reserved = self.store.record_webhook_event(
@@ -2532,9 +2535,18 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, b'{"ok":false,"error":"body_too_large"}')
                     return
                 raw = self.rfile.read(length) if length > 0 else b""
-                # CRITICAL: Platega sends empty POST request when saving Callback URL in dashboard
-                if not raw or raw.strip() in (b"", b"{}"):
+                # CRITICAL: Platega sends empty POST request or test probe when saving Callback URL in dashboard
+                if not raw or raw.strip() in (b"", b"{}", b"[]"):
                     LOGGER.info("Received Platega empty verification ping. Responding 200 OK.")
+                    self._send_json(HTTPStatus.OK, b'{"status":"ok","message":"verification_ping_received"}')
+                    return
+
+                try:
+                    probe_data = json.loads(raw.decode("utf-8")) if raw else {}
+                except Exception:
+                    probe_data = {}
+                if isinstance(probe_data, dict) and (probe_data.get("ping") or probe_data.get("test") or probe_data.get("status") == "PING"):
+                    LOGGER.info("Received Platega ping/test probe. Responding 200 OK.")
                     self._send_json(HTTPStatus.OK, b'{"status":"ok","message":"verification_ping_received"}')
                     return
 
