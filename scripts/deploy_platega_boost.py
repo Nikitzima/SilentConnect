@@ -86,24 +86,34 @@ class NodeSession:
         self.ip = remote_exec.NL_HOST if target == "nl" else remote_exec.FI_HOST
         log(f"[{target.upper()}] NodeSession target host: {self.ip}")
 
-    def run(self, cmd: str, timeout: int = 60) -> Tuple[int, str, str]:
-        # Execute via OpenSSH for rock-solid reliability across all Windows environments
-        ssh_cmd = [
-            "ssh",
-            "-o", "ConnectTimeout=8",
-            "-o", "StrictHostKeyChecking=no",
-            f"root@{self.ip}",
-            cmd,
-        ]
-        try:
-            res = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
-            return res.returncode, res.stdout, res.stderr
-        except Exception as exc:
-            log(f"[{self.target.upper()}] OpenSSH error: {exc}, falling back to remote_exec...")
-            return remote_exec.run_cmd(self.target, cmd, timeout=timeout)
+    def run(self, cmd: str, timeout: int = 60, retries: int = 4) -> Tuple[int, str, str]:
+        # Execute via OpenSSH with automatic retry and backoff
+        for attempt in range(retries):
+            ssh_cmd = [
+                "ssh",
+                "-o", "ConnectTimeout=8",
+                "-o", "StrictHostKeyChecking=no",
+                f"root@{self.ip}",
+                cmd,
+            ]
+            try:
+                res = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
+                if res.returncode == 255 and attempt < retries - 1:
+                    log(f"[{self.target.upper()}] SSH connection reset/closed, backing off {attempt + 2}s (attempt {attempt + 1}/{retries})...")
+                    time.sleep(attempt + 2)
+                    continue
+                return res.returncode, res.stdout, res.stderr
+            except Exception as exc:
+                if attempt < retries - 1:
+                    time.sleep(attempt + 2)
+                    continue
+                log(f"[{self.target.upper()}] OpenSSH error: {exc}, falling back to remote_exec...")
+                return remote_exec.run_cmd(self.target, cmd, timeout=timeout)
+        return res.returncode, res.stdout, res.stderr
 
     def upload_modules_tar(self, local_vpn_shop: str, remote_dir: str = "/root/vpn-shop/vpn_shop"):
         self.run(f"mkdir -p '{remote_dir}'")
+        time.sleep(1)
         tar_cmd = ["tar", "-czf", "-", "-C", local_vpn_shop] + PYTHON_MODULES
         ssh_cmd = [
             "ssh",
@@ -160,15 +170,14 @@ ls -d '{code_bak}'
     log(f"[{target.upper()}] >>> PHASE 2: Uploading {len(PYTHON_MODULES)} modules to /root/vpn-shop/vpn_shop/...")
     session.run("chmod 755 /root/vpn-shop/vpn_shop")
     session.upload_modules_tar(local_vpn_shop, "/root/vpn-shop/vpn_shop")
-    session.run("chmod 755 /root/vpn-shop/vpn_shop")
     log(f"[{target.upper()}] All modules uploaded cleanly and permissions set to 0644.")
 
     # --------------------------------------------------------------------------
-    # Phase 3: Inject Platega Configuration Parameters Dynamically
+    # Phase 3 & 4: Config Injection & AST Validation (Single Compound Remote Execution)
     # --------------------------------------------------------------------------
-    log(f"[{target.upper()}] >>> PHASE 3: Injecting Platega configuration to /root/vpn-shop/.env.silentconnect...")
-    
-    # Pass creds via stdin or formatted python injection script
+    log(f"[{target.upper()}] >>> PHASE 3 & 4: Injecting Platega configuration, verifying AST syntax & catalog...")
+    time.sleep(2)
+
     config_lines = [
         "",
         "# =============================================================================",
@@ -183,40 +192,25 @@ ls -d '{code_bak}'
     ]
     block = "\\n".join(config_lines)
 
-    inject_script = f"""python3 -c "
+    compound_phase34_cmd = f"""
+set -e
+python3 -c "
 path = '/root/vpn-shop/.env.silentconnect'
 with open(path, 'r', encoding='utf-8') as f:
     lines = [l for l in f.readlines() if not l.startswith('PLATEGA_')]
 content = ''.join(lines).rstrip() + '{block}\\n'
 with open(path, 'w', encoding='utf-8') as f:
     f.write(content)
-" && chmod 600 /root/vpn-shop/.env.silentconnect
+"
+chmod 600 /root/vpn-shop/.env.silentconnect
+python3 -m py_compile /root/vpn-shop/vpn_shop/*.py
+cd /root/vpn-shop && python3 -c "from vpn_shop.config import load_settings; s = load_settings(env_file='.env.silentconnect'); assert s.platega_enabled, 'Platega not enabled'; print('Settings OK: platega_enabled=' + str(s.platega_enabled) + ', bot_id=' + s.platega_merchant_id_bot)"
 """
-    c, o, e = session.run(inject_script)
+    c, o, e = session.run(compound_phase34_cmd)
     if c != 0:
-        log(f"[{target.upper()}] FATAL: Config injection failed: {e}")
+        log(f"[{target.upper()}] FATAL: Config injection or AST validation failed: {e}")
         sys.exit(1)
-    
-    # Assert parameters injected
-    c, o, e = session.run("grep -E '^PLATEGA_' /root/vpn-shop/.env.silentconnect | cut -d= -f1 && ls -l /root/vpn-shop/.env.silentconnect")
-    log(f"[{target.upper()}] Injected parameters:\n{o.strip()}")
-
-    # --------------------------------------------------------------------------
-    # Phase 4: AST Syntax Validation & Settings/Catalog Dry-Run
-    # --------------------------------------------------------------------------
-    log(f"[{target.upper()}] >>> PHASE 4: Validating Python AST syntax & loading catalog...")
-    c, o, e = session.run("python3 -m py_compile /root/vpn-shop/vpn_shop/*.py")
-    if c != 0:
-        log(f"[{target.upper()}] FATAL: Python AST compilation error: {e}")
-        sys.exit(1)
-    log(f"[{target.upper()}] AST py_compile: 100% OK")
-
-    test_cmd = "cd /root/vpn-shop && python3 -c \"from vpn_shop.config import load_settings; s = load_settings(env_file='.env.silentconnect'); assert s.platega_enabled, 'Platega not enabled'; print('Settings OK: platega_enabled=' + str(s.platega_enabled) + ', bot_id=' + s.platega_merchant_id_bot)\""
-    c, o, e = session.run(test_cmd)
-    if c != 0:
-        log(f"[{target.upper()}] FATAL: Settings validation error: {e}")
-        sys.exit(1)
-    log(f"[{target.upper()}] Catalog & Settings verified OK:\n{o.strip()}")
+    log(f"[{target.upper()}] Injected config, py_compile AST & settings verification OK:\n{o.strip()}")
 
 def execute_rollout():
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")

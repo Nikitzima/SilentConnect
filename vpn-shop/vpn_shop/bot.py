@@ -2855,7 +2855,7 @@ class ShopBot:
         reply_to_message = message.get("reply_to_message") or {}
         raw_cmd = text.split(maxsplit=1)[0].lower() if text.startswith("/") else ""
         command = raw_cmd.split("@")[0] if raw_cmd else ""
-
+        is_admin_user = self.is_admin(user) or self.is_admin(chat_id)
 
         if text.startswith("/start"):
             parts = text.split(maxsplit=1)
