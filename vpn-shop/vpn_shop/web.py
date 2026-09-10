@@ -839,14 +839,48 @@ class WebCheckout:
         return "Заказ отменён."
 
     def order_status_json(self, order: dict[str, Any]) -> bytes:
-        meta = order.get("meta_json") or {}
+        status = str(order.get("status") or "")
+        meta = dict(order.get("meta_json") or {})
+
+        # Active reconciliation with Platega if order is waiting payment
+        if status == "waiting_payment" and self.settings.platega_enabled and self.platega.is_configured:
+            tx_id = str(meta.get("platega_transaction_id") or "").strip()
+            last_polled = int(meta.get("platega_last_polled_at") or 0)
+            now = now_ts()
+            if tx_id and (now - last_polled) >= 8:
+                meta["platega_last_polled_at"] = now
+                self.store.update_order_meta(str(order["public_id"]), meta)
+                try:
+                    tx_status = self.platega.get_transaction_status(tx_id, is_bot=False)
+                    tx_state = str(tx_status.get("status") or "").strip().upper()
+                    if tx_state == "CONFIRMED":
+                        raw_amount = tx_status.get("amount") if tx_status.get("amount") is not None else (tx_status.get("paymentDetails") or {}).get("amount")
+                        try:
+                            amount = float(raw_amount) if raw_amount is not None else 0.0
+                        except (ValueError, TypeError):
+                            amount = 0.0
+                        expected_rub = int(order.get("final_price_rub") or 0)
+                        if amount <= 0 or expected_rub <= 0 or amount >= (expected_rub - 0.5):
+                            LOGGER.info("Active reconciliation confirmed order %s via Platega API", order["public_id"])
+                            meta["platega_confirmed_at"] = now
+                            meta["platega_confirmed_amount"] = amount
+                            self.store.update_order_meta(str(order["public_id"]), meta)
+                            self.bot.complete_order(order, actor="web_polling_reconciliation")
+                            refreshed = self.store.get_order(str(order["public_id"]))
+                            if refreshed:
+                                order = refreshed
+                                status = str(order.get("status") or "")
+                                meta = dict(order.get("meta_json") or {})
+                except Exception as exc:
+                    LOGGER.debug("Platega active query during polling for order %s: %s", order.get("public_id"), exc)
+
         payload = {
             "ok": True,
-            "status": str(order.get("status") or ""),
+            "status": status,
             "paid_reported": bool(meta.get("web_paid_reported_at")),
             "updated_at": int(order.get("updated_at") or 0),
         }
-        if payload["status"] == "delivered":
+        if status == "delivered":
             subscription_url = self.recover_subscription(order)
             if subscription_url:
                 payload["setup_url"] = subscription_setup_url(subscription_url)
