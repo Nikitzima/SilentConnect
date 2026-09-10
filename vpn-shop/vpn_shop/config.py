@@ -68,6 +68,7 @@ def _csv_ints(name: str) -> tuple[int, ...]:
             values.append(int(cleaned))
     return tuple(values)
 
+
 DEFAULT_MANAGER_TG_ID = 958026436  # PLACEHOLDER
 
 REFERRAL_INVITEE_DISCOUNT_PERCENT: int = 10
@@ -120,11 +121,16 @@ class Settings:
     cf_turnstile_site_key: str
     cf_turnstile_secret_key: str
     cf_turnstile_enabled: bool = True
+    platega_merchant_id_bot: str = "c3393290-d96e-4a5e-aca3-12015a843b0e"
+    platega_merchant_id_web: str = "e4d5af52-9c18-444b-b8bf-db1a26f0c61d"
+    platega_secret: str = ""
+    platega_enabled: bool = False
 
 
 def load_settings(root_dir: Path | None = None, env_file: str | Path | None = None) -> Settings:
     resolved_root = (root_dir or Path(__file__).resolve().parents[1]).resolve()
     _load_dotenv(resolved_root / ".env")
+    _load_dotenv(resolved_root / ".env.platega")
     selected_env_file = env_file or os.environ.get("VPN_SHOP_ENV_FILE")
     if selected_env_file:
         selected_path = Path(selected_env_file)
@@ -145,7 +151,7 @@ def load_settings(root_dir: Path | None = None, env_file: str | Path | None = No
         welcome_media=os.environ.get("WELCOME_MEDIA", "").strip(),
         quickstart_media=os.environ.get("QUICKSTART_MEDIA", "").strip(),
         admin_usernames=_csv_usernames("ADMIN_TG_USERNAMES"),
-        admin_user_ids=_csv_ints("ADMIN_TG_IDS") or (DEFAULT_MANAGER_TG_ID,),
+        admin_user_ids=_csv_ints("ADMIN_TG_IDS"),
         subscription_base_url=_env("SUBSCRIPTION_BASE_URL", "http://127.0.0.1:3088/sub/json").rstrip("/"),
         payment_instructions_text=os.environ.get(
             "PAYMENT_INSTRUCTIONS_TEXT",
@@ -162,7 +168,7 @@ def load_settings(root_dir: Path | None = None, env_file: str | Path | None = No
         xui_panel_url=_env("XUI_PANEL_URL", "https://127.0.0.1:2053/").rstrip("/") + "/",
         xui_username=os.environ.get("XUI_USERNAME", "").strip(),
         xui_password=os.environ.get("XUI_PASSWORD", "").strip(),
-        xui_verify_tls=_bool("XUI_VERIFY_TLS", True),
+        xui_verify_tls=_bool("XUI_VERIFY_TLS", False),
         xui_db_path=_path_from_env("XUI_DB_PATH", "/etc/x-ui/x-ui.db", resolved_root),
         xui_xhttp_inbound_id=_int("XUI_XHTTP_INBOUND_ID", 1),
         xui_tcp_inbound_id=_int("XUI_TCP_INBOUND_ID", 2),
@@ -187,4 +193,8 @@ def load_settings(root_dir: Path | None = None, env_file: str | Path | None = No
         cf_turnstile_site_key=os.environ.get("CF_TURNSTILE_SITE_KEY", "").strip(),
         cf_turnstile_secret_key=os.environ.get("CF_TURNSTILE_SECRET_KEY", "").strip(),
         cf_turnstile_enabled=_bool("CF_TURNSTILE_ENABLED", True) and bool(os.environ.get("CF_TURNSTILE_SECRET_KEY", "").strip()),
+        platega_merchant_id_bot=os.environ.get("PLATEGA_MERCHANT_ID_BOT", "c3393290-d96e-4a5e-aca3-12015a843b0e").strip(),
+        platega_merchant_id_web=os.environ.get("PLATEGA_MERCHANT_ID_WEB", "e4d5af52-9c18-444b-b8bf-db1a26f0c61d").strip(),
+        platega_secret=os.environ.get("PLATEGA_SECRET", "").strip(),
+        platega_enabled=_bool("PLATEGA_ENABLED", False) and bool(os.environ.get("PLATEGA_SECRET", "").strip()),
     )

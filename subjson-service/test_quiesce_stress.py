@@ -144,17 +144,21 @@ class TestQuiesceStressHarness(unittest.TestCase):
         with app.QUIESCE_LOCK:
             app.QUIESCE_LEASE_UNTIL = time.time() - 1.0
 
-        # 4. Under hardened mode, quiesce stays active to avoid split-brain writes during failover
-        self.assertTrue(app.is_quiesced())
+        # 4. Verification that is_quiesced() automatically flips to False and clears state
+        self.assertFalse(app.is_quiesced())
+        with app.QUIESCE_LOCK:
+            self.assertFalse(app.QUIESCE_ACTIVE)
+            self.assertEqual(app.QUIESCE_LEASE_UNTIL, 0.0)
 
-        # 5. Explicit release clears quiesced state
+        # 5. Heartbeat after expiration must return 400 NOT_QUIESCED
         status, _, data = self._request(
             "POST",
-            f"/{app.SECRET_SEGMENT}/internal-quiesce/release",
+            f"/{app.SECRET_SEGMENT}/internal-quiesce/lease",
             headers=self.auth_headers
         )
-        self.assertEqual(status, 200)
-        self.assertFalse(app.is_quiesced())
+        self.assertEqual(status, 400)
+        res = json.loads(data)
+        self.assertEqual(res.get("status"), "NOT_QUIESCED")
 
         # 6. Restarting quiesce works properly
         status, _, data = self._request(

@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
-IFS=$'\n\t'
 # ==============================================================================
 # demote_fi.sh - Safe Failback & Re-synchronization Script
 #
@@ -10,22 +8,18 @@ IFS=$'\n\t'
 # 3. Initiates Quiesce Lock on FI SubJSON (30s lease + 10s heartbeat loop).
 # 4. Stops FI vpn-shop-silentconnect and vpn-shop-web services.
 # 5. Transfers delta to NL and executes failback_merge.py.
-# 6. Starts and verifies services on NL.
-# 7. Switches Cloudflare DNS back to NL IP (DNS-Only ⚪).
+# 6. Switches Cloudflare DNS back to NL IP (DNS-Only ⚪).
+# 7. Starts and verifies services on NL.
 # 8. Releases FI Quiesce Lock.
 # 9. Dispatches Telegram administrative notification.
 # ==============================================================================
 
-# Load environment configuration if available
-if [ -f "/etc/cf-failover-dns.env" ]; then
-    # shellcheck source=/dev/null
-    source "/etc/cf-failover-dns.env"
-fi
+set -eo pipefail
 
 LOCK_FILE="/var/run/demote_fi.lock"
 STATE_FILE="/var/run/cluster_state"
-NL_IP="${NL_IP:-${NL_MASTER_IP:-193.233.210.189}}"
-FI_IP="${FI_IP:-${FI_STANDBY_IP:-95.217.178.48}}"
+NL_IP="${NL_IP:-${NL_MASTER_IP:-192.0.2.1}}"
+FI_IP="${FI_IP:-${FI_STANDBY_IP:-198.51.100.1}}"
 
 # Acquire non-blocking lock
 exec 200>"$LOCK_FILE"
@@ -48,8 +42,6 @@ log "=== STARTING SAFE FAILBACK & RE-SYNCHRONIZATION TO NL (${NL_IP}) ==="
 ENV_FILE="${ENV_FILE:-/root/vpn-shop/.env}"
 SUBJSON_ENV="/root/subjson-service/subjson.env"
 
-BOT_TOKEN=""
-ADMIN_ID=""
 if [ -f "$ENV_FILE" ]; then
     BOT_TOKEN=$(grep -E '^TELEGRAM_BOT_TOKEN=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"'\''' || true)
     ADMIN_ID=$(grep -E '^ADMIN_TELEGRAM_ID=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"'\''' || true)
@@ -66,13 +58,13 @@ if [ -f "$SUBJSON_ENV" ]; then
 fi
 
 # Step 1: Debounce check (Confirm NL is stable)
-log "Step 1: Checking NL node stability (debounce)..."
-for i in {1..3}; do
-    if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@${NL_IP} "uptime" >/dev/null 2>&1; then
-        err "NL is not stably accessible via SSH (check $i/3 failed). Aborting failback."
+log "Step 1: Checking NL node stability (30s debounce)..."
+for i in {1..6}; do
+    if ! ssh -o BatchMode=yes -o ConnectTimeout=5 root@${NL_IP} "uptime" >/dev/null 2>&1; then
+        err "NL is not stably accessible via SSH (check $i/6 failed). Aborting failback."
         exit 1
     fi
-    sleep 2
+    sleep 5
 done
 log "NL node is stable and reachable."
 
@@ -107,53 +99,45 @@ systemctl stop vpn-shop-silentconnect.service vpn-shop-web.service 2>/dev/null |
 
 # Step 4: Transfer FI DBs and Baselines to NL and execute failback_merge.py
 log "Step 4: Executing 3-Way Data Merge on NL..."
-ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@${NL_IP} "mkdir -p /tmp/fi_merge"
+ssh -o BatchMode=yes -o ConnectTimeout=10 root@${NL_IP} "mkdir -p /tmp/fi_merge"
 
 # Copy FI databases to NL merge staging
-scp -o BatchMode=yes -o StrictHostKeyChecking=no /etc/x-ui/x-ui.db root@${NL_IP}:/tmp/fi_merge/fi_xui.db
-scp -o BatchMode=yes -o StrictHostKeyChecking=no /root/vpn-shop/data-silentconnect/vpn_shop.db root@${NL_IP}:/tmp/fi_merge/fi_vpn.db
+scp -o BatchMode=yes /etc/x-ui/x-ui.db root@${NL_IP}:/tmp/fi_merge/fi_xui.db
+scp -o BatchMode=yes /root/vpn-shop/data-silentconnect/vpn_shop.db root@${NL_IP}:/tmp/fi_merge/fi_vpn.db
 
 if [ -f "/var/lib/litestream/baseline_xui.db" ]; then
-    scp -o BatchMode=yes -o StrictHostKeyChecking=no /var/lib/litestream/baseline_xui.db root@${NL_IP}:/tmp/fi_merge/baseline_xui.db
+    scp -o BatchMode=yes /var/lib/litestream/baseline_xui.db root@${NL_IP}:/tmp/fi_merge/baseline_xui.db
 fi
 if [ -f "/var/lib/litestream/baseline_vpn_shop.db" ]; then
-    scp -o BatchMode=yes -o StrictHostKeyChecking=no /var/lib/litestream/baseline_vpn_shop.db root@${NL_IP}:/tmp/fi_merge/baseline_vpn_shop.db
+    scp -o BatchMode=yes /var/lib/litestream/baseline_vpn_shop.db root@${NL_IP}:/tmp/fi_merge/baseline_vpn_shop.db
 fi
 
 # Run failback_merge.py on NL
-if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=30 root@${NL_IP} "python3 /usr/local/bin/failback_merge.py \
+ssh -o BatchMode=yes -o ConnectTimeout=30 root@${NL_IP} "python3 /usr/local/bin/failback_merge.py \
     --nl-vpn /root/vpn-shop/data-silentconnect/vpn_shop.db \
     --fi-vpn /tmp/fi_merge/fi_vpn.db \
     --baseline-vpn /tmp/fi_merge/baseline_vpn_shop.db \
     --nl-xui /etc/x-ui/x-ui.db \
     --fi-xui /tmp/fi_merge/fi_xui.db \
-    --baseline-xui /tmp/fi_merge/baseline_xui.db"; then
-    err "failback_merge.py failed on NL!"
-    err "ABORTING: DNS will NOT be switched. NL may have corrupt or unmerged data."
-    cleanup_heartbeat
-    exit 2
-fi
+    --baseline-xui /tmp/fi_merge/baseline_xui.db"
 
 log "3-Way Merge completed on NL."
 
-# Step 5: Start and verify services on NL FIRST
-log "Step 5: Starting and validating services on NL..."
-ssh -o BatchMode=yes -o StrictHostKeyChecking=no root@${NL_IP} "systemctl start vpn-shop-silentconnect vpn-shop-web litestream && systemctl restart x-ui caddy subjson"
-
-NL_BOT_ACTIVE=$(ssh -o BatchMode=yes -o StrictHostKeyChecking=no root@${NL_IP} "systemctl is-active vpn-shop-silentconnect 2>/dev/null || echo 'inactive'")
-if [ "$NL_BOT_ACTIVE" != "active" ]; then
-    err "vpn-shop-silentconnect on NL is not active! ABORTING failback."
-    cleanup_heartbeat
-    exit 3
-fi
-log "NL services verified and active."
-
-# Step 6: Switch Cloudflare DNS back to NL IP (DNS-Only ⚪) ONLY AFTER NL is verified
-log "Step 6: Switching Cloudflare DNS records back to NL IP (${NL_IP})..."
+# Step 5: Switch Cloudflare DNS back to NL IP (DNS-Only ⚪)
+log "Step 5: Switching Cloudflare DNS records back to NL IP (${NL_IP})..."
 if [ -x "/usr/local/bin/cf-failover-dns.sh" ]; then
     /usr/local/bin/cf-failover-dns.sh demote-fi
 else
     log "WARNING: /usr/local/bin/cf-failover-dns.sh not found or not executable"
+fi
+
+# Step 6: Start and verify services on NL
+log "Step 6: Starting and validating services on NL..."
+ssh -o BatchMode=yes root@${NL_IP} "systemctl start vpn-shop-silentconnect vpn-shop-web litestream && systemctl restart x-ui caddy subjson"
+
+NL_BOT_ACTIVE=$(ssh -o BatchMode=yes root@${NL_IP} "systemctl is-active vpn-shop-silentconnect 2>/dev/null || echo 'inactive'")
+if [ "$NL_BOT_ACTIVE" != "active" ]; then
+    err "vpn-shop-silentconnect on NL is not active!"
 fi
 
 # Step 7: Release Quiesce Lock on FI

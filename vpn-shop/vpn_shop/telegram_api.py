@@ -215,13 +215,3 @@ class TelegramBotClient:
             "show_alert": show_alert,
         }
         return bool(self._call("answerCallbackQuery", payload))
-
-    def delete_message(self, chat_id: int | str, message_id: int) -> bool:
-        payload = {
-            "chat_id": chat_id,
-            "message_id": int(message_id),
-        }
-        try:
-            return bool(self._call("deleteMessage", payload))
-        except Exception:
-            return False

@@ -1200,6 +1200,22 @@ class Store:
             row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
         return self._row_to_dict(row)
 
+    def get_order_by_platega_tx_id(self, tx_id: str) -> dict[str, Any] | None:
+        if not tx_id:
+            return None
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM orders WHERE meta_json LIKE ? ORDER BY id DESC LIMIT 5",
+                (f"%{tx_id}%",),
+            ).fetchall()
+        for row in rows:
+            d = self._row_to_dict(row)
+            if d:
+                meta = d.get("meta_json") or {}
+                if str(meta.get("platega_transaction_id") or "") == str(tx_id):
+                    return d
+        return None
+
     def record_webhook_event(
         self,
         gateway: str,

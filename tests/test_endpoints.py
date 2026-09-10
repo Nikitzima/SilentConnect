@@ -183,8 +183,8 @@ class TestRequestHandlerRoutingAndEndpoints(unittest.TestCase):
             self.assertIn(b"SilentConnect", body)
 
     def test_json_and_sub_routes_return_11_profiles(self):
-        """Verify /{SECRET}/json/{sub_id}, /sub/..., /happ/... return 11 profiles with smart auto-selector at index 0."""
-        routes = ["json", "sub", "json-ru", "sub-ru", "happ"]
+        """Verify /{SECRET}/json/{sub_id}, /sub/..., /singbox/..., /happ/... return 11 profiles with smart auto-selector at index 0."""
+        routes = ["json", "sub", "json-ru", "sub-ru", "singbox", "happ"]
         for r in routes:
             path = f"/{self.secret}/{r}/{self.sub_id}"
             status, headers, body = self.harness.request("GET", path)
@@ -200,18 +200,9 @@ class TestRequestHandlerRoutingAndEndpoints(unittest.TestCase):
             self.assertIn("observatory", smart)
             self.assertIn("balancers", smart.get("routing", {}))
 
-        # Native Sing-box routes return dictionary config
-        for s_route in ["singbox", "sing-box", "sfa"]:
-            path = f"/{self.secret}/{s_route}/{self.sub_id}"
-            status, headers, body = self.harness.request("GET", path)
-            self.assertEqual(status, 200)
-            sb_cfg = json.loads(body.decode("utf-8"))
-            self.assertIsInstance(sb_cfg, dict)
-            self.assertIn("outbounds", sb_cfg)
-
     def test_json_global_routes(self):
         """Verify /{SECRET}/json-global/{sub_id} and /sub-global/... return global route configuration."""
-        for r in ["json-global", "sub-global", "happ-global"]:
+        for r in ["json-global", "sub-global", "singbox-global", "happ-global"]:
             path = f"/{self.secret}/{r}/{self.sub_id}"
             status, headers, body = self.harness.request("GET", path)
             self.assertEqual(status, 200)
@@ -222,13 +213,6 @@ class TestRequestHandlerRoutingAndEndpoints(unittest.TestCase):
             rules = smart.get("routing", {}).get("rules", [])
             direct_rules = [ru for ru in rules if ru.get("outboundTag") == "direct"]
             self.assertFalse(any(any("ru" in str(d) for d in ru.get("domain", [])) for ru in direct_rules))
-
-        path = f"/{self.secret}/singbox-global/{self.sub_id}"
-        status, headers, body = self.harness.request("GET", path)
-        self.assertEqual(status, 200)
-        sb_cfg = json.loads(body.decode("utf-8"))
-        self.assertIsInstance(sb_cfg, dict)
-        self.assertIn("outbounds", sb_cfg)
 
     def test_clash_and_meta_yaml_routes(self):
         """Verify /{SECRET}/clash/{sub_id}, /meta/..., /clash-meta/... return valid Clash Meta YAML."""
@@ -287,7 +271,8 @@ class TestRequestHandlerRoutingAndEndpoints(unittest.TestCase):
             self.assertEqual(len(lines), 10)
             unquoted_lines = [urllib.parse.unquote(l) for l in lines]
             self.assertTrue(any("Классический TCP (NL)" in l for l in unquoted_lines))
-            self.assertTrue(any("XHTTP Reality (FI)" in l for l in unquoted_lines))
+            self.assertTrue(any("Классический TCP (FI)" in l for l in unquoted_lines))
+            self.assertTrue(any("39443" in l and "XHTTP Reality (FI)" in l for l in unquoted_lines))
 
     def test_import_setup_page(self):
         """Verify /{SECRET}/import/{sub_id} serves Web UI setup page with Clash Meta card."""
@@ -425,18 +410,11 @@ class TestQuiesceLockAndSecurity(unittest.TestCase):
         self.assertEqual(data.get("error"), "quiesce_merge_in_progress")
 
     def test_quiesce_lease_expiration(self):
-        """Verify Quiesce during maintenance persists without accidental expiry until explicit release."""
+        """Verify Quiesce automatically expires when lease timestamp is exceeded."""
         with app.QUIESCE_LOCK:
             app.QUIESCE_ACTIVE = True
-            app.QUIESCE_LEASE_UNTIL = time.time() - 1.0  # Expired timestamp during long operation
+            app.QUIESCE_LEASE_UNTIL = time.time() - 1.0  # Expired 1 second ago
 
-        # Quiesce remains active to protect state until explicit release
-        self.assertTrue(app.is_quiesced())
-
-        # Explicit release clears quiesced state
-        headers = {"X-Internal-Secret": self.token}
-        status, _, body = self.harness.request("GET", f"/{self.secret}/internal-quiesce/release", headers=headers)
-        self.assertEqual(status, 200)
         self.assertFalse(app.is_quiesced())
 
 

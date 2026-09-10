@@ -50,7 +50,7 @@ def ensure_torrent_block(server_code: str = "nl") -> None:
 
 def main() -> None:
     awg_manager.ensure_table()
-    for srv in awg_manager.SERVERS.keys():
+    for srv in ("nl", "fi"):
         ensure_torrent_block(srv)
 
     xui = XuiDatabase(XUI_DB)
@@ -58,7 +58,7 @@ def main() -> None:
     now_s = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     transfers: dict[str, dict[str, tuple[int, int]]] = {}
-    for srv in awg_manager.SERVERS.keys():
+    for srv in ("nl", "fi"):
         try:
             transfers[srv] = awg_manager.peer_transfer(srv)
         except Exception as exc:

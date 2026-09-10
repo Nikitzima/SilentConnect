@@ -105,7 +105,6 @@ dist/
 outage_metrics.json
 screenshots/
 *.svg.tmp
-*_test.png
 
 # Agent metadata and working directories
 .agents/
