@@ -13,7 +13,7 @@ FI_HOST = os.environ.get("FI_HOST", os.environ.get("FI_STANDBY_IP", "198.51.100.
 
 def socks5_connect(dest_host: str, dest_port: int, proxy_host: str = PROXY_HOST, proxy_port: int = PROXY_PORT):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(5)
+    s.settimeout(3)
     s.connect((proxy_host, proxy_port))
     s.sendall(b'\x05\x01\x00')
     resp = s.recv(2)
@@ -26,6 +26,16 @@ def socks5_connect(dest_host: str, dest_port: int, proxy_host: str = PROXY_HOST,
         raise RuntimeError('SOCKS5 connect failed')
     return s
 
+def is_proxy_available(proxy_host: str = PROXY_HOST, proxy_port: int = PROXY_PORT) -> bool:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.5)
+        s.connect((proxy_host, proxy_port))
+        s.close()
+        return True
+    except Exception:
+        return False
+
 def get_client(target: str, max_retries: int = 5):
     key_path = str(pathlib.Path.home() / '.ssh' / 'id_ed25519')
     key = paramiko.Ed25519Key.from_private_key_file(key_path)
@@ -34,26 +44,42 @@ def get_client(target: str, max_retries: int = 5):
     for attempt in range(max_retries):
         dest_host = NL_HOST if target == 'nl' else FI_HOST
         
-        # 1. Try local SOCKS5 proxy first
-        try:
-            sock = socks5_connect(dest_host, 22)
-            client = paramiko.SSHClient()
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            client.connect(dest_host, username='root', pkey=key, sock=sock, banner_timeout=15, auth_timeout=15)
-            return client
-        except Exception as proxy_err:
-            last_err = proxy_err
-
-        # 2. Try direct connect
+        # 1. Try direct connect first
         try:
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            client.connect(dest_host, username='root', pkey=key, timeout=5, banner_timeout=15, auth_timeout=15)
+            client.connect(dest_host, username='root', pkey=key, timeout=5, banner_timeout=10, auth_timeout=10)
             return client
         except Exception as direct_err:
             last_err = direct_err
 
-        time.sleep(1)
+        # 2. For NL, try jumping via FI (rock-solid datacenter link)
+        if target == 'nl':
+            try:
+                jump = paramiko.SSHClient()
+                jump.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                jump.connect(FI_HOST, username='root', pkey=key, timeout=5, banner_timeout=10, auth_timeout=10)
+                chan = jump.get_transport().open_channel('direct-tcpip', (NL_HOST, 22), ('127.0.0.1', 0))
+                client = paramiko.SSHClient()
+                client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                client.connect(NL_HOST, username='root', pkey=key, sock=chan, timeout=5, banner_timeout=10, auth_timeout=10)
+                client._jump_client = jump
+                return client
+            except Exception as jump_err:
+                last_err = jump_err
+
+        # 3. Try local SOCKS5 proxy fallback only if proxy is listening
+        if is_proxy_available():
+            try:
+                sock = socks5_connect(dest_host, 22)
+                client = paramiko.SSHClient()
+                client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                client.connect(dest_host, username='root', pkey=key, sock=sock, banner_timeout=10, auth_timeout=10)
+                return client
+            except Exception as proxy_err:
+                last_err = proxy_err
+
+        time.sleep(2)
 
     raise last_err
 
@@ -79,17 +105,21 @@ def run_cmd(target: str, cmd_str: str, timeout: int = 60):
                 pass
 
 def upload_file(target: str, local_path: str, remote_path: str, mode: int = 0o644):
+    upload_files_batch(target, [(local_path, remote_path, mode)])
+
+def upload_files_batch(target: str, file_tuples: list[tuple[str, str, int]]):
     client = get_client(target)
     try:
         sftp = client.open_sftp()
-        remote_dir = os.path.dirname(remote_path)
-        if remote_dir and remote_dir != '/':
-            try:
-                sftp.stat(remote_dir)
-            except IOError:
-                client.exec_command(f"mkdir -p '{remote_dir}'")
-        sftp.put(local_path, remote_path)
-        sftp.chmod(remote_path, mode)
+        for local_path, remote_path, mode in file_tuples:
+            remote_dir = os.path.dirname(remote_path)
+            if remote_dir and remote_dir != '/':
+                try:
+                    sftp.stat(remote_dir)
+                except IOError:
+                    client.exec_command(f"mkdir -p '{remote_dir}'")
+            sftp.put(local_path, remote_path)
+            sftp.chmod(remote_path, mode)
         sftp.close()
     finally:
         client.close()

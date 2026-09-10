@@ -31,7 +31,6 @@ CONSTANTS = {
     "GRPC_REALITY_PUBLIC_KEY": "qb3chneGBO60_kv-McyCvUrXM93aN851duFH2bVIMQU",
     "GRPC_REALITY_SHORT_ID": "9a2f7c6d1e4b8a30",
     "GRPC_REALITY_SNI": "vk.com",
-    "FI_GRPC_REALITY_SNI": "sbercloud.ru",
     "GRPC_SERVICE_NAME": "grpc-maxru",
     "FI_XHTTP_REALITY_PUBLIC_KEY": "ASvvjJ4dOcHst5FWDJ9D562UQ0nN1pAw0l13Z58RNQA",
     "FI_XHTTP_REALITY_SHORT_ID": "a1b2c3d4e5f60718",
@@ -119,7 +118,7 @@ def build_authoritative_clash_meta_dict(
                 "password": client_uuid,
                 "sni": CONSTANTS["NL_SUB_HOST"],
                 "alpn": ["h3"],
-                "obfs": "gecko",
+                "obfs": "salamander",
                 "obfs-password": CONSTANTS["HYSTERIA_SALAMANDER_PASSWORD"],
                 "udp": True,
             },
@@ -198,7 +197,7 @@ def build_authoritative_clash_meta_dict(
                 "password": client_uuid,
                 "sni": CONSTANTS["FI_HOST"],
                 "alpn": ["h3"],
-                "obfs": "gecko",
+                "obfs": "salamander",
                 "obfs-password": CONSTANTS["HYSTERIA_SALAMANDER_PASSWORD"],
                 "udp": True,
             },
@@ -206,11 +205,11 @@ def build_authoritative_clash_meta_dict(
                 "name": "🇫🇮 FI Backup Reality gRPC",
                 "type": "vless",
                 "server": CONSTANTS["FI_HOST"],
-                "port": 443,
+                "port": 29443,
                 "uuid": client_uuid,
                 "network": "grpc",
                 "tls": True,
-                "servername": CONSTANTS["FI_GRPC_REALITY_SNI"],
+                "servername": CONSTANTS["GRPC_REALITY_SNI"],
                 "reality-opts": {
                     "public-key": CONSTANTS["GRPC_REALITY_PUBLIC_KEY"],
                     "short-id": CONSTANTS["GRPC_REALITY_SHORT_ID"],
@@ -323,12 +322,12 @@ def build_authoritative_streisand_bundle_text(
     uris = [
         f"vless://{client_uuid}@{CONSTANTS['NL_HOST']}:443?type=tcp&security=reality&pbk={CONSTANTS['TCP_REALITY_PUBLIC_KEY']}&fp=chrome&sni={CONSTANTS['TCP_REALITY_SNI_CLASSIC']}&sid={CONSTANTS['TCP_REALITY_SHORT_ID']}&flow=xtls-rprx-vision#{urllib.parse.quote('🇳🇱 1. Классический TCP (NL)')}",
         f"vless://{client_uuid}@{CONSTANTS['NL_HOST']}:443?type=tcp&security=reality&pbk={CONSTANTS['TCP_REALITY_PUBLIC_KEY']}&fp=chrome&sni={CONSTANTS['TCP_REALITY_SNI_FAST']}&sid={CONSTANTS['TCP_REALITY_SHORT_ID']}&flow=xtls-rprx-vision#{urllib.parse.quote('🇳🇱 2. Быстрый TCP (NL)')}",
-        f"hy2://{client_uuid}@{CONSTANTS['NL_SUB_HOST']}:443?sni={CONSTANTS['NL_SUB_HOST']}&alpn=h3&obfs=gecko&obfs-password={CONSTANTS['HYSTERIA_SALAMANDER_PASSWORD']}#{urllib.parse.quote('🇳🇱 3. Скоростной Hysteria2 (NL)')}",
+        f"hy2://{client_uuid}@{CONSTANTS['NL_SUB_HOST']}:443?sni={CONSTANTS['NL_SUB_HOST']}&alpn=h3&obfs=salamander&obfs-password={CONSTANTS['HYSTERIA_SALAMANDER_PASSWORD']}#{urllib.parse.quote('🇳🇱 3. Скоростной Hysteria2 (NL)')}",
         f"vless://{client_uuid}@{CONSTANTS['NL_HOST']}:29443?type=grpc&security=reality&pbk={CONSTANTS['GRPC_REALITY_PUBLIC_KEY']}&fp=chrome&sni={CONSTANTS['GRPC_REALITY_SNI']}&sid={CONSTANTS['GRPC_REALITY_SHORT_ID']}&serviceName={CONSTANTS['GRPC_SERVICE_NAME']}#{urllib.parse.quote('🇳🇱 4. Запасной gRPC (NL)')}",
         f"vless://{client_uuid}@{CONSTANTS['NL_HOST']}:443?type=xhttp&security=tls&sni={CONSTANTS['NL_HOST']}&alpn=h2,http/1.1&path=%2Fxh-mx-d1f7c0429d6a&mode=packet-up#{urllib.parse.quote('🇳🇱 5. Незаметный XHTTP (NL)')}",
         f"vless://{client_uuid}@{CONSTANTS['FI_HOST']}:443?type=tcp&security=reality&pbk={CONSTANTS['TCP_REALITY_PUBLIC_KEY']}&fp=chrome&sni={CONSTANTS['TCP_REALITY_SNI_CLASSIC']}&sid={CONSTANTS['TCP_REALITY_SHORT_ID']}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 6. Классический TCP (FI)')}",
         f"vless://{client_uuid}@{CONSTANTS['FI_HOST']}:443?type=tcp&security=reality&pbk={CONSTANTS['TCP_REALITY_PUBLIC_KEY']}&fp=chrome&sni={CONSTANTS['TCP_REALITY_SNI_FAST']}&sid={CONSTANTS['TCP_REALITY_SHORT_ID']}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 7. Быстрый TCP (FI)')}",
-        f"hy2://{client_uuid}@{CONSTANTS['FI_HOST']}:443?sni={CONSTANTS['FI_HOST']}&alpn=h3&obfs=gecko&obfs-password={CONSTANTS['HYSTERIA_SALAMANDER_PASSWORD']}#{urllib.parse.quote('🇫🇮 8. Скоростной Hysteria2 (FI)')}",
+        f"hy2://{client_uuid}@{CONSTANTS['FI_HOST']}:443?sni={CONSTANTS['FI_HOST']}&alpn=h3&obfs=salamander&obfs-password={CONSTANTS['HYSTERIA_SALAMANDER_PASSWORD']}#{urllib.parse.quote('🇫🇮 8. Скоростной Hysteria2 (FI)')}",
         f"vless://{client_uuid}@{CONSTANTS['FI_HOST']}:29443?type=grpc&security=reality&pbk={CONSTANTS['GRPC_REALITY_PUBLIC_KEY']}&fp=chrome&sni={CONSTANTS['GRPC_REALITY_SNI']}&sid={CONSTANTS['GRPC_REALITY_SHORT_ID']}&serviceName={CONSTANTS['GRPC_SERVICE_NAME']}#{urllib.parse.quote('🇫🇮 9. Запасной gRPC (FI)')}",
         f"vless://{client_uuid}@{CONSTANTS['FI_HOST']}:{CONSTANTS['FI_XHTTP_REALITY_PORT']}?type=xhttp&security=reality&pbk={CONSTANTS['FI_XHTTP_REALITY_PUBLIC_KEY']}&fp=chrome&sni={CONSTANTS['FI_XHTTP_REALITY_SNI']}&sid={CONSTANTS['FI_XHTTP_REALITY_SHORT_ID']}&path=%2Fxh-mx-d1f7c0429d6a&mode=packet-up#{urllib.parse.quote('🇫🇮 10. Незаметный XHTTP Reality (FI)')}",
     ]
@@ -482,7 +481,7 @@ def parse_and_validate_streisand_bundle(encoded_bundle: str) -> Tuple[List[Dict[
                     if not params.get("sni"):
                         errors.append(f"Line {idx+1}: Missing 'sni' in Reality node")
             elif scheme in ("hy2", "hysteria2"):
-                if params.get("obfs", [""])[0] in ("salamander", "gecko"):
+                if params.get("obfs", [""])[0] == "salamander":
                     if not params.get("obfs-password"):
                         errors.append(f"Line {idx+1}: Missing 'obfs-password' for Salamander")
 
@@ -546,7 +545,7 @@ class TestClashMetaYamlSchema(unittest.TestCase):
         # NL Hysteria2
         nl_hy2 = proxies["🇳🇱 NL Speed Hysteria2"]
         self.assertEqual(nl_hy2["type"], "hysteria2")
-        self.assertEqual(nl_hy2["obfs"], "gecko")
+        self.assertEqual(nl_hy2["obfs"], "salamander")
         self.assertEqual(nl_hy2["obfs-password"], CONSTANTS["HYSTERIA_SALAMANDER_PASSWORD"])
 
     def test_fallback_group_priority_order(self):

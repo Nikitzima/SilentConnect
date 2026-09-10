@@ -392,7 +392,7 @@ class TestFalsePositiveRatesAndWhitelists(unittest.TestCase):
         DB_KEY = "0x4AAAAAAATestKey"
         DB_SEC = "0x4AAAAAAATestSecret"
         DUMMY_PHONE = "+79990000000"
-        DUMMY_BREVO = "your_smtp_password_or_token_here"
+        DUMMY_BREVO = "dummy_smtp_password_placeholder"
         SUPPORT_URL = "https://t.me/example_bot"
         DOMAIN = "example.com"
         EDGE_DOMAIN = "edge.example.com"

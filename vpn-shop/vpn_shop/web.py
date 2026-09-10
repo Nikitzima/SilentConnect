@@ -1292,10 +1292,45 @@ class WebCheckout:
       color: #fff; font-size: 15px; 
       backdrop-filter: blur(8px);
     }}
-    .order {{ display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }}
+    .order {{ display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: stretch; }}
     .order > .card {{ display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; }}
-    .payment-options {{ display: flex; flex-direction: column; gap: 24px; }}
+    .payment-options {{ display: flex; flex-direction: column; gap: 16px; box-sizing: border-box; }}
     .payment-options > .card {{ display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; }}
+    .order-summary-card {{
+      display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box;
+      padding: 24px; background: var(--card); border: 1px solid var(--glass-border); border-radius: 16px;
+      backdrop-filter: blur(12px);
+    }}
+    .order-primary-card {{
+      padding: 24px; background: rgba(16, 185, 129, 0.08);
+      border: 1.5px solid rgba(16, 185, 129, 0.5); border-radius: 16px;
+      box-shadow: 0 8px 32px rgba(16, 185, 129, 0.18), 0 0 0 1px rgba(16, 185, 129, 0.2) inset;
+      display: flex; flex-direction: column; justify-content: space-between;
+      backdrop-filter: blur(12px);
+    }}
+    .btn-platega-primary {{
+      display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px;
+      padding: 14px 22px; font-size: 16.5px; font-weight: 800; color: #041d11 !important;
+      background: linear-gradient(135deg, #10b981 0%, #34d399 50%, #10b981 100%);
+      background-size: 200% auto; border: none; border-radius: 12px; text-decoration: none;
+      cursor: pointer; box-shadow: 0 4px 20px rgba(16, 185, 129, 0.45);
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1); letter-spacing: 0.2px; width: 100%; box-sizing: border-box;
+    }}
+    .btn-platega-primary:hover {{
+      transform: translateY(-2px); box-shadow: 0 6px 28px rgba(16, 185, 129, 0.65);
+      filter: brightness(1.08);
+    }}
+    .order-secondary-card {{
+      padding: 18px 20px; background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--glass-border); border-radius: 14px;
+      backdrop-filter: blur(8px);
+    }}
+    .order-link-input {{
+      width: 100%; min-height: 40px; background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--glass-border); border-radius: 8px; padding: 8px 12px;
+      color: #94a3b8; font-family: monospace; font-size: 12.5px; box-sizing: border-box;
+    }}
+    .order-link-input:focus {{ outline: none; border-color: var(--green); }}
     .field {{ width: 100%; min-height: 48px; color: #fff; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 10px; padding: 12px 14px; font-size: 16px; margin-bottom: 12px; }}
     .field:focus {{ outline: none; border-color: var(--green); }}
     textarea {{ 
@@ -2417,16 +2452,49 @@ class WebCheckout:
         meta = order.get("meta_json") or {}
         order_url = self.order_url(headers, order)
         flash_html = f'<div class="notice">{html.escape(flash)}</div>' if flash else ""
+        customer_email = str(order.get("customer_email") or meta.get("customer_email") or "").strip()
+        customer_email_row = f'<div style="display:flex; justify-content:space-between; font-size:14px;"><span style="color:var(--muted);">Email</span><span style="font-weight:600; color:#fff;">{html.escape(customer_email)}</span></div>' if customer_email else ""
+
         summary = f"""
-        <div class="card">
-          <strong>Заказ {html.escape(str(order['public_id']))}</strong>
-          <p class="muted">Транспорт: {html.escape(transport_label(str(order['transport'])))}<br>
-          Срок: {int(order['duration_days'])} дней<br>
-          Лимит: {html.escape(device_limit_label(meta.get('device_limit')))}<br>
-          Сумма: {html.escape(money(order['final_price_rub']))}</p>
-          <p class="muted">Сохраните эту страницу. По ней можно вернуться к статусу заказа.</p>
-          <textarea id="order-link" readonly>{html.escape(order_url)}</textarea>
-          <div class="actions"><button type="button" onclick="copyText('order-link')">Скопировать ссылку заказа</button></div>
+        <div class="card order-summary-card">
+          <div>
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; gap:8px;">
+              <div>
+                <div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px; color:var(--muted); margin-bottom:4px;">Информация о заказе</div>
+                <div style="font-size:20px; font-weight:800; color:#fff;">Заказ #{html.escape(str(order['public_id']))}</div>
+              </div>
+              <span style="background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.4); color:#f59e0b; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap;">Ожидает оплаты</span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:10px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:14px 0; margin-bottom:16px;">
+              <div style="display:flex; justify-content:space-between; font-size:14px;">
+                <span style="color:var(--muted);">Тариф / Протокол</span>
+                <span style="font-weight:600; color:#fff;">{html.escape(transport_label(str(order['transport'])))}</span>
+              </div>
+              <div style="display:flex; justify-content:space-between; font-size:14px;">
+                <span style="color:var(--muted);">Срок доступа</span>
+                <span style="font-weight:600; color:#fff;">{int(order['duration_days'])} дней</span>
+              </div>
+              <div style="display:flex; justify-content:space-between; font-size:14px;">
+                <span style="color:var(--muted);">Лимит устройств</span>
+                <span style="font-weight:600; color:#fff;">{html.escape(device_limit_label(meta.get('device_limit')))}</span>
+              </div>
+              {customer_email_row}
+            </div>
+            <div style="margin-bottom:18px;">
+              <div style="font-size:12px; color:var(--muted); margin-bottom:2px;">Сумма к оплате:</div>
+              <div style="font-size:36px; font-weight:800; color:var(--green); line-height:1.1;">{html.escape(money(order['final_price_rub']))}</div>
+            </div>
+          </div>
+          <div style="margin-top:auto; padding-top:14px; border-top:1px solid var(--line);">
+            <div style="font-size:12.5px; color:var(--muted); margin-bottom:8px;">Ссылка на этот заказ:</div>
+            <div style="display:flex; flex-direction:column; gap:8px;">
+              <input id="order-link" class="order-link-input" type="text" readonly value="{html.escape(order_url)}" />
+              <button type="button" class="btn secondary" onclick="copyText('order-link')" style="min-height:38px; padding:8px 14px; font-size:13.5px; font-weight:600;">
+                📋 Скопировать ссылку заказа
+              </button>
+            </div>
+            <div style="font-size:11.5px; color:var(--muted); margin-top:8px;">Сохраните страницу, чтобы в любой момент проверить статус или получить доступ.</div>
+          </div>
         </div>
         """
         status = str(order.get("status") or "")
@@ -2436,57 +2504,81 @@ class WebCheckout:
                 return_url=order_url,
                 failed_url=order_url,
             )
-            platega_card = ""
+            support_url = html.escape(self.support_url, quote=True)
             if platega_url:
-                platega_card = f"""
-                <div class="card" style="border: 1px solid rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.05);">
-                  <div style="font-size: 1.1rem; font-weight: 700; margin-bottom: 8px; color: #10b981;">Быстрая онлайн-оплата</div>
-                  <div style="font-size: 0.95rem; color: #94a3b8; margin-bottom: 16px;">Банковские карты РФ, СБП и криптовалюта без комиссии:</div>
-                  <a class="btn" href="{html.escape(platega_url, quote=True)}" target="_blank" rel="noopener" style="background: #10b981; color: #0f172a; font-weight: 700; font-size: 1.05rem; padding: 14px 20px; display: block; text-align: center; border-radius: 8px; text-decoration: none; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);">
-                    Оплатить онлайн картой / СБП →
-                  </a>
+                platega_cta = f"""
+                <a class="btn-platega-primary" href="{html.escape(platega_url, quote=True)}" target="_blank" rel="noopener">
+                  <span>Оплатить онлайн {html.escape(money(order['final_price_rub']))}</span>
+                  <span style="font-size:19px; font-weight:800;">→</span>
+                </a>
+                """
+            else:
+                platega_cta = f"""
+                <a class="btn-platega-primary" href="{support_url}" target="_blank" rel="noopener">
+                  <span>Оплатить онлайн {html.escape(money(order['final_price_rub']))}</span>
+                  <span style="font-size:19px; font-weight:800;">→</span>
+                </a>
+                """
+
+            platega_card = f"""
+            <div class="card order-primary-card">
+              <div>
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                  <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#10b981; box-shadow:0 0 10px #10b981;"></span>
+                  <span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px; color:#10b981;">Быстрая онлайн-оплата</span>
                 </div>
-                """
-            paid_reported = bool(meta.get("web_paid_reported_at"))
-            support_link = html.escape(self.support_url, quote=True)
-            pay_button = f'<a class="btn" href="{support_link}" target="_blank" rel="noopener">💬 Написать оператору для оплаты</a>'
-            payment_action = (
-                """
-                <div id="order-live-status" class="notice">Оплата отмечена. Ждём подтверждение админом, эта страница обновится сама (или ссылка на доступ придёт вам на указанный email).</div>
-                """
-                if paid_reported
-                else f"""
-                <p class="muted">Для оплаты свяжитесь с нашим менеджером в Telegram. Нажмите кнопку ниже, чтобы получить реквизиты перевода, переведите ровно <strong>{html.escape(money(order['final_price_rub']))}</strong>, затем нажмите «Оплачено».</p>
-                <div class="actions">{pay_button}</div>
-                <p class="fine">В сообщении оператору укажите номер вашего заказа: <code>{html.escape(str(order['public_id']))}</code>.</p>
-                <form method="post" action="/order/{html.escape(str(order['public_id']))}/{html.escape(str(meta.get('web_token') or ''))}/paid">
-                  <button type="submit">Оплачено</button>
+                <div style="font-size:19px; font-weight:700; color:#fff; margin-bottom:6px;">Моментальное зачисление</div>
+                <p style="color:var(--muted); font-size:13.5px; margin:0 0 16px; line-height:1.45;">
+                  Банковские карты РФ (МИР, Visa, Mastercard), СБП или криптовалюта. Без комиссии для покупателя:
+                </p>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px;">
+                  <span style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:#e2e8f0; font-size:12px; font-weight:600; padding:4px 10px; border-radius:6px;">⚡ СБП</span>
+                  <span style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:#e2e8f0; font-size:12px; font-weight:600; padding:4px 10px; border-radius:6px;">💳 Карты РФ</span>
+                  <span style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:#e2e8f0; font-size:12px; font-weight:600; padding:4px 10px; border-radius:6px;">🪙 USDT / Crypto</span>
+                </div>
+              </div>
+              <div>
+                {platega_cta}
+                <div style="text-align:center; color:var(--muted); font-size:12px; margin-top:10px;">
+                  🔒 Защищенный шлюз · Доступ выдается автоматически сразу после оплаты
+                </div>
+              </div>
+            </div>
+            """
+
+            operator_card = f"""
+            <div class="card order-secondary-card">
+              <div style="font-size:14.5px; font-weight:700; color:#fff; margin-bottom:6px;">Оплата через оператора / Поддержка</div>
+              <p style="color:var(--muted); font-size:13px; line-height:1.5; margin:0 0 14px;">
+                Хотите оплатить переводом без комиссии шлюза напрямую менеджеру или у вас есть вопрос? Напишите нам в поддержку, указав номер заказа <code>#{html.escape(str(order['public_id']))}</code>.
+              </p>
+              <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <a class="btn secondary" href="{support_url}" target="_blank" rel="noopener" style="flex:1; min-width:180px; min-height:42px; font-size:13.5px;">
+                  💬 Поддержка @SilentConnectSupport
+                </a>
+                <form method="post" action="/order/{html.escape(str(order['public_id']))}/{html.escape(str(meta.get('web_token') or ''))}/cancel" style="margin:0;">
+                  <button type="submit" class="btn secondary" style="min-height:42px; font-size:13.5px; background:rgba(239,68,68,0.08); color:#ef4444; border:1px solid rgba(239,68,68,0.25);">
+                    Отменить заказ ✖
+                  </button>
                 </form>
-                """
-            )
+              </div>
+            </div>
+            """
+
             body = f"""
-            <div style="max-width: 860px; margin: 0 auto;">
+            <div style="max-width: 960px; margin: 0 auto; padding: 0 16px;">
               <section class="section" style="padding: 24px 0 16px;"><h2>Оплата заказа</h2>{flash_html}</section>
               <section class="order">
                 {summary}
                 <div class="payment-options">
                   {platega_card}
-                  <div class="card">
-                    <strong>Оплата через оператора</strong>
-                    {payment_action}
-                    <div class="actions">
-                      <a class="btn secondary" href="{html.escape(self.support_url)}" target="_blank" rel="noopener">Поддержка</a>
-                      <form method="post" action="/order/{html.escape(str(order['public_id']))}/{html.escape(str(meta.get('web_token') or ''))}/cancel" style="margin:0;">
-                        <button type="submit" class="btn secondary" style="background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.3);">Отменить заказ ✖</button>
-                      </form>
-                    </div>
-                  </div>
+                  {operator_card}
                 </div>
               </section>
             </div>
             {self.order_poll_script(order)}
             """
-            return self.render_page("Оплата заказа", body, refresh_seconds=12 if paid_reported else None)
+            return self.render_page("Оплата заказа", body)
 
         if status == "delivered":
             subscription_url = self.recover_subscription(order)
@@ -2509,7 +2601,7 @@ class WebCheckout:
                   <textarea id="sub-link" readonly>{html.escape(subscription_url)}</textarea>
                   <p class="muted">Привяжите покупку в Telegram: бот узнает эту подписку, включит продление и напомнит за сутки и за час до окончания.</p>
                   <div class="actions">
-                    <button type="button" onclick="copyText('sub-link')">Скопировать ссылку</button>
+                    <button type="button" class="btn secondary" onclick="copyText('sub-link')">📋 Скопировать ссылку</button>
                     <a class="btn secondary" href="{html.escape(claim_url)}">Привязать в Telegram для продления</a>
                   </div>
                 </div>

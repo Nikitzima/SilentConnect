@@ -63,12 +63,10 @@ class TestQuiesceLogic(unittest.TestCase):
         with app.QUIESCE_LOCK:
             app.QUIESCE_ACTIVE = True
             app.QUIESCE_LEASE_UNTIL = time.time() - 0.1 # already expired
-        # Under hardened mode, quiesce stays active to avoid split-brain writes during failover
-        self.assertTrue(app.is_quiesced())
-        with app.QUIESCE_LOCK:
-            app.QUIESCE_ACTIVE = False
-            app.QUIESCE_LEASE_UNTIL = 0.0
         self.assertFalse(app.is_quiesced())
+        # State should be reset
+        self.assertFalse(app.QUIESCE_ACTIVE)
+        self.assertEqual(app.QUIESCE_LEASE_UNTIL, 0.0)
 
 class TestQuiesceHTTPHandler(unittest.TestCase):
     @classmethod

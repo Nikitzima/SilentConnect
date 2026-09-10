@@ -232,7 +232,7 @@ def build_authoritative_singbox_smart_config(
                     "alpn": ["h3"],
                 },
                 "obfs": {
-                    "type": "gecko",
+                    "type": "salamander",
                     "password": CONSTANTS["HYSTERIA_SALAMANDER_PASSWORD"],
                 },
             },
@@ -330,7 +330,7 @@ def build_authoritative_singbox_smart_config(
                     "alpn": ["h3"],
                 },
                 "obfs": {
-                    "type": "gecko",
+                    "type": "salamander",
                     "password": CONSTANTS["HYSTERIA_SALAMANDER_PASSWORD"],
                 },
             },
@@ -617,8 +617,8 @@ class TestSingboxSmartSelectorSchema(unittest.TestCase):
         self.assertEqual(fi_fast["server"], CONSTANTS["FI_HOST"])
         self.assertEqual(fi_fast["tls"]["server_name"], "st.kinopoisk.ru")
 
-    def test_hysteria2_with_gecko_obfs(self):
-        """Verify Hysteria 2 UDP protocol with Gecko obfuscation on NL and FI."""
+    def test_hysteria2_with_salamander_obfs(self):
+        """Verify Hysteria 2 UDP protocol with Salamander obfuscation on NL and FI."""
         outbounds = {o["tag"]: o for o in self.config["outbounds"]}
 
         for tag, expected_host in [("nl-speed-hysteria2", CONSTANTS["NL_SUB_HOST"]), ("fi-speed-hysteria2", CONSTANTS["FI_HOST"])]:
@@ -627,7 +627,7 @@ class TestSingboxSmartSelectorSchema(unittest.TestCase):
             self.assertEqual(hy2["server"], expected_host)
             self.assertEqual(hy2["server_port"], 443)
             self.assertEqual(hy2["tls"]["alpn"], ["h3"])
-            self.assertEqual(hy2["obfs"]["type"], "gecko")
+            self.assertEqual(hy2["obfs"]["type"], "salamander")
             self.assertEqual(hy2["obfs"]["password"], CONSTANTS["HYSTERIA_SALAMANDER_PASSWORD"])
 
     def test_reality_grpc_nodes(self):
