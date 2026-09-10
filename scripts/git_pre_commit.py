@@ -46,7 +46,7 @@ FORBIDDEN_EXTENSIONS = {
 
 FORBIDDEN_FILENAMES = {
     ".env", ".env.local", ".env.production", ".env.staging",
-    ".env.silentconnect", "subjson.env", "x-ui.db", "vpn_shop.db"
+    ".env.silentconnect", ".env.platega", "subjson.env", "x-ui.db", "vpn_shop.db"
 }
 
 ALLOWED_FILENAMES = {
@@ -85,6 +85,11 @@ SECRET_PATTERNS: List[Tuple[str, str, re.Pattern]] = [
         "REALITY_PRIVKEY",
         "Reality / VLESS Private Key",
         re.compile(r"\b(?:reality_private_key|private_key|priv_key)\s*[:=]\s*['\"]?([A-Za-z0-9_-]{43,44})['\"]?", re.IGNORECASE)
+    ),
+    (
+        "PLATEGA_SECRET",
+        "Platega API Secret / Key",
+        re.compile(r"(?:PLATEGA_SECRET|PLATEGA_API_KEY|PLATEGA_KEY|PLATEGA_SECRET_BOT|PLATEGA_SECRET_WEB)\s*[:=]\s*['\"]?([A-Za-z0-9_-]{12,64})['\"]?", re.IGNORECASE)
     ),
     (
         "SMTP_BREVO_KEY",

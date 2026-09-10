@@ -40,7 +40,7 @@ FORBIDDEN_EXTENSIONS: Set[str] = {
 }
 
 FORBIDDEN_EXACT_FILENAMES: Set[str] = {
-    ".env", ".env.local", ".env.production", ".env.staging", ".env.silentconnect", "subjson.env",
+    ".env", ".env.local", ".env.production", ".env.staging", ".env.silentconnect", ".env.platega", "subjson.env",
 }
 
 ALLOWED_FILENAMES: Set[str] = {
@@ -138,6 +138,12 @@ SECRET_PATTERNS: List[Tuple[str, str, re.Pattern, bool]] = [
         "SEC-008",
         "SMTP Password / Brevo API Key",
         re.compile(r"\b" + "xkey" + r"sib-[a-f0-9]{64}-[a-zA-Z0-9]{16}\b|(?:SMTP_PASSWORD|BREVO_API_KEY|MAIL_PASSWORD)\s*[:=]\s*['\"]?([^\s'\"]{8,})['\"]?", re.IGNORECASE),
+        False,
+    ),
+    (
+        "SEC-010",
+        "Platega API Secret / Key",
+        re.compile(r"(?:PLATEGA_SECRET|PLATEGA_API_KEY|PLATEGA_KEY|PLATEGA_SECRET_BOT|PLATEGA_SECRET_WEB)\s*[:=]\s*['\"]?([A-Za-z0-9_-]{12,64})['\"]?", re.IGNORECASE),
         False,
     ),
     (

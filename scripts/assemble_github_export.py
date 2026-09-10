@@ -56,7 +56,7 @@ FORBIDDEN_EXTENSIONS = {
 }
 
 FORBIDDEN_EXACT_FILENAMES = {
-    ".env", ".env.local", ".env.production", ".env.staging", ".env.silentconnect", "subjson.env",
+    ".env", ".env.local", ".env.production", ".env.staging", ".env.silentconnect", ".env.platega", "subjson.env",
     "outage_metrics.json",
 }
 
