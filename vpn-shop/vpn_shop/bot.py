@@ -3670,11 +3670,9 @@ class ShopBot:
         return self.settings.monthly_price_9_devices_rub
 
     def base_price_for_duration(self, transport: str, duration_days: int, *, device_limit: int | str | None = None) -> int:
-        monthly_price = self.base_price_for_device_limit(device_limit)
-        if transport == "hybrid":
-            monthly_price = (monthly_price * 120 + 99) // 100
-        # Promo durations are defined in days, so scale from the monthly base rate.
-        return max((monthly_price * int(duration_days) + 29) // 30, 0)
+        from .catalog import quote_price
+        limit = int(self.settings.default_device_limit if device_limit is None else device_limit)
+        return quote_price(limit, duration_days, settings=self.settings)
 
     def notify_admins_about_order(self, order: dict[str, Any], *, bump: bool = False) -> None:
         admin_chats = self.store.list_chat_ids_by_scope("admin")

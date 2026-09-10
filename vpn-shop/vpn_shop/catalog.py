@@ -37,12 +37,12 @@ def quote_price(
         }
     else:
         device_prices = {
-            3: int(os.environ.get("MONTHLY_PRICE_3_DEVICES_RUB", os.environ.get("MONTHLY_PRICE_TCP_RUB", 100))),
-            6: int(os.environ.get("MONTHLY_PRICE_6_DEVICES_RUB", 150)),
-            9: int(os.environ.get("MONTHLY_PRICE_9_DEVICES_RUB", 200)),
+            3: int(os.environ.get("MONTHLY_PRICE_3_DEVICES_RUB", os.environ.get("MONTHLY_PRICE_TCP_RUB", 149))),
+            6: int(os.environ.get("MONTHLY_PRICE_6_DEVICES_RUB", 199)),
+            9: int(os.environ.get("MONTHLY_PRICE_9_DEVICES_RUB", 235)),
         }
 
-    monthly_price = device_prices.get(device_limit, device_prices.get(3, 100))
+    monthly_price = device_prices.get(device_limit, device_prices.get(3, 149))
     months = max(duration_days // 30, 1)
 
     discount = 0
