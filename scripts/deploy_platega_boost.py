@@ -289,16 +289,19 @@ def execute_rollout():
     creds = load_platega_credentials(workspace_root)
 
     # 1. Deploy to Standby (FI) first
-    log(f"=== STAGE 1: DEPLOYING TO STANDBY NODE (FI) ===")
-    fi_session = NodeSession("fi")
-    try:
-        deploy_to_node(fi_session, "fi", ts, workspace_root, creds)
-        log("[FI] Restarting subjson on FI...")
-        fi_session.run("systemctl restart subjson.service || true")
-    finally:
-        fi_session.close()
-
-    time.sleep(2)
+    skip_fi = os.environ.get("SKIP_FI", "0") == "1" or "--skip-fi" in sys.argv
+    if not skip_fi:
+        log(f"=== STAGE 1: DEPLOYING TO STANDBY NODE (FI) ===")
+        fi_session = NodeSession("fi")
+        try:
+            deploy_to_node(fi_session, "fi", ts, workspace_root, creds)
+            log("[FI] Restarting subjson on FI...")
+            fi_session.run("systemctl restart subjson.service || true")
+        finally:
+            fi_session.close()
+        time.sleep(2)
+    else:
+        log("=== STAGE 1: SKIPPING STANDBY NODE (FI) (already deployed/verified) ===")
 
     # 2. Deploy to Master (NL) second
     log(f"=== STAGE 2: DEPLOYING TO MASTER NODE (NL) ===")
