@@ -321,7 +321,7 @@ class Provisioner:
         if not profile or profile.get("status") == "deleted":
             raise RuntimeError(f"Profile {profile_public_id} is not renewable")
         notes = str(profile.get("notes") or "").lower()
-        if "admin_personal" not in notes and (profile.get("notes") in {TEST_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES} or "trial" in notes or "test" in notes or "auto_delete" in notes):
+        if "admin_personal" not in notes and not str(profile.get("xui_email") or "").startswith("admin-") and (profile.get("notes") in {TEST_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES} or "trial" in notes or "test" in notes or "auto_delete" in notes):
             raise RuntimeError(f"Trial profile {profile_public_id} is not renewable")
 
         found = self.xui_db.find_client_by_email(str(profile["xui_email"]))

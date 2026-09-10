@@ -757,7 +757,7 @@ def create_inline_renewal_order(
             raise ValueError("Профиль подписки не найден или удалён.")
 
         notes = str(prof["notes"] or "").lower()
-        if "admin_personal" not in notes and (notes in {"public_trial_7d_auto_delete", "admin_test_24h_auto_delete"} or "trial" in notes or "test" in notes or "auto_delete" in notes):
+        if "admin_personal" not in notes and not str(prof["xui_email"] or "").startswith("admin-") and (notes in {"public_trial_7d_auto_delete", "admin_test_24h_auto_delete"} or "trial" in notes or "test" in notes or "auto_delete" in notes):
             raise ValueError("Пробную подписку (7 дней) нельзя продлить. Пожалуйста, оформите новую подписку на главной странице.")
 
         prof_dict = dict(prof)
@@ -789,15 +789,13 @@ def create_inline_renewal_order(
             now_ts = int(time.time())
             p_row = conn_shop.execute(
                 """
-                UPDATE promo_codes
-                SET used_count = used_count + 1, last_used_at = ?
+                SELECT * FROM promo_codes
                 WHERE code_hash = ?
                   AND enabled = 1
                   AND used_count < max_uses
                   AND (expires_at IS NULL OR expires_at > ?)
-                RETURNING *
                 """,
-                (now_ts, code_hash, now_ts),
+                (code_hash, now_ts),
             ).fetchone()
             if p_row:
                 discount_percent = int(p_row["discount_percent"] or 0)
@@ -862,6 +860,21 @@ def create_inline_renewal_order(
 
         # If free: renew immediately in x-ui & store
         if final_price == 0:
+            if promo_id:
+                consumed = conn_shop.execute(
+                    """
+                    UPDATE promo_codes
+                    SET used_count = used_count + 1, last_used_at = ?
+                    WHERE id = ?
+                      AND enabled = 1
+                      AND used_count < max_uses
+                    RETURNING *
+                    """,
+                    (now, promo_id),
+                ).fetchone()
+                if not consumed:
+                    raise ValueError("Промокод больше недоступен или исчерпан.")
+
             cur_expiry_ms = int(found_client["client"].get("expiryTime") or 0)
             cur_expiry_s = cur_expiry_ms // 1000 if cur_expiry_ms > 0 else 0
             base_exp = max(now, int(prof_dict.get("expires_at") or 0), cur_expiry_s)
