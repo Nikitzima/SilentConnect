@@ -536,6 +536,7 @@ def build_cabinet_access_email_html(
     customer_email: str,
     profiles_data: list[dict[str, Any]],
     support_email: str = "support@example.com",
+    support_tg: str = "https://t.me/your_support",
     cabinet_url: str = "",
     default_device_limit: int = 3,
 ) -> tuple[str, str]:
@@ -719,29 +720,35 @@ def build_cabinet_access_email_html(
         {items_html}
       </div>
 
-      <div style="text-align: center; margin: 24px 0 18px;">
-        <a href="{html.escape(target_cabinet_url, quote=True)}" class="btn" target="_blank">
-          Войти в личный кабинет ({profiles_count} {profile_word}) →
-        </a>
+      <div class="box" style="text-align: center; padding: 22px 16px;">
+        <h3>💻 Управление подписками:</h3>
+        <p style="margin-bottom: 18px;">Нажмите кнопку ниже, чтобы войти в личный кабинет, выбрать нужный профиль, подключить устройства или продлить доступ:</p>
+        <div style="text-align: center; margin: 15px 0;">
+          <a href="{html.escape(target_cabinet_url, quote=True)}" class="btn" target="_blank">
+            Войти в Личный Кабинет 💻
+          </a>
+        </div>
       </div>
 
-      <div class="box" style="text-align: center; margin-bottom: 18px;">
+      <div class="box" style="text-align: center; margin-bottom: 16px;">
         <p style="margin: 0; font-size: 13px; color: #ffffff; line-height: 1.5;">
           ⏱ <strong>Ссылка активна в течение 30 минут</strong>.<br>
           <span style="color: #8ea89a; font-size: 12px;">В течение этого времени вы можете открывать её повторно с любого своего устройства (ПК, смартфон, планшет).</span>
         </p>
       </div>
 
-      <div style="text-align: left;">
-        <p style="margin: 0 0 6px 0; color: #8ea89a; font-size: 12px;">Прямая ссылка для входа:</p>
+      <div class="box">
+        <h3>🔗 Прямая ссылка для входа:</h3>
+        <p style="margin-bottom: 6px;">Если кнопка выше не открывается, скопируйте ссылку напрямую в браузер:</p>
         <div class="code-box">
           <a href="{html.escape(target_cabinet_url, quote=True)}">{html.escape(target_cabinet_url)}</a>
         </div>
       </div>
 
       <div class="footer">
-        Если вы не запрашивали доступ, просто проигнорируйте это письмо. Ваши данные в безопасности.<br>
-        Служба поддержки: <a href="mailto:{html.escape(support_email)}" style="color: #2fbf71; text-decoration: none;">{html.escape(support_email)}</a>
+        <p>Если вы не запрашивали доступ, просто проигнорируйте это письмо. Ваши данные в безопасности.</p>
+        <p>Нужна помощь? Напишите нам на почту <a href="mailto:{html.escape(support_email)}" style="color:#2fbf71;">{html.escape(support_email)}</a> или в Telegram: <a href="{html.escape(support_tg, quote=True)}" style="color:#2fbf71;">{html.escape(support_tg)}</a>.</p>
+        <p>© SilentConnect. Все права защищены.</p>
       </div>
     </div>
   </div>
@@ -773,7 +780,8 @@ def send_cabinet_access_email_sync(
     subject, html_content = build_cabinet_access_email_html(
         customer_email=customer_email,
         profiles_data=profiles_data,
-        support_email=settings.support_email,
+        support_email=settings.support_email or "support@example.com",
+        support_tg=settings.support_tg_url or "https://t.me/your_support",
         cabinet_url=target_cabinet_url,
         default_device_limit=settings.default_device_limit,
     )
