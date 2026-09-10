@@ -717,7 +717,7 @@ class TestPlategaWebAndBotIntegration(unittest.TestCase):
                 customer_email="admin@example.com",
             )
             self.assertEqual(res["status"], "waiting_payment")
-            self.assertEqual(res["final_price_rub"], 79)  # 99 catalog price - 20% = 79
+            self.assertEqual(res["final_price_rub"], 119)  # 149 catalog price - 20% = 119
             order_pub_id = res["public_id"]
 
             # 4. CRITICAL: Promo code must NOT be consumed yet!
@@ -767,7 +767,37 @@ class TestPlategaWebAndBotIntegration(unittest.TestCase):
                     )
                 self.assertIn("Пробную подписку", str(cm.exception))
 
+    def test_active_web_polling_reconciliation(self):
+        """Even if webhook is delayed or dropped, order_status_json polling directly checks Platega API and fulfills order."""
+        order = self.checkout.create_order("tcp_3_30", customer_email="buyer@test.com")
+        order_pub_id = str(order["public_id"])
+        meta = dict(order.get("meta_json") or {})
+        meta["platega_transaction_id"] = "tx-reconcile-web-77"
+        meta["platega_last_polled_at"] = 0  # Force polling eligible
+        self.store.update_order_meta(order_pub_id, meta)
+
+        with patch.object(self.checkout.platega, "get_transaction_status") as mock_get_status, \
+             patch.object(self.checkout, "recover_subscription", return_value="https://example.com/sub/json/prof_test123"):
+            mock_get_status.return_value = {
+                "id": "tx-reconcile-web-77",
+                "status": "CONFIRMED",
+                "amount": order["final_price_rub"],
+            }
+            order_fresh = self.store.get_order(order_pub_id)
+            res_bytes = self.checkout.order_status_json(order_fresh)
+            res = json.loads(res_bytes.decode("utf-8"))
+
+            self.assertEqual(res["status"], "delivered")
+            self.assertTrue(res.get("setup_url"))
+            mock_get_status.assert_called_once_with("tx-reconcile-web-77", is_bot=False)
+
+            # Order in DB must now be delivered
+            db_order = self.store.get_order(order_pub_id)
+            self.assertEqual(db_order["status"], "delivered")
+            self.assertEqual(db_order["meta_json"]["platega_transaction_id"], "tx-reconcile-web-77")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

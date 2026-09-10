@@ -369,9 +369,9 @@ class TestInviteeDiscounts(unittest.TestCase):
             customer_email=email,
             ref_code=self.ref["code"],
         )
-        # Offer base price 99, 10% discount -> 89 RUB
-        self.assertEqual(order["base_price_rub"], 99)
-        self.assertEqual(order["final_price_rub"], 89)
+        # Offer base price 149, 10% discount -> 134 RUB
+        self.assertEqual(order["base_price_rub"], 149)
+        self.assertEqual(order["final_price_rub"], 134)
         self.assertEqual(order["meta_json"]["referral_discount"], 10)
         self.assertEqual(order["meta_json"]["referrer_id"], self.ref["id"])
 
@@ -389,7 +389,7 @@ class TestInviteeDiscounts(unittest.TestCase):
             customer_email=email,
             ref_code=self.ref["code"],
         )
-        self.assertEqual(order2["final_price_rub"], 99)
+        self.assertEqual(order2["final_price_rub"], 149)
         self.assertNotIn("referral_discount", order2["meta_json"])
 
 
