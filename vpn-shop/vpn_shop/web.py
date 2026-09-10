@@ -12,14 +12,15 @@ import secrets
 import threading
 import time
 from typing import Any
+from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, quote, urlencode, urlsplit, urlunsplit
 import urllib.request
-import hashlib
 
 from .catalog import Offer, build_offers
-from .config import Settings, load_settings
+from .config import REFERRAL_COOKIE_MAX_AGE, REFERRAL_COOKIE_NAME, REFERRAL_INVITEE_DISCOUNT_PERCENT, Settings, load_settings
 from .mailer import send_subscription_email_async, send_cabinet_access_email_async
 from .platega import PlategaClient
+import hashlib
 from .provisioning import Provisioner
 from .security import client_ip_from_headers, hash_token, is_allowed_host, random_web_token, sign_token, verify_token,  now_ts
 from .store import Store
@@ -149,8 +150,7 @@ def subscription_setup_url(subscription_url: str) -> str:
     else:
         sub_id = parts[-1] if parts else ""
         import_path = f"/import/{quote(sub_id, safe='~')}"
-    query = urlencode({"url": subscription_url})
-    return urlunsplit((parsed.scheme, parsed.netloc, import_path, query, ""))
+    return urlunsplit((parsed.scheme, parsed.netloc, import_path, "", ""))
 
 
 def subscription_url_for_route(base_url: str, route: str, subscription_id: str) -> str:
@@ -263,7 +263,6 @@ class WebCheckout:
             return {"status": "error", "message": "order_not_found"}
 
         order_public_id = str(order["public_id"])
-        # Event ID must include status to ensure PENDING callbacks do not block subsequent CONFIRMED payments
         event_id = f"{tx_id}:{status}" if tx_id else f"{order_public_id}:{status}"
 
         payload_sha256 = hashlib.sha256(raw_body).hexdigest() if raw_body else None
@@ -490,14 +489,33 @@ class WebCheckout:
                 LOGGER.exception("Failed to send auto free order email for %s", delivered["public_id"])
         return delivered
 
-    def create_order(self, offer_code: str, promo_code: str = "", customer_email: str = "") -> dict[str, Any]:
+    def create_order(
+        self,
+        offer_code: str,
+        promo_code: str = "",
+        customer_email: str = "",
+        ref_code: str = "",
+    ) -> dict[str, Any]:
         offer = self.offer_by_code(offer_code)
         promo = self.load_valid_promo(promo_code) if promo_code.strip() else None
         if promo and self.promo_type(promo) != "discount":
             return self.create_promo_order(promo_code, customer_email=customer_email)
         if promo:
             self.ensure_promo_not_reserved(promo)
-        discount_percent = int(promo["discount_percent"]) if promo else 0
+        promo_discount = int(promo["discount_percent"]) if promo else 0
+
+        ref_discount = 0
+        referrer = None
+        clean_ref = ref_code.strip()
+        clean_email = customer_email.strip()
+        if clean_ref:
+            referrer = self.store.get_referrer_by_code(clean_ref)
+            if referrer:
+                prior_paid = self.store.count_delivered_paid_orders(customer_email=clean_email) if clean_email else 0
+                if prior_paid == 0:
+                    ref_discount = REFERRAL_INVITEE_DISCOUNT_PERCENT
+
+        discount_percent = max(promo_discount, ref_discount)
         final_price = max(offer.price_rub * (100 - discount_percent) // 100, 0)
         token = random_web_token()
         meta = {
@@ -505,10 +523,21 @@ class WebCheckout:
             "device_limit": offer.device_limit,
             "web": True,
             "web_token": "",  # persisted as web_token_hash (audit S-02)
-            "customer_email": customer_email.strip(),
+            "customer_email": clean_email,
         }
         if promo:
             meta["promo_type"] = "discount"
+        if referrer and ref_discount > 0:
+            meta["referrer_id"] = int(referrer["id"])
+            meta["referrer_code"] = str(referrer["code"])
+            meta["referral_discount"] = ref_discount
+            if clean_email:
+                self.store.attach_referral(
+                    code=str(referrer["code"]),
+                    referred_user_id=clean_email,
+                    referred_chat_id=clean_email,
+                )
+
         order = self.store.create_order(
             kind="purchase",
             status="waiting_payment" if final_price > 0 else "auto_provision",
@@ -524,11 +553,14 @@ class WebCheckout:
             privacy_ack=True,
             loss_policy_ack=True,
             terms_version=self.settings.terms_version,
-            customer_email=customer_email.strip(),
+            customer_email=clean_email,
             meta=meta,
         )
         order = self._attach_web_token(order, token)
-        return self.maybe_auto_deliver_free_web_order(order)
+        delivered = self.maybe_auto_deliver_free_web_order(order)
+        if delivered.get("status") == "waiting_payment":
+            self._notify_admins_new_web_order(delivered)
+        return delivered
 
     def create_promo_order(self, promo_code: str, customer_email: str = "") -> dict[str, Any]:
         promo = self.load_valid_promo(promo_code)
@@ -571,7 +603,10 @@ class WebCheckout:
             meta=meta,
         )
         order = self._attach_web_token(order, token)
-        return self.maybe_auto_deliver_free_web_order(order)
+        delivered = self.maybe_auto_deliver_free_web_order(order)
+        if delivered.get("status") == "waiting_payment":
+            self._notify_admins_new_web_order(delivered)
+        return delivered
 
     def create_web_renewal_order(
         self,
@@ -614,6 +649,10 @@ class WebCheckout:
             "sub_id": sub_id,
             "email_reminders": email_reminders,
         }
+        if source_meta.get("referrer_id"):
+            meta["referrer_id"] = source_meta["referrer_id"]
+        if source_meta.get("referrer_code"):
+            meta["referrer_code"] = source_meta["referrer_code"]
 
         order = self.store.create_order(
             kind="renewal",
@@ -626,7 +665,7 @@ class WebCheckout:
             final_price_rub=final_price,
             promo_id=int(promo["id"]) if promo else None,
             invite_id=None,
-            customer_chat_id=None,
+            customer_chat_id=(order_for_profile or {}).get("customer_chat_id"),
             privacy_ack=True,
             loss_policy_ack=True,
             terms_version=self.settings.terms_version,
@@ -634,7 +673,10 @@ class WebCheckout:
             meta=meta,
         )
         order = self._attach_web_token(order, token)
-        return self.maybe_auto_deliver_free_web_order(order)
+        delivered = self.maybe_auto_deliver_free_web_order(order)
+        if delivered.get("status") == "waiting_payment":
+            self._notify_admins_new_web_order(delivered)
+        return delivered
 
     def check_and_send_expiration_reminders(self) -> None:
         try:
@@ -699,6 +741,40 @@ class WebCheckout:
         order["meta_json"] = meta
         return order
 
+    def _notify_admins_new_web_order(self, order: dict[str, Any]) -> None:
+        if not self.telegram:
+            return
+        try:
+            meta = dict(order.get("meta_json") or {})
+            customer_email = str(order.get("customer_email") or meta.get("customer_email") or "не указан").strip()
+            kind_label = "Продление подписки" if order.get("kind") == "renewal" else "Новый заказ"
+            text = "\n".join(
+                [
+                    f"🛒 {kind_label} на сайте (ожидает оплаты)",
+                    "",
+                    f"Заказ: `{order['public_id']}`",
+                    f"Email: `{customer_email}`",
+                    f"Транспорт: {transport_label(str(order['transport']))}",
+                    f"Срок: {int(order['duration_days'])} дн.",
+                    f"Лимит: {device_limit_label(meta.get('device_limit'))}",
+                    f"Сумма: {money(order['final_price_rub'])}",
+                    "",
+                    "Покупатель перешел к оплате. Реквизиты выдаются оператором в поддержке.",
+                    "При поступлении перевода нажмите кнопку ниже — доступ автоматически активируется и ссылка отправится клиенту на почту.",
+                ]
+            )
+            admin_chats = self.store.list_chat_ids_by_scope("admin")
+            for chat_id in admin_chats:
+                try:
+                    sent = self.telegram.send_message(
+                        chat_id, text, reply_markup=inline_admin_markup(str(order["public_id"]))
+                    )
+                    self.store.attach_manager_message(str(order["public_id"]), chat_id, int(sent["message_id"]))
+                except TelegramApiError:
+                    LOGGER.exception("Failed to notify admin chat %s about new web order %s", chat_id, order["public_id"])
+        except Exception:
+            LOGGER.exception("Error in _notify_admins_new_web_order for order %s", order.get("public_id"))
+
     def mark_paid(self, headers: Any, order: dict[str, Any]) -> str:
         meta = dict(order.get("meta_json") or {})
         if order.get("status") != "waiting_payment":
@@ -723,11 +799,16 @@ class WebCheckout:
             meta={"order_url": self.order_url(headers, {**order, "meta_json": meta})},
         )
 
+        if not self.telegram:
+            return "Уведомление отправлено. После проверки оплаты на этой странице появится доступ."
+
+        customer_email = str(order.get("customer_email") or meta.get("customer_email") or "не указан").strip()
         text = "\n".join(
             [
-                "Покупатель с сайта сообщает об оплате",
+                "🔔 Покупатель с сайта нажал «Оплачено»!",
                 "",
                 f"Заказ: `{order['public_id']}`",
+                f"Email: `{customer_email}`",
                 f"Транспорт: {transport_label(str(order['transport']))}",
                 f"Срок: {int(order['duration_days'])} дн.",
                 f"Лимит: {device_limit_label(meta.get('device_limit'))}",
@@ -1000,8 +1081,8 @@ class WebCheckout:
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="SilentConnect">
   <meta name="theme-color" content="#0e1317">
-  <meta property="og:title" content="SilentConnect — Безопасный VPN">
-  <meta property="og:description" content="Приватный VPN-сервис для персонального использования. Xray Reality, Hysteria 2, AmneziaWG. Без логирования активности.">
+  <meta property="og:title" content="SilentConnect — Приватный и безопасный интернет">
+  <meta property="og:description" content="Сервис защищенного и приватного сетевого доступа для персонального использования. Без ограничений и без логирования активности.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://silentconnect.net"><!-- PLACEHOLDER -->
   <meta property="og:site_name" content="SilentConnect">
@@ -1033,6 +1114,8 @@ class WebCheckout:
     * {{ box-sizing: border-box; -webkit-tap-highlight-color: transparent; }}
     #tariffs {{ scroll-margin-top: 92px; }}
     body {{
+      margin: 0;
+      padding: 0;
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
       background-color: var(--bg-dark);
       background-image: 
@@ -1055,7 +1138,10 @@ class WebCheckout:
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
       border-bottom: 1px solid var(--glass-border); 
-      position: sticky; top: 0; z-index: 10; 
+      position: -webkit-sticky;
+      position: sticky;
+      top: 0;
+      z-index: 1000; 
     }}
     nav {{ height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }}
     .brand {{ 
@@ -1095,6 +1181,11 @@ class WebCheckout:
     }}
     .advantage b {{ display: block; color: #fff; margin-bottom: 6px; font-family: 'Outfit', sans-serif; font-size: 17px; }}
     .advantage span {{ display: block; color: var(--muted); font-size: 14px; line-height: 1.45; }}
+    h1, h2, h3, h4, p, li, .card, .page-card, .page-title {{
+      overflow-wrap: break-word;
+      word-wrap: break-word;
+      box-sizing: border-box;
+    }}
     .card {{ 
       background: var(--glass-bg);
       backdrop-filter: blur(12px);
@@ -1104,6 +1195,27 @@ class WebCheckout:
       padding: 24px;
       transition: all 0.3s ease;
       box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }}
+    .page-card {{
+      max-width: 860px;
+      margin: 30px auto;
+      line-height: 1.7;
+      padding: 28px 32px;
+      box-sizing: border-box;
+    }}
+    .page-title {{
+      font-size: clamp(22px, 5.2vw, 32px);
+      line-height: 1.25;
+      margin-top: 0;
+      margin-bottom: 12px;
+      background: linear-gradient(to right, #fff, #2fbf71);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      overflow-wrap: break-word;
+      word-wrap: break-word;
+      word-break: normal;
+      hyphens: auto;
+      -webkit-hyphens: auto;
     }}
     .card strong {{ display: block; font-size: 20px; margin-bottom: 8px; letter-spacing: -0.2px; }}
     .muted {{ color: var(--muted); }}
@@ -1350,26 +1462,108 @@ class WebCheckout:
       transform: scale(1) translateY(0);
     }}
     @media (max-width: 820px) {{
-      .wrap {{ width: calc(100% - 24px); }}
-      .hero, .order {{ grid-template-columns: 1fr; gap: 20px; padding: 20px 0; }}
-      .hero h1 {{ font-size: 28px; margin-bottom: 12px; }}
-      .lead {{ font-size: 15px; margin-bottom: 16px; }}
+      .wrap {{
+        width: 100% !important;
+        max-width: 100% !important;
+        padding-left: 14px !important;
+        padding-right: 14px !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
+        box-sizing: border-box !important;
+      }}
+      main.wrap {{
+        width: 100% !important;
+        max-width: 100% !important;
+        padding: 0 14px 40px !important;
+        box-sizing: border-box !important;
+        overflow-x: clip;
+      }}
+      .card {{
+        padding: 16px;
+        border-radius: 14px;
+        box-sizing: border-box;
+      }}
+      .page-card {{
+        padding: 20px 16px !important;
+        margin: 16px auto !important;
+        border-radius: 14px !important;
+      }}
+      .page-title {{
+        font-size: clamp(20px, 5.5vw, 24px) !important;
+        margin-bottom: 10px !important;
+      }}
+      .hero, .order {{
+        grid-template-columns: 1fr;
+        gap: 16px;
+        padding: 16px 0;
+      }}
+      .hero h1 {{ font-size: 26px; margin-bottom: 10px; }}
+      .lead {{ font-size: 14.5px; margin-bottom: 14px; }}
       .advantage-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }}
-      .advantage {{ min-height: 100px; padding: 12px; }}
-      .advantage b {{ font-size: 15px; margin-bottom: 4px; }}
-      .advantage span {{ font-size: 12px; }}
+      .advantage {{ min-height: 90px; padding: 12px; }}
+      .advantage b {{ font-size: 14.5px; margin-bottom: 3px; }}
+      .advantage span {{ font-size: 11.5px; }}
       .grid {{ grid-template-columns: 1fr; gap: 14px; }}
-      .builder {{ grid-template-columns: 1fr; gap: 14px; }}
+      .builder {{
+        grid-template-columns: 1fr;
+        gap: 14px;
+        width: 100%;
+        box-sizing: border-box;
+      }}
+      .builder > .card,
+      .builder > .summary-box {{
+        width: 100%;
+        box-sizing: border-box;
+      }}
       .choice-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }}
       .choice-grid-durations {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }}
-      .choice {{ min-height: 56px; padding: 8px 3px; gap: 2px; font-size: 12.5px; font-weight: 700; word-break: normal; overflow: visible; position: relative; }}
-      .choice span {{ font-size: 10px; font-weight: 400; }}
-      .summary-box {{ position: static; }}
+      .choice {{
+        min-height: 52px;
+        padding: 8px 4px;
+        gap: 2px;
+        font-size: 11.5px;
+        font-weight: 700;
+        word-break: normal;
+        overflow: visible;
+        position: relative;
+        box-sizing: border-box;
+        min-width: 0;
+      }}
+      .choice span {{ font-size: 9.5px; font-weight: 400; }}
+      .summary-box {{
+        position: static;
+        padding: 16px;
+      }}
+      .cf-turnstile {{
+        max-width: 100%;
+        overflow: hidden;
+        display: flex;
+        justify-content: center;
+      }}
       .mobile-nav-txt {{ display: inline; }}
       .desktop-nav-txt {{ display: none; }}
-      .wrap {{ width: calc(100% - 20px); padding-left: 10px; padding-right: 10px; }}
-      header {{ background: rgba(5, 10, 8, 0.7); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-bottom: 1px solid var(--glass-border); position: sticky; top: 0; z-index: 100; height: auto; padding: 6px 0; }}
-      nav {{ height: auto; min-height: 48px; padding: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: nowrap; }}
+      header {{
+        background: rgba(5, 10, 8, 0.7);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border-bottom: 1px solid var(--glass-border);
+        position: -webkit-sticky;
+        position: sticky;
+        top: 0;
+        z-index: 1000;
+        height: auto;
+        padding: 6px 0;
+      }}
+      nav {{
+        height: auto;
+        min-height: 48px;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: nowrap;
+      }}
       .brand {{ font-size: 15px; display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }}
       .brand-logo {{ width: 24px; height: 24px; border-radius: 6px; flex-shrink: 0; }}
       .navlinks {{ display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px 4px; justify-content: end; align-items: center; max-width: 220px; }}
@@ -1377,6 +1571,16 @@ class WebCheckout:
       .navlinks a.span-2 {{ grid-column: span 2; }}
       .navlinks a.span-3 {{ grid-column: span 3; }}
       .navlinks a.span-6 {{ grid-column: span 6; color: #2fbf71 !important; font-size: 11px; padding: 3.5px 6px; }}
+    }}
+    @media (max-width: 360px) {{
+      .wrap {{ padding-left: 10px !important; padding-right: 10px !important; }}
+      main.wrap {{ padding-left: 10px !important; padding-right: 10px !important; }}
+      .card {{ padding: 12px; }}
+      .page-card {{ padding: 16px 10px !important; }}
+      .page-title {{ font-size: 19px !important; }}
+      .choice {{ font-size: 10.5px; padding: 6px 2px; }}
+      .choice span {{ font-size: 8.5px; }}
+      .cf-turnstile > * {{ transform: scale(0.92); transform-origin: center center; }}
     }}
   </style>
   <script type="application/ld+json">
@@ -1388,7 +1592,7 @@ class WebCheckout:
         "@id": "https://silentconnect.net/#organization", "placeholder": "PLACEHOLDER",
         "name": "SilentConnect",
         "url": "https://silentconnect.net", "comment": "PLACEHOLDER",
-        "description": "Приватный VPN-сервис для персонального использования без логирования веб-активности",
+        "description": "Сервис приватного сетевого доступа для персонального использования без логирования активности",
         "contactPoint": {{
           "@type": "ContactPoint",
           "url": "https://t.me/silentconnect_bot",
@@ -1398,14 +1602,14 @@ class WebCheckout:
       {{
         "@type": "SoftwareApplication",
         "@id": "https://silentconnect.net/#software", "placeholder": "PLACEHOLDER",
-        "name": "SilentConnect VPN",
+        "name": "SilentConnect",
         "applicationCategory": "SecurityApplication",
         "operatingSystem": "iOS, Android, Windows, macOS, Linux",
         "offers": {{
           "@type": "Offer",
           "price": "199",
           "priceCurrency": "RUB",
-          "description": "Тарифы от 199 RUB/месяц с Xray Reality, Hysteria 2, AmneziaWG"
+          "description": "Тарифы от 199 RUB/месяц для защищенного доступа к интернету"
         }},
         "url": "https://silentconnect.net", "comment": "PLACEHOLDER"
       }}
@@ -1425,7 +1629,7 @@ class WebCheckout:
         <a href="/legal/terms">Пользовательское соглашение</a>
             <a href="/legal/refund">Политика возвратов</a>
       </div>
-      <div class="footer-copy">© 2026 SilentConnect. Все права защищены.</div>
+      <div class="footer-copy">© 2026 SilentConnect. Все права защищены. [code: mekbuda]</div>
     </div>
   </footer>
 
@@ -1580,37 +1784,45 @@ class WebCheckout:
 
     def render_legal_privacy(self) -> bytes:
         body = f"""
-        <div class="card" style="max-width: 860px; margin: 30px auto; line-height: 1.7; padding: 28px 32px;">
+        <div class="card page-card">
           <div style="margin-bottom: 20px;">
             <a class="btn secondary" href="/" style="display: inline-flex; width: auto; min-height: 38px; padding: 6px 14px; font-size: 14px;">← На главную к тарифам</a>
           </div>
-          <h1 style="font-size: 30px; margin-top: 0; margin-bottom: 10px; background: linear-gradient(to right, #fff, #2fbf71); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Политика конфиденциальности SilentConnect</h1>
-          <p class="muted" style="margin-bottom: 24px;">Редакция от 20 апреля 2026 г. · Честное описание сбора и обработки данных</p>
+          <h1 class="page-title">Политика конфиденциальности SilentConnect</h1>
+          <p class="muted" style="margin-bottom: 24px;">Редакция от 5 сентября 2026 г. · Принципы обработки данных и защита приватности (152-ФЗ / GDPR)</p>
 
-          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">1. О проекте и юридическом статусе</h3>
-          <p class="muted">Сервис <strong>SilentConnect</strong> является частным неофициальным проектом команды независимых разработчиков и работает без зарегистрированного юридического лица или ИП. Мы стремимся к максимальной прозрачности и честно описываем, какие данные собираются для работы сервиса, а какие нет.</p>
+          <p class="muted">Сервис <strong>SilentConnect</strong> ставит своим абсолютным приоритетом цифровую приватность пользователей. Наша политика предельно прозрачна: мы не собираем и не храним информацию о вашей активности в сети, поэтому мы не можем никому ее передать.</p>
 
-          <h3 style="color: #2fbf71; font-size: 19px; margin-top: 24px;">2. Какие данные сохраняются в нашей базе</h3>
-          <p class="muted">Для работы подписок и личного кабинета в нашей базе данных хранятся следующие сведения:</p>
+          <h3 style="color: #2fbf71; font-size: 19px; margin-top: 24px;">1. Политика полного отсутствия журналов активности (Zero-Logs Policy)</h3>
+          <p class="muted">Мы гарантируем строгое соблюдение принципа ненакопления данных сетевого взаимодействия. Серверные узлы Исполнителя технически настроены так, что мы не записываем, не храним и не передаем третьим лицам:</p>
           <ul class="muted" style="padding-left: 20px; line-height: 1.8;">
-            <li><strong style="color:#fff;">Адрес электронной почты (Email):</strong> Указывается при заказе для отправки писем с чеком и восстановления ссылок доступа.</li>
-            <li><strong style="color:#fff;">Telegram ID (Chat ID):</strong> Сохраняется только при условии, что вы добровольно привязали подписку к Telegram-боту.</li>
-            <li><strong style="color:#fff;">Данные о заказах:</strong> Номер заказа (#ord_...), выбранный тариф, сумма оплаты, статус и метка времени.</li>
-            <li><strong style="color:#fff;">Служебный идентификатор профиля:</strong> Зашифрованный токен (UUID) для авторизации вашего устройства на VPN-сервере.</li>
+            <li>Историю посещенных веб-сайтов, интернет-адреса и обращения к сервисам;</li>
+            <li>Исходные IP-адреса абонентских устройств;</li>
+            <li>Запросы системы доменных имен (DNS-запросы);</li>
+            <li>Содержимое передаваемого трафика, файлов и личной переписки;</li>
+            <li>Временные метки (timestamps) открытия и завершения соединений с конкретными ресурсами.</li>
           </ul>
 
-          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">3. Отчет о логировании трафика и сетевой активности</h3>
-          <p class="muted">Мы не регистрируем вашу персональную деятельность в интернете:</p>
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">2. Состав и цели обработки минимально необходимых сведений</h3>
+          <p class="muted">В соответствии со ст. 5 Федерального закона № 152-ФЗ «О персональных данных» обработка ограничивается достижением конкретных, заранее определенных и законных целей предоставления доступа. Сервис обрабатывает исключительно необходимый технический минимум:</p>
           <ul class="muted" style="padding-left: 20px; line-height: 1.8;">
-            <li>Мы <strong style="color:#fff;">НЕ ведем записи</strong> посещенных вами веб-сайтов, доменов и содержимого сетевых пакетов.</li>
-            <li>Мы <strong style="color:#fff;">НЕ фиксируем</strong> DNS-запросы пользователей (функция <code>dnsLog</code> отключена в ядре Xray).</li>
-            <li>При этом служебные системные логи ядра Xray сохраняют системные ошибки уровня <code>warning</code> и обращения внутреннего API (<code>127.0.0.1</code>). Веб-сервер Caddy/Cloudflare фиксирует стандартные системные логи веб-запросов (IP-адрес и время визита на сайт).</li>
+            <li><strong style="color:#fff;">Адрес электронной почты (Email):</strong> Используется исключительно для доставки индивидуального ключа доступа, направления фискальных расчетных документов и авторизации в личном кабинете.</li>
+            <li><strong style="color:#fff;">Telegram ID и Username:</strong> Сохраняются только при добровольном обращении Пользователя к официальному Telegram-боту сервиса для привязки уведомлений.</li>
+            <li><strong style="color:#fff;">Реквизиты заказов:</strong> Номер заказа, дата, сумма транзакции и выбранный тарифный план (необходимы для бухгалтерского и финансового учета).</li>
+            <li><strong style="color:#fff;">Служебные файлы Cookies:</strong> Временный токен авторизации в личном кабинете (<code>sc_web_token</code>) и маркер реферальной программы (<code>sc_ref</code>, 30 дней) для применения положенной скидки.</li>
+            <li><strong style="color:#fff;">Агрегированные счетчики трафика:</strong> Общий суммарный объем переданных байт без привязки к ресурсам или действиям, используемый исключительно для контроля соблюдения лимита устройств и стабильности сетевых каналов.</li>
           </ul>
 
-          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">4. Сроки хранения и удаление информации</h3>
-          <p class="muted">Данные подписки хранятся в базе данных в течение всего периода ее действия. Пользователь имеет право в любой момент запросить полное удаление своего Email или Telegram ID из системы, направив обращение в поддержку.</p>
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">3. Безопасность финансовых транзакций</h3>
+          <p class="muted">Исполнитель <strong style="color:#fff;">НЕ собирает, НЕ обрабатывает и НЕ хранит</strong> данные банковских карт Пользователей (номера карт, срок действия, CVV/CVC-коды). Все платежи проводятся непосредственно через защищенные платежные шлюзы сертифицированных банков-эквайеров и платежных провайдеров в соответствии со стандартами безопасности PCI DSS и регламентом Системы быстрых платежей (СБП / НСПК).</p>
 
-          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">5. Контакты службы поддержки</h3>
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">4. Взаимодействие с государственными органами и третьими лицами</h3>
+          <p class="muted">Мы соблюдаем применимое законодательство. Однако, в силу технической архитектуры Платформы и строгого соблюдения Zero-Logs Policy, мы физически не ведем и не накапливаем журналы сетевой активности и сопоставления трафика с конкретными пользователями. Сервис не имеет технической возможности раскрыть то, чем он не владеет.</p>
+
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">5. Права субъекта персональных данных</h3>
+          <p class="muted">Пользователь вправе в любой момент отозвать свое согласие на обработку контактных данных и запросить полное удаление своей учетной записи и истории заказов, направив письменное заявление по официальному адресу <a href="mailto:{html.escape(self.settings.support_email)}" style="color: var(--green); text-decoration: underline;">{html.escape(self.settings.support_email)}</a>. Данные удаляются в течение 72 часов с момента подтверждения запроса.</p>
+
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">6. Контакты службы поддержки</h3>
           <p class="muted">
             Электронная почта: <a href="mailto:{html.escape(self.settings.support_email)}" style="color: var(--green); text-decoration: underline;">{html.escape(self.settings.support_email)}</a><br>
             Telegram-бот поддержки: <a href="{html.escape(self.support_url)}" style="color: var(--green); text-decoration: underline;" target="_blank">{html.escape(self.support_url)}</a>
@@ -1621,80 +1833,103 @@ class WebCheckout:
 
     def render_legal_terms(self) -> bytes:
         body = f"""
-        <div class="card" style="max-width: 860px; margin: 30px auto; line-height: 1.7; padding: 28px 32px;">
+        <div class="card page-card">
           <div style="margin-bottom: 20px;">
             <a class="btn secondary" href="/" style="display: inline-flex; width: auto; min-height: 38px; padding: 6px 14px; font-size: 14px;">← На главную к тарифам</a>
           </div>
-          <h1 style="font-size: 30px; margin-top: 0; margin-bottom: 10px; background: linear-gradient(to right, #fff, #2fbf71); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Условия использования SilentConnect</h1>
-          <p class="muted" style="margin-bottom: 24px;">Редакция от 20 апреля 2026 г. · Правила работы частного сервиса</p>
+          <h1 class="page-title">Пользовательское соглашение (Публичная оферта)</h1>
+          <p class="muted" style="margin-bottom: 24px;">Редакция от 5 сентября 2026 г. · Условия оказания услуг по ст. 435, 437, 438 ГК РФ</p>
 
-          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">1. Статус сервиса и принятие условий</h3>
-          <p class="muted"><strong>SilentConnect</strong> — это частный неофициальный проект независимых разработчиков, предоставляемый без образования юридического лица или ИП. Оплата подписки или использование предоставленных ссылок подключения означают ваше согласие с настоящими правилами.</p>
+          <p class="muted">Настоящее Пользовательское соглашение (далее — «Соглашение» или «Оферта») регулирует отношения между Администрацией сервиса <strong>SilentConnect</strong> (далее — «Исполнитель») и любым физическим или юридическим лицом, использующим сервисы Сайта, Telegram-бота или инфраструктуру Платформы (далее — «Пользователь»).</p>
 
-          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">2. Порядок предоставления и активации доступа</h3>
-          <p class="muted">После подтверждения оплаты система автоматически создает зашифрованный ключ доступа. Ссылка на мастер подключения сразу отображается на странице заказа и отправляется на указанный покупателем Email.</p>
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">1. Термины и определения</h3>
+          <ul class="muted" style="padding-left: 20px; line-height: 1.8;">
+            <li><strong style="color:#fff;">Сервис (Платформа)</strong> — программно-аппаратный комплекс SilentConnect, предназначенный для защищенного сетевого взаимодействия, криптографической маршрутизации и безопасной передачи данных через интернет.</li>
+            <li><strong style="color:#fff;">Индивидуальный ключ доступа</strong> — уникальная зашифрованная ссылка (URL подписки) либо конфигурационный файл, генерируемый для аутентификации абонентских устройств Пользователя на узлах Сервиса.</li>
+            <li><strong style="color:#fff;">Заказ</strong> — действие Пользователя по выбору Тарифа, заполнению контактных данных и оплате услуг через сайт или интерфейс бота.</li>
+            <li><strong style="color:#fff;">Тариф</strong> — установленный Исполнителем объем прав доступа, определяющий срок подписки и лимит одновременно подключенных устройств (3, 6 или 9 устройств).</li>
+          </ul>
 
-          <h3 style="color: #2fbf71; font-size: 19px; margin-top: 24px;">3. Техническое ограничение количества устройств</h3>
-          <p class="muted">Ограничение на количество одновременно подключаемых устройств энфорсится напрямую на уровне ядра Xray через параметр ограничения уникальных IP-адресов (<code>limitIp</code>). В зависимости от вашего тарифа вы можете одновременно использовать <strong>3, 6 или 9 устройств</strong>.</p>
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">2. Акцепт оферты и заключение договора</h3>
+          <p class="muted">2.1. Настоящий документ является публичной офертой в соответствии со статьями 435 и 437 Гражданского кодекса Российской Федерации (ГК РФ).</p>
+          <p class="muted">2.2. Полным и безоговорочным акцептом настоящей Оферты (ст. 438 ГК РФ) признается совершение Пользователем любого из следующих конклюдентных действий: нажатие кнопки оформления/оплаты заказа, совершение платежа, авторизация в боте либо фактическое использование сгенерированного индивидуального ключа доступа.</p>
+          <p class="muted">2.3. Акцептуя Оферту, Пользователь подтверждает, что достиг совершеннолетия, обладает полной право- и дееспособностью, ознакомился и безоговорочно согласен со всеми положениями настоящего Соглашения, а также с <a href="/legal/privacy" style="color: var(--green); text-decoration: underline;">Политикой конфиденциальности</a> и <a href="/legal/refund" style="color: var(--green); text-decoration: underline;">Политикой возвратов</a>.</p>
 
-          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">4. Порядок возврата средств (Refund)</h3>
-          <p class="muted">В коде и платежных интеграциях сервиса отсутствует автоматическая функция возврата средств. Все возвраты обрабатываются <strong>в ручном режиме администратором</strong>.</p>
-          <p class="muted">Если у вас возникли технические неисправности с доступом, которые наша служба поддержки не смогла устранить, напишите обращение на <a href="mailto:{html.escape(self.settings.support_email)}" style="color: var(--green); text-decoration: underline;">{html.escape(self.settings.support_email)}</a> с номером вашего заказа (#ord_...), и администратор выполнит ручной возврат денег.</p>
+          <h3 style="color: #2fbf71; font-size: 19px; margin-top: 24px;">3. Предмет соглашения и момент исполнения обязательств</h3>
+          <p class="muted">3.1. Исполнитель предоставляет Пользователю неисключительное право использования программного обеспечения и услуги защищенного сетевого взаимодействия для безопасной передачи данных в соответствии с выбранным Тарифом.</p>
+          <p class="muted">3.2. <strong style="color:#fff;">Момент оказания услуг:</strong> Обязательства Исполнителя по предоставлению доступа считаются исполненными надлежащим образом и в полном объеме в момент автоматической генерации и отображения индивидуального ключа доступа (URL подписки) в веб-интерфейсе либо отправки на указанный Пользователем адрес электронной почты или в Telegram. Фактическая настройка клиентского ПО на стороне абонентского оборудования осуществляется Пользователем самостоятельно.</p>
 
-          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">5. Запрещенные действия (AUP)</h3>
-          <p class="muted">Пользователям категорически запрещено использовать инфраструктуру сервиса для противоправной деятельности: проведения DDoS-атак, несанкционированного сканирования сетей, распространения вредоносного ПО и спама. При выявлении таких действий доступ может быть заблокирован.</p>
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">4. Стоимость услуг и порядок расчетов</h3>
+          <p class="muted">4.1. Стоимость Тарифов публикуется на Сайте и в интерфейсах Сервиса в российских рублях (RUB). Исполнитель вправе в одностороннем порядке изменять стоимость будущих периодов; изменение стоимости уже оплаченного Пользователем периода не допускается.</p>
+          <p class="muted">4.2. Оплата производится через сертифицированные платежные шлюзы (включая Систему быстрых платежей СБП / НСПК и банковские карты). Обязательства по оплате считаются исполненными с момента подтверждения зачисления средств банком-эквайером.</p>
+          <p class="muted">4.3. Автоматические скрытые списания (рекуррентные подписки без предварительного согласия) сервисом не применяются. Продление осуществляется по добровольной инициативе Пользователя.</p>
 
-          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">6. Отказ от гарантий и ограничение ответственности</h3>
-          <p class="muted">Сервис предоставляется по принципу «как есть» (as is). Мы прикладываем усилия для высокой скорости и стабильности серверов (в Нидерландах и Финляндии), однако не гарантируем абсолютное отсутствие технических сбоев или блокировок со стороны внешних интернет-провайдеров.</p>
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">5. Правила добросовестного использования (Fair Use Policy)</h3>
+          <p class="muted">5.1. Пользователь обязуется использовать Сервис исключительно в законных целях для личных и семейных нужд в пределах лимита устройств по Тарифу (до 3, 6 или 9 устройств одновременно).</p>
+          <p class="muted">5.2. Категорически запрещается использовать Сервис для:</p>
+          <ul class="muted" style="padding-left: 20px; line-height: 1.8;">
+            <li>Осуществления массовых спам-рассылок, фишинга, мошеннических действий и социальной инженерии;</li>
+            <li>Проведения сетевых атак любого рода (DDoS, брутфорс, несанкционированное сканирование портов и уязвимостей);</li>
+            <li>Распространения вредоносного программного обеспечения, эксплойтов и троянских программ;</li>
+            <li>Нарушения законодательства РФ и прав интеллектуальной собственности третьих лиц;</li>
+            <li>Организации публичных прокси-серверов, майнинга, торрент-ферм и перепродажи доступа третьим лицам.</li>
+          </ul>
+          <p class="muted">5.3. При выявлении грубых нарушений п. 5.2 Исполнитель оставляет за собой право немедленно приостановить или заблокировать доступ без компенсации и возврата средств.</p>
 
-          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">7. Контакты для связи</h3>
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">6. Ограничение ответственности и отказ от гарантий</h3>
+          <p class="muted">6.1. Сервис предоставляется на условиях «КАК ЕСТЬ» («AS IS»). Исполнитель принимает все разумные меры для обеспечения непрерывной и стабильной работы узлов связи, однако не гарантирует абсолютную безошибочность или бесперебойность.</p>
+          <p class="muted">6.2. Исполнитель не несет ответственности за временные перебои, вызванные действиями локальных интернет-провайдеров Пользователя, магистральных операторов связи, авариями кабельной инфраструктуры, плановыми техническими работами и сетевыми сбоями сторонних операторов связи либо иными форс-мажорными обстоятельствами вне контроля Исполнителя.</p>
+          <p class="muted">6.3. Совокупная ответственность Исполнителя по любым претензиям строго ограничена суммой, фактически уплаченной Пользователем за текущий расчетный период.</p>
+
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">7. Изменение условий и контакты</h3>
+          <p class="muted">7.1. Исполнитель вправе в одностороннем порядке вносить изменения в настоящую Оферту. Новая редакция вступает в силу с момента ее публикации на данной странице.</p>
           <p class="muted">
-            Электронная почта: <a href="mailto:{html.escape(self.settings.support_email)}" style="color: var(--green); text-decoration: underline;">{html.escape(self.settings.support_email)}</a><br>
+            Электронная почта поддержки: <a href="mailto:{html.escape(self.settings.support_email)}" style="color: var(--green); text-decoration: underline;">{html.escape(self.settings.support_email)}</a><br>
             Telegram-бот поддержки: <a href="{html.escape(self.support_url)}" style="color: var(--green); text-decoration: underline;" target="_blank">{html.escape(self.support_url)}</a>
           </p>
         </div>
         """
         return self.render_page("Пользовательское соглашение", body)
 
-
     def render_legal_refund(self) -> bytes:
         body = f"""
-        <div class="card" style="max-width: 860px; margin: 30px auto; line-height: 1.7; padding: 28px 32px;">
+        <div class="card page-card">
           <div style="margin-bottom: 20px;">
             <a class="btn secondary" href="/" style="display: inline-flex; width: auto; min-height: 38px; padding: 6px 14px; font-size: 14px;">← На главную к тарифам</a>
           </div>
-          <h1 style="font-size: 30px; margin-top: 0; margin-bottom: 10px; background: linear-gradient(to right, #fff, #2fbf71); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Политика возвратов SilentConnect</h1>
-          <p class="muted" style="margin-bottom: 24px;">Редакция от 4 сентября 2026 г. · Ручной процессинг возвратов администратором</p>
+          <h1 class="page-title">Политика возврата денежных средств и отмены подписки</h1>
+          <p class="muted" style="margin-bottom: 24px;">Редакция от 5 сентября 2026 г. · Регламент рассмотрения и взаиморасчетов (СБП / НСПК / Fair Use)</p>
 
-          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">1. Общие положения</h3>
-          <p class="muted">SilentConnect не использует автоматизированные платежные шлюзы с встроенным функционалом возврата средств. Все возвраты обрабатываются <strong>исключительно в ручном режиме</strong> администратором сервиса после рассмотрения обращения.</p>
+          <p class="muted">Мы стремимся обеспечить максимальный комфорт при использовании сервиса SilentConnect. Если сервис по техническим причинам вам не подошел, вы вправе запросить возврат денежных средств в рамках правил добросовестного использования (Fair Use Policy).</p>
 
-          <h3 style="color: #2fbf71; font-size: 19px; margin-top: 24px;">2. Основания для возврата</h3>
-          <p class="muted">Возврат возможен при одновременном соблюдении следующих условий:</p>
+          <h3 style="color: #2fbf71; font-size: 19px; margin-top: 24px;">1. Гарантия возврата (Money-back Guarantee)</h3>
+          <p class="muted">1.1. Исполнитель предоставляет гарантию возврата 100% уплаченных средств в течение <strong style="color:#fff;">14 (четырнадцати) календарных дней</strong> с момента оплаты, если Пользователь не удовлетворен качеством работы сервиса.</p>
+          <p class="muted">1.2. Гарантия возврата распространяется <strong style="color:#fff;">исключительно на первый заказ (первую покупку)</strong>, совершенную с уникального аккаунта пользователя.</p>
+          <p class="muted">1.3. Повторные покупки, продления действующей подписки, а также дополнительные заказы тем же пользователем (определяемым по email, Telegram ID либо платежным реквизитам) <strong style="color:#fff;">возврату не подлежат</strong>. Факт повторной оплаты услуги юридически подтверждает полную удовлетворенность Пользователя качеством сервиса за предыдущие периоды.</p>
+
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">2. Условия отказа в возврате (Ограничения Fair Use)</h3>
+          <p class="muted">Для защиты инфраструктуры от злоупотреблений и паразитарной нагрузки возврат средств не производится в следующих случаях:</p>
           <ul class="muted" style="padding-left: 20px; line-height: 1.8;">
-            <li>Заказ был оформлен, но услуга не была предоставлена по техническим причинам на стороне сервиса (сервер недоступен, профиль не генерируется, оплата прошла, но ссылка не отправлена).</li>
-            <li>Услуга была предоставлена, но имеются <strong>неустранимые технические неполадки</strong>, препятствующие использованию VPN-доступа, которые не удалось решить при содействии службы поддержки в течение разумного срока.</li>
-          </ul>
-          <p class="muted" style="margin-top: 12px;"><strong>Важно:</strong> Невсовпадение ожидаемой скорости, незнание методов настройки клиентского приложения или отсутствие желания использовать сервис после успешной активации <strong>не являются</strong> достаточным основанием для возврата. Перед покупкой рекомендуем ознакомиться с доступными протоколами подключения и убедиться в технической совместимости.</p>
-
-          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">3. Порядок подачи обращения</h3>
-          <ol class="muted" style="padding-left: 20px; line-height: 1.8;">
-            <li>Напишите обращение на <a href="mailto:{html.escape(self.settings.support_email)}" style="color: var(--green); text-decoration: underline;">{html.escape(self.settings.support_email)}</a> или в <a href="{html.escape(self.support_url)}" style="color: var(--green); text-decoration: underline;" target="_blank">Telegram-боте поддержки</a>.</li>
-            <li>Укажите в обращении: номер заказа (#ord_...), email, на который оформлялся заказ, и описание проблемы.</li>
-            <li>Приложите скриншоты или логи, подтверждающие техническую неисправность (если применимо).</li>
-          </ol>
-
-          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">4. Сроки рассмотрения</h3>
-          <ul class="muted" style="padding-left: 20px; line-height: 1.8;">
-            <li><strong>Время ответа:</strong> до 48 часов с момента получения обращения.</li>
-            <li><strong>Решение о возврате:</strong> принимается администратором индивидуально на основе предоставленных данных.</li>
-            <li><strong>Зачисление средств:</strong> при одобрении возврата — в течение 1–3 банковских дней (в зависимости от банка получателя).</li>
+            <li><strong style="color:#fff;">Лимит трафика (Data Cap):</strong> Если с момента генерации доступа через аккаунт прошло более <strong style="color:#fff;">5 ГБ (Гигабайт)</strong> суммарного трафика. Превышение порога в 5 ГБ юридически признается Сторонами фактом полного потребления услуги и надлежащего качества соединения;</li>
+            <li><strong style="color:#fff;">Истечение срока:</strong> Обращение направлено позднее 14 календарных дней с момента совершения оплаты;</li>
+            <li><strong style="color:#fff;">Нарушение правил (AUP):</strong> Аккаунт был заблокирован за нарушение правил допустимого использования (спам, сканирование, атаки, реселлинг);</li>
+            <li><strong style="color:#fff;">Локальные ограничения клиента:</strong> Серверная инфраструктура исправна, но клиент не может настроить соединение из-за ограничений на стороне своего локального интернет-провайдера либо специфики личного устройства при условии, что служба поддержки предоставила инструкции и альтернативные конфигурации;</li>
+            <li><strong style="color:#fff;">Анонимные транзакции:</strong> Платежи, совершенные в криптовалюте, в силу необратимости блокчейн-транзакций возврату не подлежат (возможна компенсация дополнительными днями доступа).</li>
           </ul>
 
-          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">5. Способ возврата</h3>
-          <p class="muted">Возврат осуществляется переводом на банковскую карту или СБП-кошелёк, с которых была произведена оплата. Возврат на карту третьего лица невозможен.</p>
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">3. Регламент и процедура оформления возврата</h3>
+          <p class="muted">3.1. Для оформления возврата направьте запрос по официальному адресу <a href="mailto:{html.escape(self.settings.support_email)}" style="color: var(--green); text-decoration: underline;">{html.escape(self.settings.support_email)}</a> либо через верифицированный <a href="{html.escape(self.support_url)}" style="color: var(--green); text-decoration: underline;" target="_blank">Telegram-бот поддержки</a>.</p>
+          <p class="muted">3.2. В обращении необходимо указать:</p>
+          <ul class="muted" style="padding-left: 20px; line-height: 1.8;">
+            <li>Номер заказа (#ord_...) и контактный Email или Telegram ID;</li>
+            <li>Дату и сумму оплаты, приложив чек или электронную квитанцию;</li>
+            <li>Краткую причину обращения.</li>
+          </ul>
+          <p class="muted">3.3. Единственным объективным доказательством факта использования услуги являются серверные счетчики биллинга трафика. Скриншоты замера скорости сторонних утилит не требуются.</p>
+          <p class="muted">3.4. Срок рассмотрения заявления службой поддержки составляет <strong style="color:#fff;">до 48 часов</strong> (не более 3 рабочих дней).</p>
+          <p class="muted">3.5. Выплата денежных средств осуществляется тем же способом, которым производилась оплата: через Систему быстрых платежей (СБП / НСПК) по номеру телефона плательщика либо на банковскую карту. Срок зачисления банком получателя составляет <strong style="color:#fff;">от 1 до 3 банковских дней</strong>.</p>
 
-          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">6. Контакты</h3>
+          <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">4. Контакты службы поддержки</h3>
           <p class="muted">
             Электронная почта: <a href="mailto:{html.escape(self.settings.support_email)}" style="color: var(--green); text-decoration: underline;">{html.escape(self.settings.support_email)}</a><br>
             Telegram-бот поддержки: <a href="{html.escape(self.support_url)}" style="color: var(--green); text-decoration: underline;" target="_blank">{html.escape(self.support_url)}</a>
@@ -1705,20 +1940,20 @@ class WebCheckout:
 
     def render_about(self) -> bytes:
         body = f"""
-        <div class="card" style="max-width: 860px; margin: 30px auto; line-height: 1.7; padding: 28px 32px;">
+        <div class="card page-card">
           <div style="margin-bottom: 20px;">
             <a class="btn secondary" href="/" style="display: inline-flex; width: auto; min-height: 38px; padding: 6px 14px; font-size: 14px;">← На главную к тарифам</a>
           </div>
-          <h1 style="font-size: 32px; margin-top: 0; margin-bottom: 10px; background: linear-gradient(to right, #fff, #2fbf71); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">О сервисе SilentConnect</h1>
-          <p class="muted" style="margin-bottom: 24px;">Передовой приватный VPN-сервис нового поколения, созданный для безотказного доступа к интернету.</p>
+          <h1 class="page-title">О сервисе SilentConnect</h1>
+          <p class="muted" style="margin-bottom: 24px;">Передовой сервис приватного сетевого доступа нового поколения, созданный для безопасного и стабильного интернета.</p>
           
           <h3 style="color: #fff; font-size: 20px; margin-top: 24px;">Наша миссия</h3>
-          <p class="muted">Мы верим, что свободный и незамедлительный доступ к информации — это фундаментальное право каждого человека. SilentConnect создавался с нуля для работы в сложных сетевых условиях, где традиционные протоколы VPN легко распознаются и блокируются провайдерами.</p>
+          <p class="muted">Мы верим, что свободный и безопасный доступ к информации — это фундаментальное право каждого человека. SilentConnect создавался с нуля для работы в сложных сетевых условиях, где стандартные методы подключения легко распознаются и замедляются провайдерами.</p>
 
           <h3 style="color: #2fbf71; font-size: 20px; margin-top: 24px;">Инфраструктура и технологии:</h3>
           <ul class="muted" style="padding-left: 20px; line-height: 1.8;">
-            <li><strong style="color:#fff;">Маскировка REALITY &amp; XHTTP:</strong> Наш трафик маскируется под стандартный защищенный веб-скроллинг популярных сервисов. Для сетевых фильтров ваше подключение выглядит как обычный визит на веб-сайт.</li>
-            <li><strong style="color:#fff;">Европейские гигабитные узлы:</strong> Серверы размещены в дата-центрах Нидерландов и Финляндии с прямыми магистральными каналами связи и минимальным пингом.</li>
+            <li><strong style="color:#fff;">Современное защищенное шифрование:</strong> Наш трафик маскируется под стандартный защищенный протокол веб-сервисов. Для сетевых фильтров ваше подключение выглядит как обычный визит на веб-сайт.</li>
+            <li><strong style="color:#fff;">Европейские гигабитные узлы:</strong> Серверы размещены в современных дата-центрах Нидерландов и Финляндии с прямыми магистральными каналами связи и минимальным пингом.</li>
             <li><strong style="color:#fff;">Умная доставка и личный кабинет:</strong> Мгновенная генерация подписки, отправка чеков и ключей на Email, удобное управление через веб-интерфейс и Telegram-бота.</li>
             <li><strong style="color:#fff;">Поддержка любых устройств:</strong> Готовые мастера установки под iOS (Happ, Streisand), Android (Happ, V2RayTun), Windows, macOS, Linux, Android TV и Apple TV.</li>
           </ul>
@@ -1730,11 +1965,11 @@ class WebCheckout:
 
     def render_contact(self) -> bytes:
         body = f"""
-        <div class="card" style="max-width: 860px; margin: 30px auto; line-height: 1.7; padding: 28px 32px;">
+        <div class="card page-card">
           <div style="margin-bottom: 20px;">
             <a class="btn secondary" href="/" style="display: inline-flex; width: auto; min-height: 38px; padding: 6px 14px; font-size: 14px;">← На главную к тарифам</a>
           </div>
-          <h1 style="font-size: 32px; margin-top: 0; margin-bottom: 10px; background: linear-gradient(to right, #fff, #2fbf71); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Контакты &amp; Поддержка</h1>
+          <h1 class="page-title">Контакты &amp; Поддержка</h1>
           <p class="muted" style="margin-bottom: 24px;">Мы работаем круглосуточно и готовы оперативно помочь с любыми вопросами по настройке и оплате.</p>
 
           <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin: 24px 0;">
@@ -1763,12 +1998,21 @@ class WebCheckout:
         active_discount: dict[str, Any] | None = None,
         promo_code: str = "",
         flash: str = "",
+        ref_code: str = "",
     ) -> bytes:
         discount_percent = int(active_discount["discount_percent"]) if active_discount else 0
+        ref_banner = ""
+        clean_ref = ref_code.strip()
+        if clean_ref:
+            ref_referrer = self.store.get_referrer_by_code(clean_ref)
+            if ref_referrer:
+                ref_banner = '<div class="notice" style="background: rgba(47, 191, 113, 0.15); border-color: rgba(47, 191, 113, 0.4); color: #2fbf71; font-weight: 600; margin-bottom: 12px;">🎁 Реферальный бонус: вам доступна скидка 10% на первую подписку!</div>'
+                discount_percent = max(discount_percent, REFERRAL_INVITEE_DISCOUNT_PERCENT)
         escaped_promo_code = html.escape(promo_code.strip())
         flash_html = f'<div class="notice">{html.escape(flash)}</div>' if flash else ""
         promo_hidden = f'<input type="hidden" name="promo_code" value="{escaped_promo_code}">' if active_discount else ""
-        discount_line = f" Активна скидка {discount_percent}%." if active_discount else ""
+        ref_hidden = f'<input type="hidden" name="ref_code" value="{html.escape(clean_ref)}">' if clean_ref else ""
+        discount_line = f" Активна скидка {discount_percent}%." if discount_percent > 0 else ""
 
         plans: dict[str, dict[str, Any]] = {}
         for device_limit in (3, 6, 9):
@@ -1795,8 +2039,9 @@ class WebCheckout:
         body = f"""
         <section class="hero">
           <div>
-            <h1>Незаметный VPN, который просто работает</h1>
+            <h1>Приватный доступ, который просто работает</h1>
             <p class="lead">Включили один раз — и забыли. Выберите тариф, получите готовую ссылку для приложения на почту и пользуйтесь открытым интернетом.</p>
+            {ref_banner}
             <div class="notice">Ссылка на подписку придёт на электронную почту и появится на сайте сразу после оплаты</div>
           </div>
           <img class="hero-img" src="/assets/telegram/welcome.png" alt="SilentConnect">
@@ -1809,7 +2054,7 @@ class WebCheckout:
             </div>
             <div class="advantage">
               <b>Устойчивые режимы</b>
-              <span>Стандартный и универсальный доступ помогают переживать любые ограничения.</span>
+              <span>Стандартный и универсальный доступ обеспечивают высокую стабильность соединения.</span>
             </div>
             <div class="advantage">
               <b>Доставка на Email</b>
@@ -1892,6 +2137,7 @@ class WebCheckout:
 
               <input id="builder-offer" type="hidden" name="offer" value="tcp_3_30">
               {promo_hidden}
+              {ref_hidden}
               <div class="cf-turnstile" data-sitekey="{html.escape(self.settings.cf_turnstile_site_key)}" data-theme="dark" data-refresh-expired="auto" style="margin: 14px 0; display: flex; justify-content: center;"></div>
               <div id="orderFormStatus" style="margin: -6px 0 10px; font-size: 13px; color: #ef4444; display: none; text-align: center; line-height: 1.4;"></div>
               <button type="submit">Перейти к оплате</button>
@@ -1929,23 +2175,34 @@ class WebCheckout:
           <div style="display: grid; gap: 12px;">
             <details class="card faq-card" style="padding: 16px 20px; cursor: pointer;">
               <summary style="font-weight: 700; font-size: 16px; color: #fff; list-style: none; display: flex; justify-content: space-between; align-items: center; font-family: 'Outfit', sans-serif;">
-                Будут ли работать нужные мне сайты?
+                Действительно ли трафик безлимитный?
                 <span class="faq-arrow">▼</span>
               </summary>
               <div class="faq-content">
                 <div class="faq-content-inner">
-                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">Да! Наш VPN использует маскировку трафика REALITY и XHTTP. Все популярные сервисы будут открываться мгновенно.</p>
+                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">Да, мы не ограничиваем гигабайты и скорость передачи данных. Действует прозрачная политика добросовестного использования (Fair Use Policy) — сервис рассчитан на комфортное личное и семейное применение (браузинг, просмотр 4K-видео, игры, стриминг, повседневная загрузка файлов). Не допускается использование инфраструктуры для коммерческого парсинга, спам-рассылок, непрерывных торрент-ферм и иных сценариев, создающих паразитную перегрузку каналов связи.</p>
                 </div>
               </div>
             </details>
             <details class="card faq-card" style="padding: 16px 20px; cursor: pointer;">
               <summary style="font-weight: 700; font-size: 16px; color: #fff; list-style: none; display: flex; justify-content: space-between; align-items: center; font-family: 'Outfit', sans-serif;">
-                На каких устройствах работает VPN?
+                Будут ли работать нужные мне сайты?
                 <span class="faq-arrow">▼</span>
               </summary>
               <div class="faq-content">
                 <div class="faq-content-inner">
-                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">На любых! Вы можете установить его на iPhone, iPad, Android-смартфоны, планшеты, а также на компьютеры Windows, macOS и Linux.</p>
+                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">Да! Наш сервис использует современное защищенное шифрование. Все популярные ресурсы будут открываться мгновенно и стабильно.</p>
+                </div>
+              </div>
+            </details>
+            <details class="card faq-card" style="padding: 16px 20px; cursor: pointer;">
+              <summary style="font-weight: 700; font-size: 16px; color: #fff; list-style: none; display: flex; justify-content: space-between; align-items: center; font-family: 'Outfit', sans-serif;">
+                На каких устройствах работает SilentConnect?
+                <span class="faq-arrow">▼</span>
+              </summary>
+              <div class="faq-content">
+                <div class="faq-content-inner">
+                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">На любых! Вы можете настроить подключение на iPhone, iPad, Android-смартфоны, планшеты, а также на компьютеры Windows, macOS и Linux.</p>
                 </div>
               </div>
             </details>
@@ -1984,12 +2241,12 @@ class WebCheckout:
             </details>
             <details class="card faq-card" style="padding: 16px 20px; cursor: pointer;">
               <summary style="font-weight: 700; font-size: 16px; color: #fff; list-style: none; display: flex; justify-content: space-between; align-items: center; font-family: 'Outfit', sans-serif;">
-                Почему у SilentConnect высокая скорость и нет блокировок?
+                Почему у SilentConnect высокая скорость и стабильное соединение?
                 <span class="faq-arrow">▼</span>
               </summary>
               <div class="faq-content">
                 <div class="faq-content-inner">
-                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">Мы используем маскировку трафика REALITY и XHTTP с шифрованием TLS. Провайдер видит ваше подключение как зашифрованный визит на обычный популярный сайт, поэтому заблокировать его невозможно.</p>
+                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">Мы используем современный оптимизированный стек протоколов REALITY и XHTTP со сквозным шифрованием TLS. Трафик направляется по выделенным скоростным каналам европейских дата-центров, обеспечивая максимальную отзывчивость без потери пакетов.</p>
                 </div>
               </div>
             </details>
@@ -2152,7 +2409,7 @@ class WebCheckout:
         }})();
         </script>
         """
-        return self.render_page("VPN-доступ", body)
+        return self.render_page("Приватный доступ", body)
 
     def render_order(self, headers: Any, order: dict[str, Any], *, flash: str = "") -> bytes:
         meta = order.get("meta_json") or {}
@@ -2172,7 +2429,6 @@ class WebCheckout:
         """
         status = str(order.get("status") or "")
         if status == "waiting_payment":
-            paid_reported = bool(meta.get("web_paid_reported_at"))
             platega_url = self.get_or_create_platega_payment_url(
                 order,
                 return_url=order_url,
@@ -2181,31 +2437,26 @@ class WebCheckout:
             platega_card = ""
             if platega_url:
                 platega_card = f"""
-                <div class="card" style="border: 2px solid #10b981; background: rgba(16, 185, 129, 0.05);">
-                  <strong style="font-size: 1.15rem; color: #10b981;">💳 Быстрая оплата онлайн</strong>
-                  <p class="muted">Оплата через СБП, банковские карты или криптовалюту. Подключение активируется автоматически сразу после проведения платежа.</p>
-                  <div class="actions">
-                    <a class="btn" href="{html.escape(platega_url, quote=True)}" target="_blank" rel="noopener" style="background: linear-gradient(135deg, #10b981, #059669); font-size: 1.05rem; padding: 12px 24px; font-weight: 600;">Оплатить онлайн {html.escape(money(order['final_price_rub']))}</a>
-                  </div>
-                  <p class="fine">Комиссия шлюза рассчитывается на платежной форме. Страница заказа обновится автоматически сразу после подтверждения.</p>
+                <div class="card" style="border: 1px solid rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.05);">
+                  <div style="font-size: 1.1rem; font-weight: 700; margin-bottom: 8px; color: #10b981;">Быстрая онлайн-оплата</div>
+                  <div style="font-size: 0.95rem; color: #94a3b8; margin-bottom: 16px;">Банковские карты РФ, СБП и криптовалюта без комиссии:</div>
+                  <a class="btn" href="{html.escape(platega_url, quote=True)}" target="_blank" rel="noopener" style="background: #10b981; color: #0f172a; font-weight: 700; font-size: 1.05rem; padding: 14px 20px; display: block; text-align: center; border-radius: 8px; text-decoration: none; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);">
+                    Оплатить онлайн картой / СБП →
+                  </a>
                 </div>
                 """
-            payment_url = html.escape(self.payment_transfer_url(order), quote=True)
-            bank_note = html.escape(self.payment_bank_note())
-            pay_button = (
-                f'<a class="btn" href="{payment_url}" target="_blank" rel="noopener">Оплатить переводом</a>'
-                if payment_url
-                else f'<a class="btn secondary" href="{html.escape(self.support_url)}">Получить ссылку на оплату</a>'
-            )
+            paid_reported = bool(meta.get("web_paid_reported_at"))
+            support_link = html.escape(self.support_url, quote=True)
+            pay_button = f'<a class="btn" href="{support_link}" target="_blank" rel="noopener">💬 Написать оператору для оплаты</a>'
             payment_action = (
                 """
-                <div id="order-live-status" class="notice">Оплата отмечена. Ждём подтверждение админом, эта страница обновится сама.</div>
+                <div id="order-live-status" class="notice">Оплата отмечена. Ждём подтверждение админом, эта страница обновится сама (или ссылка на доступ придёт вам на указанный email).</div>
                 """
                 if paid_reported
                 else f"""
-                <p class="muted">Нажмите кнопку оплаты, переведите ровно {html.escape(money(order['final_price_rub']))}, затем отметьте заказ как оплаченный.</p>
+                <p class="muted">Для оплаты свяжитесь с нашим менеджером в Telegram. Нажмите кнопку ниже, чтобы получить реквизиты перевода, переведите ровно <strong>{html.escape(money(order['final_price_rub']))}</strong>, затем нажмите «Оплачено».</p>
                 <div class="actions">{pay_button}</div>
-                <p class="fine">Комментарий к переводу можно оставить нейтральным: {html.escape(str(order['public_id']))}. {bank_note}</p>
+                <p class="fine">В сообщении оператору укажите номер вашего заказа: <code>{html.escape(str(order['public_id']))}</code>.</p>
                 <form method="post" action="/order/{html.escape(str(order['public_id']))}/{html.escape(str(meta.get('web_token') or ''))}/paid">
                   <button type="submit">Оплачено</button>
                 </form>
@@ -2218,10 +2469,10 @@ class WebCheckout:
                 {summary}
                 {platega_card}
                 <div class="card">
-                  <strong>{"Альтернативная оплата переводом" if platega_url else "Оплата переводом"}</strong>
+                  <strong>Оплата через оператора</strong>
                   {payment_action}
                   <div class="actions">
-                    <a class="btn secondary" href="{html.escape(self.support_url)}">Поддержка</a>
+                    <a class="btn secondary" href="{html.escape(self.support_url)}" target="_blank" rel="noopener">Поддержка</a>
                     <form method="post" action="/order/{html.escape(str(order['public_id']))}/{html.escape(str(meta.get('web_token') or ''))}/cancel" style="margin:0;">
                       <button type="submit" class="btn secondary" style="background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.3);">Отменить заказ ✖</button>
                     </form>
@@ -2245,8 +2496,9 @@ class WebCheckout:
               <section class="section" style="padding: 24px 0 16px;"><h2>Доступ готов</h2>{flash_html}</section>
               <section class="order">
                 {summary}
+                {platega_card}
                 <div class="card">
-                  <strong>Подключить VPN</strong>
+                  <strong>Активировать доступ</strong>
                   <p class="muted">Откройте страницу подключения. Она определит устройство, предложит подходящие приложения и покажет запасной способ через копирование.</p>
                   <div class="actions">
                     <a class="btn" href="{html.escape(setup_url)}">Подключить</a>
@@ -2294,12 +2546,34 @@ class RequestHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         return
 
-    def _send(self, status: HTTPStatus, body: bytes, content_type: str = "text/html; charset=utf-8") -> None:
+    def _get_cookie(self, name: str) -> str:
+        raw_cookie = self.headers.get("Cookie", "") if self.headers else ""
+        if not raw_cookie:
+            return ""
+        try:
+            c = SimpleCookie()
+            c.load(raw_cookie)
+            if name in c:
+                return c[name].value.strip()
+        except Exception:
+            pass
+        return ""
+
+    def _send(
+        self,
+        status: HTTPStatus,
+        body: bytes,
+        content_type: str = "text/html; charset=utf-8",
+        extra_headers: list[tuple[str, str]] | None = None,
+    ) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Cache-Control", "no-store")
         for name, value in SECURITY_HEADERS:
             self.send_header(name, value)
+        if extra_headers:
+            for name, value in extra_headers:
+                self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if self.command != "HEAD":
@@ -2308,11 +2582,14 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _send_json(self, status: HTTPStatus, body: bytes) -> None:
         self._send(status, body, "application/json; charset=utf-8")
 
-    def _redirect(self, location: str) -> None:
+    def _redirect(self, location: str, extra_headers: list[tuple[str, str]] | None = None) -> None:
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", location)
         for name, value in SECURITY_HEADERS:
             self.send_header(name, value)
+        if extra_headers:
+            for name, value in extra_headers:
+                self.send_header(name, value)
         self.end_headers()
 
     def _read_form(self) -> dict[str, str]:
@@ -2363,10 +2640,13 @@ class RequestHandler(BaseHTTPRequestHandler):
         try:
             try:
                 self.headers.peer_ip = self.client_address[0] if self.client_address else None
-            except Exception:
+            except (AttributeError, TypeError):
                 pass
             parsed = urlsplit(self.path)
             path = [segment for segment in parsed.path.split("/") if segment]
+            if path == ["api", "payment", "platega", "callback"]:
+                self._send_json(HTTPStatus.OK, b'{"status":"active","gateway":"platega"}')
+                return
             if not path:
                 query = parse_qs(parsed.query)
                 promo_code = query.get("promo", [""])[0].strip()
@@ -2380,13 +2660,41 @@ class RequestHandler(BaseHTTPRequestHandler):
                             flash = f"Промокод {promo_code.upper()} применён! Скидка {int(promo['discount_percent'])}%."
                     except Exception:
                         pass
-                self._send(HTTPStatus.OK, self.checkout.render_home(active_discount=active_discount, promo_code=promo_code, flash=flash))
+
+                url_ref = query.get("ref", [""])[0].strip()
+                cookie_ref = self._get_cookie(REFERRAL_COOKIE_NAME)
+                ref_code = ""
+                extra_headers: list[tuple[str, str]] = []
+
+                if url_ref:
+                    referrer = self.checkout.store.get_referrer_by_code(url_ref)
+                    if referrer:
+                        ref_code = url_ref
+                        extra_headers.append(
+                            ("Set-Cookie", f"{REFERRAL_COOKIE_NAME}={ref_code}; Path=/; Max-Age={REFERRAL_COOKIE_MAX_AGE}; SameSite=Lax; HttpOnly")
+                        )
+                elif cookie_ref:
+                    referrer = self.checkout.store.get_referrer_by_code(cookie_ref)
+                    if referrer:
+                        ref_code = cookie_ref
+
+                self._send(
+                    HTTPStatus.OK,
+                    self.checkout.render_home(
+                        active_discount=active_discount,
+                        promo_code=promo_code,
+                        flash=flash,
+                        ref_code=ref_code,
+                    ),
+                    extra_headers=extra_headers if extra_headers else None,
+                )
                 return
             if path == ["legal", "privacy"]:
                 self._send(HTTPStatus.OK, self.checkout.render_legal_privacy())
                 return
             if path == ["legal", "terms"]:
                 self._send(HTTPStatus.OK, self.checkout.render_legal_terms())
+                return
             if path == ["legal", "refund"]:
                 self._send(HTTPStatus.OK, self.checkout.render_legal_refund())
                 return
@@ -2395,9 +2703,6 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             if path == ["contact"]:
                 self._send(HTTPStatus.OK, self.checkout.render_contact())
-                return
-            if path == ["api", "payment", "platega", "callback"]:
-                self._send_json(HTTPStatus.OK, b'{"status":"active","gateway":"platega"}')
                 return
             if self._serve_asset(path):
                 return
@@ -2441,26 +2746,56 @@ class RequestHandler(BaseHTTPRequestHandler):
         try:
             try:
                 self.headers.peer_ip = self.client_address[0] if self.client_address else None
-            except Exception:
+            except (AttributeError, TypeError):
                 pass
             parsed = urlsplit(self.path)
             path = [segment for segment in parsed.path.split("/") if segment]
+            if path == ["api", "payment", "platega", "callback"]:
+                length = int(self.headers.get("Content-Length", "0"))
+                raw = self.rfile.read(length) if length > 0 else b""
+                if not raw.strip() or raw.strip() == b"{}":
+                    LOGGER.info("Received Platega empty verification ping. Responding 200 OK.")
+                    self._send_json(HTTPStatus.OK, b'{"status":"ok","message":"verification_ping_received"}')
+                    return
+                if not self.checkout.platega.verify_webhook_signature(self.headers, raw):
+                    LOGGER.warning("Platega callback unauthorized request from %s", self.client_address)
+                    self._send_json(HTTPStatus.UNAUTHORIZED, b'{"error":"unauthorized"}')
+                    return
+                try:
+                    data = json.loads(raw.decode("utf-8"))
+                except Exception:
+                    LOGGER.warning("Platega callback invalid JSON: %r", raw[:200])
+                    self._send_json(HTTPStatus.BAD_REQUEST, b'{"error":"invalid_json"}')
+                    return
+                if data.get("test") is True or data.get("type") == "test":
+                    LOGGER.info("Received Platega ping/test probe. Responding 200 OK.")
+                    self._send_json(HTTPStatus.OK, b'{"status":"ok","message":"test_probe_accepted"}')
+                    return
+                res = self.checkout.handle_platega_callback(data, raw_body=raw)
+                status_code = HTTPStatus.OK if res.get("status") == "ok" else HTTPStatus.BAD_REQUEST
+                self._send_json(status_code, json.dumps(res).encode("utf-8"))
+                return
             if path == ["order"]:
                 form = self._read_form()
                 customer_email = form.get("customer_email", "").strip()
                 turnstile_token = form.get("cf-turnstile-response", "")
                 client_ip = client_ip_from_headers(self.headers, self.client_address[0] if self.client_address else None)
+                ref_code = form.get("ref_code", "").strip() or self._get_cookie(REFERRAL_COOKIE_NAME)
                 if self.checkout.settings.cf_turnstile_secret_key:
                     if not verify_cf_turnstile(self.checkout.settings.cf_turnstile_secret_key, turnstile_token, client_ip):
                         self._send(
                             HTTPStatus.OK,
-                            self.checkout.render_home(flash="Пожалуйста, подтвердите, что вы человек (пройдите проверку Cloudflare Turnstile)."),
+                            self.checkout.render_home(
+                                flash="Пожалуйста, подтвердите, что вы человек (пройдите проверку Cloudflare Turnstile).",
+                                ref_code=ref_code,
+                            ),
                         )
                         return
                 order = self.checkout.create_order(
                     form.get("offer", "tcp_3_30"),
                     form.get("promo_code", ""),
                     customer_email=customer_email,
+                    ref_code=ref_code,
                 )
                 self._redirect(self.checkout.order_url(self.headers, order))
                 return
@@ -2527,43 +2862,6 @@ class RequestHandler(BaseHTTPRequestHandler):
                 email = str(payload.get("email") or "")
                 turnstile_token = str(payload.get("turnstile_token") or "")
                 res = self.checkout.request_cabinet_access_link(self.headers, email, turnstile_token)
-                self._send_json(HTTPStatus.OK, json.dumps(res, ensure_ascii=False).encode("utf-8"))
-                return
-            if path == ["api", "payment", "platega", "callback"]:
-                length = int(self.headers.get("Content-Length", 0) or 0)
-                if length > MAX_JSON_BODY_BYTES:
-                    self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, b'{"ok":false,"error":"body_too_large"}')
-                    return
-                raw = self.rfile.read(length) if length > 0 else b""
-                # CRITICAL: Platega sends empty POST request or test probe when saving Callback URL in dashboard
-                if not raw or raw.strip() in (b"", b"{}", b"[]"):
-                    LOGGER.info("Received Platega empty verification ping. Responding 200 OK.")
-                    self._send_json(HTTPStatus.OK, b'{"status":"ok","message":"verification_ping_received"}')
-                    return
-
-                try:
-                    probe_data = json.loads(raw.decode("utf-8")) if raw else {}
-                except Exception:
-                    probe_data = {}
-                if isinstance(probe_data, dict) and (probe_data.get("ping") or probe_data.get("test") or probe_data.get("status") == "PING"):
-                    LOGGER.info("Received Platega ping/test probe. Responding 200 OK.")
-                    self._send_json(HTTPStatus.OK, b'{"status":"ok","message":"verification_ping_received"}')
-                    return
-
-                # Verify authorization headers
-                if not self.checkout.platega.verify_webhook_signature(self.headers, raw):
-                    LOGGER.warning("Platega callback unauthorized request from %s", self.client_address)
-                    self._send_json(HTTPStatus.UNAUTHORIZED, b'{"error":"unauthorized"}')
-                    return
-
-                try:
-                    data = json.loads(raw.decode("utf-8"))
-                except Exception:
-                    LOGGER.warning("Platega callback invalid JSON: %r", raw[:200])
-                    self._send_json(HTTPStatus.BAD_REQUEST, b'{"error":"invalid_json"}')
-                    return
-
-                res = self.checkout.handle_platega_callback(data, raw_body=raw)
                 self._send_json(HTTPStatus.OK, json.dumps(res, ensure_ascii=False).encode("utf-8"))
                 return
             self._send(HTTPStatus.NOT_FOUND, self.checkout.render_not_found())

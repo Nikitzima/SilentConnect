@@ -57,6 +57,10 @@ mkdir -p /etc/x-ui /root/vpn-shop/data-silentconnect /var/lib/litestream
 # Stop x-ui before restoring database
 systemctl stop x-ui 2>/dev/null || true
 
+# Clear stale standby database files before restoring fresh Litestream replica
+rm -f /etc/x-ui/x-ui.db* 2>/dev/null || true
+rm -f /root/vpn-shop/data-silentconnect/vpn_shop.db* 2>/dev/null || true
+
 litestream restore -config /etc/litestream.yml -o /etc/x-ui/x-ui.db /etc/x-ui/x-ui.db || {
     err "Litestream restore of /etc/x-ui/x-ui.db failed"
     exit 1
