@@ -49,41 +49,59 @@ def log(msg: str):
         print(f"[{ts}] [deploy_platega] {safe_msg}", flush=True)
 
 def load_platega_credentials(workspace_root: str) -> Dict[str, str]:
-    """Load credentials dynamically from vpn-shop/.env.platega without hardcoding secrets."""
-    platega_env_path = os.path.join(workspace_root, "vpn-shop", ".env.platega")
-    if not os.path.isfile(platega_env_path):
-        platega_env_path = os.path.join(workspace_root, ".env.platega")
-    
-    if not os.path.isfile(platega_env_path):
-        raise RuntimeError(f"Platega credentials file not found at {platega_env_path}")
-    
+    """Load credentials dynamically from env, .env.platega, or remote node without hardcoding secrets."""
     creds = {}
-    with open(platega_env_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                creds[k.strip()] = v.strip().strip("'\"")
-    
+    if os.environ.get("PLATEGA_SECRET"):
+        creds = {
+            "PLATEGA_MERCHANT_ID_BOT": os.environ.get("PLATEGA_MERCHANT_ID_BOT", "c3393290-d96e-4a5e-aca3-12015a843b0e"),
+            "PLATEGA_MERCHANT_ID_WEB": os.environ.get("PLATEGA_MERCHANT_ID_WEB", "e4d5af52-9c18-444b-b8bf-db1a26f0c61d"),
+            "PLATEGA_SECRET": os.environ["PLATEGA_SECRET"],
+            "PLATEGA_SECRET_BOT": os.environ.get("PLATEGA_SECRET_BOT", os.environ["PLATEGA_SECRET"]),
+            "PLATEGA_SECRET_WEB": os.environ.get("PLATEGA_SECRET_WEB", os.environ["PLATEGA_SECRET"]),
+            "PLATEGA_ENABLED": os.environ.get("PLATEGA_ENABLED", "true"),
+        }
+        log("Loaded Platega credentials from environment variables.")
+        return creds
+
+    for base in [workspace_root, os.path.join(workspace_root, "vpn-shop"), os.path.dirname(workspace_root)]:
+        p = os.path.join(base, ".env.platega")
+        if os.path.isfile(p):
+            with open(p, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        creds[k.strip()] = v.strip().strip("'\"")
+            break
+
+    if not creds.get("PLATEGA_SECRET"):
+        nl_ip = os.environ.get("NL_HOST", remote_exec.NL_HOST)
+        res = subprocess.run(["ssh", "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=no", f"root@{nl_ip}", "grep -E '^PLATEGA_' /root/vpn-shop/.env.silentconnect"], capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout:
+            for line in res.stdout.splitlines():
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    creds[k.strip()] = v.strip().strip("'\"")
+
     required = ["PLATEGA_MERCHANT_ID_BOT", "PLATEGA_MERCHANT_ID_WEB", "PLATEGA_SECRET"]
     for req in required:
         if not creds.get(req):
-            raise RuntimeError(f"Missing required parameter {req} in {platega_env_path}")
-    
+            raise RuntimeError(f"Missing required parameter {req} in credentials")
+
     if "PLATEGA_SECRET_BOT" not in creds:
         creds["PLATEGA_SECRET_BOT"] = creds["PLATEGA_SECRET"]
     if "PLATEGA_SECRET_WEB" not in creds:
         creds["PLATEGA_SECRET_WEB"] = creds["PLATEGA_SECRET"]
     if "PLATEGA_ENABLED" not in creds:
         creds["PLATEGA_ENABLED"] = "true"
-        
+
     log(f"Successfully loaded Platega credentials (bot merchant: {creds['PLATEGA_MERCHANT_ID_BOT'][:8]}..., web merchant: {creds['PLATEGA_MERCHANT_ID_WEB'][:8]}...)")
     return creds
 
 class NodeSession:
     def __init__(self, target: str):
         self.target = target
-        self.ip = remote_exec.NL_HOST if target == "nl" else remote_exec.FI_HOST
+        self.ip = os.environ.get("NL_HOST", remote_exec.NL_HOST) if target == "nl" else os.environ.get("FI_HOST", remote_exec.FI_HOST)
         log(f"[{target.upper()}] NodeSession target host: {self.ip}")
 
     def run(self, cmd: str, timeout: int = 60, retries: int = 4) -> Tuple[int, str, str]:
@@ -131,6 +149,27 @@ class NodeSession:
             err_msg = err.decode("utf-8", errors="replace")
             raise RuntimeError(f"Tar streaming upload failed with code {p_ssh.returncode}: {err_msg}")
 
+    def upload_file(self, local_path: str, remote_path: str):
+        remote_dir = os.path.dirname(remote_path)
+        self.run(f"mkdir -p '{remote_dir}'")
+        time.sleep(1)
+        tar_cmd = ["tar", "-czf", "-", "-C", os.path.dirname(local_path), os.path.basename(local_path)]
+        ssh_cmd = [
+            "ssh",
+            "-o", "ConnectTimeout=8",
+            "-o", "StrictHostKeyChecking=no",
+            f"root@{self.ip}",
+            f"tar -xzf - -C '{remote_dir}' && chmod 0644 '{remote_path}'",
+        ]
+        p_tar = subprocess.Popen(tar_cmd, stdout=subprocess.PIPE)
+        p_ssh = subprocess.Popen(ssh_cmd, stdin=p_tar.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        p_tar.stdout.close()
+        out, err = p_ssh.communicate(timeout=60)
+        p_tar.wait()
+        if p_ssh.returncode != 0:
+            err_msg = err.decode("utf-8", errors="replace")
+            raise RuntimeError(f"Tar streaming upload of {local_path} failed with code {p_ssh.returncode}: {err_msg}")
+
     def close(self):
         log(f"[{self.target.upper()}] Session completed.")
 
@@ -139,13 +178,18 @@ def deploy_to_node(session: NodeSession, target: str, ts: str, workspace_root: s
     if not os.path.isdir(local_vpn_shop):
         local_vpn_shop = os.path.join(workspace_root, "vpn-shop", "vpn_shop")
     
+    local_subjson = os.path.join(workspace_root, "github_export", "subjson-service", "app.py")
+    if not os.path.isfile(local_subjson):
+        local_subjson = os.path.join(workspace_root, "subjson-service", "app.py")
+
     # --------------------------------------------------------------------------
     # Phase 1: Backups (Ultra-Critical)
     # --------------------------------------------------------------------------
-    log(f"[{target.upper()}] >>> PHASE 1: Creating verified backups (code, config, DB)...")
+    log(f"[{target.upper()}] >>> PHASE 1: Creating verified backups (code, config, DB, subjson)...")
     code_bak = f"/root/vpn-shop/vpn_shop.bak_{ts}"
     env_bak = f"/root/vpn-shop/.env.silentconnect.bak_{ts}"
     db_bak = f"/root/vpn-shop/data-silentconnect/vpn_shop.db.bak_{ts}"
+    subjson_bak = f"/root/subjson-service/app.py.bak_{ts}"
 
     backup_compound_cmd = f"""
 set -e
@@ -154,9 +198,15 @@ cp -a /root/vpn-shop/vpn_shop/* '{code_bak}/'
 cp -a /root/vpn-shop/.env.silentconnect '{env_bak}'
 chmod 600 '{env_bak}'
 sqlite3 /root/vpn-shop/data-silentconnect/vpn_shop.db ".backup '{db_bak}'"
+if [ -f /root/subjson-service/app.py ]; then
+    cp -a /root/subjson-service/app.py '{subjson_bak}'
+fi
 echo "--- BACKUP VERIFICATION ---"
 ls -lh '{env_bak}' '{db_bak}'
 ls -d '{code_bak}'
+if [ -f '{subjson_bak}' ]; then
+    ls -lh '{subjson_bak}'
+fi
 """
     c, o, e = session.run(backup_compound_cmd)
     if c != 0:
@@ -171,6 +221,11 @@ ls -d '{code_bak}'
     session.run("chmod 755 /root/vpn-shop/vpn_shop")
     session.upload_modules_tar(local_vpn_shop, "/root/vpn-shop/vpn_shop")
     log(f"[{target.upper()}] All modules uploaded cleanly and permissions set to 0644.")
+
+    if os.path.isfile(local_subjson):
+        log(f"[{target.upper()}] Uploading subjson-service/app.py to /root/subjson-service/app.py...")
+        session.upload_file(local_subjson, "/root/subjson-service/app.py")
+        log(f"[{target.upper()}] subjson-service/app.py uploaded cleanly.")
 
     # --------------------------------------------------------------------------
     # Phase 3 & 4: Config Injection & AST Validation (Single Compound Remote Execution)
@@ -204,6 +259,9 @@ with open(path, 'w', encoding='utf-8') as f:
 "
 chmod 600 /root/vpn-shop/.env.silentconnect
 python3 -m py_compile /root/vpn-shop/vpn_shop/*.py
+if [ -f /root/subjson-service/app.py ]; then
+    python3 -m py_compile /root/subjson-service/app.py
+fi
 cd /root/vpn-shop && python3 -c "from vpn_shop.config import load_settings; s = load_settings(env_file='.env.silentconnect'); assert s.platega_enabled, 'Platega not enabled'; print('Settings OK: platega_enabled=' + str(s.platega_enabled) + ', bot_id=' + s.platega_merchant_id_bot)"
 """
     c, o, e = session.run(compound_phase34_cmd)
@@ -219,17 +277,19 @@ def execute_rollout():
     creds = load_platega_credentials(workspace_root)
 
     # 1. Deploy to Standby (FI) first
-    log(f"=== STAGE 1: DEPLOYING TO STANDBY NODE (FI: {remote_exec.FI_HOST}) ===")
+    log(f"=== STAGE 1: DEPLOYING TO STANDBY NODE (FI) ===")
     fi_session = NodeSession("fi")
     try:
         deploy_to_node(fi_session, "fi", ts, workspace_root, creds)
+        log("[FI] Restarting subjson on FI...")
+        fi_session.run("systemctl restart subjson.service || true")
     finally:
         fi_session.close()
 
     time.sleep(2)
 
     # 2. Deploy to Master (NL) second
-    log(f"=== STAGE 2: DEPLOYING TO MASTER NODE (NL: {remote_exec.NL_HOST}) ===")
+    log(f"=== STAGE 2: DEPLOYING TO MASTER NODE (NL) ===")
     nl_session = NodeSession("nl")
     try:
         deploy_to_node(nl_session, "nl", ts, workspace_root, creds)
@@ -237,14 +297,13 @@ def execute_rollout():
         # ----------------------------------------------------------------------
         # Phase 5: Zero-Downtime Service Restart on NL Master
         # ----------------------------------------------------------------------
-        log("[NL] >>> PHASE 5: Restarting vpn-shop-web and vpn-shop-silentconnect on NL...")
-        # Core VPN services (x-ui, caddy, subjson, awg) are 100% untouched!
-        c, o, e = nl_session.run("systemctl restart vpn-shop-web.service vpn-shop-silentconnect.service")
+        log("[NL] >>> PHASE 5: Restarting vpn-shop-web, vpn-shop-silentconnect, and subjson on NL...")
+        c, o, e = nl_session.run("systemctl restart vpn-shop-web.service vpn-shop-silentconnect.service subjson.service")
         if c != 0:
             log(f"[NL] FATAL: Service restart failed: {e}")
             sys.exit(1)
         
-        time.sleep(2)  # Wait for startup
+        time.sleep(3)  # Wait for startup
 
         # ----------------------------------------------------------------------
         # Phase 6: Post-Deployment Service Status Verification
