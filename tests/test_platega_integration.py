@@ -666,6 +666,109 @@ class TestPlategaWebAndBotIntegration(unittest.TestCase):
             provisioner.renew_profile(str(trial_prof["public_id"]), 30)
         self.assertIn("Trial profile", str(cm.exception))
 
+    def test_issue_c_web_cabinet_create_inline_renewal_order_and_promo_flow(self):
+        """Test Issue C & Edge Case: Web Cabinet renewal allows admin personal profile and does not prematurely burn promo code."""
+        os.environ.setdefault("SECRET_SEGMENT", "test-secret-123")
+        os.environ.setdefault("INTERNAL_SECRET", "internal-token-xyz")
+        os.environ.setdefault("HYSTERIA_SALAMANDER_PASSWORD", "dummy_salamander_pwd")
+        os.environ.setdefault("HYSTERIA_AUTH_PASSWORD", "test_auth_pwd")
+        subjson_dir = str(REPO_ROOT / "subjson-service")
+        if subjson_dir not in sys.path:
+            sys.path.insert(0, subjson_dir)
+        import app
+
+        # 1. Setup admin profile in test DB
+        admin_prof = self.store.create_profile(
+            xui_inbound_id=1,
+            transport="tcp",
+            profile_mode="family",
+            family_label=None,
+            xui_email="admin-nikitzima-if840m",
+            xui_client_id="test-client-id",
+            expires_at=1700000000,
+            notes=ADMIN_PROFILE_NOTES,
+        )
+
+        # 2. Create promo code with max_uses=1, 20% discount
+        code, promo = self.store.create_promo_code(
+            promo_type="discount",
+            transport="tcp",
+            duration_days=30,
+            discount_percent=20,
+            profile_mode="family",
+            max_uses=1,
+        )
+        promo_id = promo["id"]
+
+        # Mock find_subscription and find_store_db_path in app
+        mock_client = {
+            "id": "test-client-id",
+            "email": "admin-nikitzima-if840m",
+            "subId": "admin-sub-123",
+            "expiryTime": 1700000000000,
+        }
+        with patch.object(app, "find_subscription", return_value=({"id": 1}, None, None, None, mock_client)), \
+             patch.object(app, "find_store_db_path", return_value=str(self.db_path)):
+
+            # 3. Create inline renewal order
+            res = app.create_inline_renewal_order(
+                sub_id="admin-sub-123",
+                duration_days=30,
+                device_limit=3,
+                promo_code=code,
+                customer_email="admin@example.com",
+            )
+            self.assertEqual(res["status"], "waiting_payment")
+            self.assertEqual(res["final_price_rub"], 79)  # 99 catalog price - 20% = 79
+            order_pub_id = res["public_id"]
+
+            # 4. CRITICAL: Promo code must NOT be consumed yet!
+            promo_check = self.store.get_promo_code(promo_id)
+            self.assertEqual(promo_check["used_count"], 0)
+
+            # 5. Simulate payment completion via complete_order
+            order = self.store.get_order(order_pub_id)
+            self.bot.provisioner.renew_profile = MagicMock(return_value={
+                "profile": admin_prof,
+                "sub_id": "admin-sub-123",
+                "expires_at": 1700000000 + 30 * 86400,
+            })
+            delivered_res = self.bot.complete_order(order, actor="test_webhook")
+            self.assertIsNotNone(delivered_res)
+
+            # Check order is now delivered
+            delivered_order = self.store.get_order(order_pub_id)
+            self.assertEqual(delivered_order["status"], "delivered")
+
+            # Check promo code is now consumed (used_count == 1)
+            promo_check_after = self.store.get_promo_code(promo_id)
+            self.assertEqual(promo_check_after["used_count"], 1)
+
+            # 6. Test that trial profile IS rejected
+            mock_trial_client = {
+                "id": "test-trial-id",
+                "email": "trial-client-999",
+                "subId": "trial-sub-999",
+                "expiryTime": 1700000000000,
+            }
+            self.store.create_profile(
+                xui_inbound_id=1,
+                transport="tcp",
+                profile_mode="family",
+                family_label=None,
+                xui_email="trial-client-999",
+                xui_client_id="test-trial-id",
+                expires_at=1700000000,
+                notes=PUBLIC_TRIAL_PROFILE_NOTES,
+            )
+            with patch.object(app, "find_subscription", return_value=({"id": 1}, None, None, None, mock_trial_client)):
+                with self.assertRaises(ValueError) as cm:
+                    app.create_inline_renewal_order(
+                        sub_id="trial-sub-999",
+                        duration_days=30,
+                    )
+                self.assertIn("Пробную подписку", str(cm.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
