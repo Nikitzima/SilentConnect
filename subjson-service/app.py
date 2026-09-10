@@ -141,7 +141,7 @@ def _verify_order_web_token(order_row: Any, token: str | None) -> bool:
             stored_hash = order_row["web_token_hash"]
     except Exception:
         pass
-    eff_pepper = os.environ.get("SERVER_PEPPER", "").encode("utf-8") or SERVER_PEPPER
+    eff_pepper = os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")
     if stored_hash:
         msg = f"order_web\x00{token}".encode("utf-8")
         expected_hash = hmac.new(eff_pepper, msg, hashlib.sha256).hexdigest()
@@ -477,7 +477,7 @@ BIND_EMAIL_RATE_LIMITS: collections.OrderedDict[str, list[float]] = collections.
 BIND_EMAIL_RATE_LIMIT_MAX_ENTRIES = 5000
 
 
-def check_bind_email_rate_limit(client_ip: str, max_requests: int = 5, window_sec: int = 300) -> bool:
+def check_bind_email_rate_limit(client_ip: str, max_requests: int = 15, window_sec: int = 300) -> bool:
     if not client_ip or client_ip in ("127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1"):
         return True
     now = time.time()
@@ -631,6 +631,67 @@ def bind_subscription_email(
             "SELECT * FROM orders WHERE provisioned_profile_id = ? ORDER BY id DESC",
             (profile_id,)
         ).fetchall()
+
+        # Check current linked email to determine if this is an email change
+        current_email = ""
+        if order_rows:
+            for ord_r in order_rows:
+                if ord_r["customer_email"]:
+                    current_email = str(ord_r["customer_email"]).strip().lower()
+                    break
+
+        is_email_change = bool(current_email and current_email != clean_email)
+        is_first_bind = bool(not current_email)
+
+        # Enforce rate limit: maximum 5 email changes per 24 hours per subscription profile
+        conn_shop.execute(
+            """
+            CREATE TABLE IF NOT EXISTS profile_email_changes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sub_id TEXT NOT NULL,
+                profile_id INTEGER NOT NULL,
+                old_email TEXT,
+                new_email TEXT NOT NULL,
+                changed_at INTEGER NOT NULL,
+                client_ip TEXT
+            );
+            """
+        )
+        conn_shop.execute(
+            "CREATE INDEX IF NOT EXISTS idx_email_changes_sub_time ON profile_email_changes(sub_id, changed_at);"
+        )
+        conn_shop.execute(
+            "CREATE INDEX IF NOT EXISTS idx_email_changes_prof_time ON profile_email_changes(profile_id, changed_at);"
+        )
+
+        if is_email_change or is_first_bind:
+            day_ago = now - 86400
+            cnt_row = conn_shop.execute(
+                """
+                SELECT COUNT(*) AS cnt FROM profile_email_changes
+                WHERE (sub_id = ? OR profile_id = ?) AND changed_at >= ?
+                """,
+                (target_sub, profile_id, day_ago),
+            ).fetchone()
+            changes_today = int(cnt_row["cnt"] or 0) if cnt_row else 0
+            if changes_today >= 5:
+                raise ValueError("Нельзя менять почту более 5 раз в день для одной подписки. Если вам требуется помощь, обратитесь в службу поддержки.")
+
+            if client_ip and client_ip not in ("127.0.0.1", "::1", "localhost", "unknown"):
+                ip_row = conn_shop.execute(
+                    "SELECT COUNT(*) AS cnt FROM profile_email_changes WHERE client_ip = ? AND changed_at >= ?",
+                    (client_ip, day_ago),
+                ).fetchone()
+                if int(ip_row["cnt"] or 0) >= 10:
+                    raise ValueError("Слишком много запросов на смену почты с вашего IP-адреса. Пожалуйста, обратитесь в службу поддержки.")
+
+            conn_shop.execute(
+                """
+                INSERT INTO profile_email_changes(sub_id, profile_id, old_email, new_email, changed_at, client_ip)
+                VALUES(?, ?, ?, ?, ?, ?)
+                """,
+                (target_sub, profile_id, current_email, clean_email, now, client_ip),
+            )
 
         if order_rows:
             for ord_r in order_rows:

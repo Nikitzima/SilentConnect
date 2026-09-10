@@ -746,13 +746,22 @@ class Store:
         from .security import hash_token
 
         now = now_ts()
+        clean_email = email.strip().lower()
         with self.transaction() as conn:
+            # Each new link cancels and supersedes any previously generated active links for this email
+            conn.execute(
+                """
+                UPDATE magic_links SET expires_at = ?
+                WHERE email = ? AND expires_at > ?
+                """,
+                (now - 1, clean_email, now),
+            )
             conn.execute(
                 """
                 INSERT INTO magic_links(token_hash, email, created_at, expires_at, used_at, request_ip)
                 VALUES(?, ?, ?, ?, NULL, ?)
                 """,
-                (hash_token(token, purpose="magic_link"), email.lower(), now, now + int(ttl_seconds), request_ip),
+                (hash_token(token, purpose="magic_link"), clean_email, now, now + int(ttl_seconds), request_ip),
             )
             # Housekeeping: drop expired links older than a day.
             conn.execute("DELETE FROM magic_links WHERE expires_at < ?", (now - 86400,))

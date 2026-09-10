@@ -951,24 +951,33 @@ class WebCheckout:
             if not verify_cf_turnstile(self.settings.cf_turnstile_secret_key, turnstile_token, client_ip):
                 return {"ok": False, "message": "Пожалуйста, подтвердите, что вы человек (поставьте галочку Cloudflare)."}
 
-        # Rate limit *before* any lookup, keyed by e-mail and by IP separately,
-        # and always answer with the same message: v1 returned "not found" for
-        # unknown e-mails and only throttled successful lookups, i.e. an
-        # unlimited customer e-mail enumeration oracle (audit S-04).
+        # Anti-spam burst protection (minimum 20 seconds between attempts)
+        recent_burst = self.store.count_recent_magic_links(email=clean_email, request_ip=client_ip, window_seconds=20)
+        if recent_burst >= 1:
+            return {
+                "ok": False,
+                "message": "Письмо со ссылкой уже отправляется. Пожалуйста, подождите 20 секунд перед повторным запросом.",
+            }
+
+        # Rate limit: maximum 3 links per 30 minutes (1800s)
+        recent_30m = self.store.count_recent_magic_links(email=clean_email, request_ip=client_ip, window_seconds=1800)
+        if recent_30m >= 3:
+            return {
+                "ok": False,
+                "message": "Превышен лимит запросов: не более 3 ссылок за 30 минут. Пожалуйста, проверьте почту или воспользуйтесь последней полученной ссылкой.",
+            }
+
         ttl = int(getattr(self.settings, "magic_link_ttl_seconds", 1800) or 1800)
-        recent = self.store.count_recent_magic_links(email=clean_email, request_ip=client_ip, window_seconds=120)
+        magic_token = sign_token({"email": clean_email}, purpose="magic_link", ttl_seconds=ttl)
+        self.store.create_magic_link(email=clean_email, token=magic_token, ttl_seconds=ttl, request_ip=client_ip)
+
         generic_ok = {
             "ok": True,
             "message": (
                 "Если на этот адрес оформлены активные подписки, мы отправили письмо со ссылкой для входа "
-                f"(действует {max(ttl // 60, 1)} мин). Проверьте почту и папку «Спам»."
+                f"(действует {max(ttl // 60, 1)} мин). Предыдущие ссылки аннулированы."
             ),
         }
-        if recent >= 1:
-            return generic_ok
-        magic_token = sign_token({"email": clean_email}, purpose="magic_link", ttl_seconds=ttl)
-        self.store.create_magic_link(email=clean_email, token=magic_token, ttl_seconds=ttl, request_ip=client_ip)
-
         profiles = self.store.get_active_profiles_by_customer_email(clean_email)
         if not profiles:
             return generic_ok
@@ -2009,6 +2018,18 @@ class WebCheckout:
           statusDiv.innerHTML = "<b>Отлично! 📩</b><br>" + data.message;
           if (emailInp) emailInp.value = "";
           if (window.turnstile) window.turnstile.reset();
+          let cd = 30;
+          btn.disabled = true;
+          const cdInterval = setInterval(() => {{
+            btn.textContent = `Повторный запрос через ${{cd}} сек...`;
+            cd--;
+            if (cd < 0) {{
+              clearInterval(cdInterval);
+              btn.disabled = false;
+              btn.textContent = "Получить доступ на Email";
+            }}
+          }}, 1000);
+          return;
         }} else {{
           statusDiv.style.color = "#ef4444";
           statusDiv.textContent = data.message || "Подписок на этот Email не найдено.";
@@ -2018,8 +2039,10 @@ class WebCheckout:
         statusDiv.style.color = "#ef4444";
         statusDiv.textContent = "Ошибка соединения. Попробуйте снова.";
       }} finally {{
-        btn.disabled = false;
-        btn.textContent = "Получить доступ на Email";
+        if (!btn.disabled) {{
+          btn.disabled = false;
+          btn.textContent = "Получить доступ на Email";
+        }}
       }}
     }}
 
@@ -3088,8 +3111,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if not payload or not email or email != str(payload.get("email") or ""):
                     self._send(HTTPStatus.NOT_FOUND, self.checkout.render_page(
                         "Ссылка недействительна",
-                        '<section class="section"><h2>Ссылка недействительна или её срок действия истёк</h2>'
-                        '<p class="muted">Ссылка для входа в личный кабинет действует 30 минут с момента отправки. Пожалуйста, запросите новую ссылку на главной странице.</p>'
+                        '<section class="section"><h2>Ссылка недействительна или устарела</h2>'
+                        '<p class="muted">Ссылка для входа в личный кабинет действует 30 минут с момента отправки или была отменена более новым запросом (активна только последняя отправленная ссылка). Пожалуйста, используйте последнее полученное письмо или запросите новую ссылку на главной странице.</p>'
                         '<p style="margin-top: 16px;"><a class="btn primary" href="/" style="display: inline-flex; width: auto; padding: 10px 20px;">На главную</a></p></section>',
                     ))
                     return
