@@ -63,7 +63,7 @@ def load_platega_credentials(workspace_root: str) -> Dict[str, str]:
         log("Loaded Platega credentials from environment variables.")
         return creds
 
-    for base in [workspace_root, os.path.join(workspace_root, "vpn-shop"), os.path.dirname(workspace_root)]:
+    for base in [workspace_root, os.path.join(workspace_root, "vpn-shop"), os.path.dirname(workspace_root), os.path.join(os.path.dirname(workspace_root), "vpn-shop")]:
         p = os.path.join(base, ".env.platega")
         if os.path.isfile(p):
             with open(p, "r", encoding="utf-8") as f:
