@@ -413,34 +413,32 @@ class TestPlategaWebAndBotIntegration(unittest.TestCase):
             self.assertIsNotNone(pay_button)
             self.assertEqual(pay_button["url"], "https://pay.platega.io/?id=tx-bot-1234")
 
-    def test_boost_command_and_callback(self):
-        """Test /boost command and callback in Telegram bot."""
+    def test_pay_command_and_commission_notice(self):
+        """Test /pay command, commission notices, and absence of Boost in main menu."""
         chat_id = 987654
 
-        # Test /boost command
+        # Verify Boost is removed from main menu keyboard
+        menu_kb = self.bot._public_home_markup()
+        keyboard_buttons = [btn["text"] for row in menu_kb["inline_keyboard"] for btn in row]
+        self.assertFalse(any("Boost" in b for b in keyboard_buttons), "Boost button must not be in keyboard")
+
+        # Test /pay command
         message = {
             "chat": {"id": chat_id},
             "from": {"id": chat_id, "username": "tester"},
-            "text": "/boost",
+            "text": "/pay",
         }
         self.bot.handle_message(message)
 
         self.assertTrue(len(self.dummy_tg.sent_messages) > 0)
         last_msg = self.dummy_tg.sent_messages[-1]
-        self.assertIn("Boost", last_msg["text"])
-        self.assertIn("Ускорение", last_msg["text"])
         self.assertIsNotNone(last_msg["reply_markup"])
 
-        # Test public:boost callback
-        cb = {
-            "id": "cb_query_1",
-            "from": {"id": chat_id, "username": "tester"},
-            "data": "public:boost",
-            "message": {"chat": {"id": chat_id}, "message_id": 42},
-        }
-        self.bot.handle_callback(cb)
-        self.assertEqual(len(self.dummy_tg.answered_callbacks), 1)
-        self.assertEqual(self.dummy_tg.answered_callbacks[0]["id"], "cb_query_1")
+        # Test order message contains commission notice
+        order = self.checkout.create_order("tcp_3_30")
+        msg_text = self.bot._waiting_payment_message(order)
+        self.assertIn("Комиссия шлюза оплачивается покупателем", msg_text)
+        self.assertIn("без комиссии", msg_text)
 
     def test_render_order_includes_platega_button(self):
         """Test that web checkout render_order displays Platega card and button when order awaits payment."""
@@ -502,18 +500,18 @@ class TestPlategaWebAndBotIntegration(unittest.TestCase):
         self.assertEqual(updated["status"], "delivered")
         self.assertEqual(updated["meta_json"]["platega_confirmed_amount"], 100.0)
 
-    def test_boost_command_with_botname_suffix(self):
-        """Telegram client sending /boost@SilentConnectVPNBot must be recognized."""
+    def test_pay_command_with_botname_suffix(self):
+        """Telegram client sending /pay@SilentConnectVPNBot must be recognized."""
         chat_id = 987655
         message = {
             "chat": {"id": chat_id},
             "from": {"id": chat_id, "username": "tester"},
-            "text": "/boost@SilentConnectVPNBot",
+            "text": "/pay@SilentConnectVPNBot",
         }
         self.bot.handle_message(message)
         self.assertTrue(len(self.dummy_tg.sent_messages) > 0)
         last_msg = self.dummy_tg.sent_messages[-1]
-        self.assertIn("Boost", last_msg["text"])
+        self.assertIsNotNone(last_msg["reply_markup"])
 
     def test_bot_check_payment_callback_handling(self):
         """User tapping 'Проверить зачисление' checks status via Platega and confirms order."""

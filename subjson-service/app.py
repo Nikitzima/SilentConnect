@@ -43,7 +43,7 @@ if _vpn_shop_path not in sys.path:
 
 try:
     from vpn_shop.catalog import calculate_renewal_price, quote_price
-    from vpn_shop.security import hash_secret
+    from vpn_shop.security import hash_secret, hash_token
     from vpn_shop.web import subscription_setup_url, verify_cf_turnstile
 except ImportError:
     def quote_price(device_limit: int = 3, duration_days: int = 30, settings: Any = None) -> int:
@@ -67,6 +67,11 @@ except ImportError:
     def hash_secret(value: str) -> str:
         effective_pepper = os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")
         return hmac.new(effective_pepper, value.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    def hash_token(token: str, purpose: str = "") -> str:
+        effective_pepper = os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")
+        msg = f"{purpose}\x00{token}".encode("utf-8")
+        return hmac.new(effective_pepper, msg, hashlib.sha256).hexdigest()
 
     def subscription_setup_url(subscription_url: str) -> str:
         return subscription_url.replace("/sub/json/", "/my-secret-sub/import/")
@@ -815,6 +820,7 @@ def create_inline_renewal_order(
 
         token = secrets.token_hex(12)
         order_pub_id = "ord_" + secrets.token_hex(6)
+        token_hash = hash_token(token, purpose="order_web")
 
         customer_chat_id = str(order_row["customer_chat_id"]) if order_row and order_row["customer_chat_id"] else None
         if not customer_chat_id:
@@ -856,6 +862,12 @@ def create_inline_renewal_order(
                 base_price, final_price, promo_id, customer_chat_id, prof_dict["id"], final_email, now, now, json.dumps(meta)
             )
         )
+        try:
+            order_cols = [r[1] for r in conn_shop.execute("PRAGMA table_info(orders)").fetchall()]
+            if "web_token_hash" in order_cols:
+                conn_shop.execute("UPDATE orders SET web_token_hash = ? WHERE public_id = ?", (token_hash, order_pub_id))
+        except Exception:
+            pass
         conn_shop.commit()
 
         # If free: renew immediately in x-ui & store
@@ -974,33 +986,26 @@ def render_payment_notice_html(order_data: Any, status_override: str | None = No
         </section>
         """
     else:
-        pay_link = os.environ.get("PAYMENT_TRANSFER_URL", "https://t.tb.ru/c2c-qr-choose-bank?requisiteNumber=+79990000000&bankCode=100000000004")
-        sbp_phone = os.environ.get("PAYMENT_SBP_PHONE", "+79990000000")
-        sbp_bank = os.environ.get("PAYMENT_SBP_BANK", "СБП")
+        order_page_url = f"{HAPP_WEB_PAGE_URL}/order/{order_id}/{token}"
+        support_link = os.environ.get("SUPPORT_URL", "https://t.me/SilentConnectSupport")
         return f"""
-        <section class="install" style="margin-bottom:24px; background:rgba(47,191,113,0.08); border:1px solid var(--green);">
+        <section class="install" style="margin-bottom:24px; background:rgba(47,191,113,0.08); border:1px solid var(--green); border-radius:14px; padding:18px 20px;">
           <div class="install-head" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
-            <h2 style="margin:0; font-size:20px; font-weight:700; color:#fff;">💳 Оплата продления #{order_id}</h2>
+            <h2 style="margin:0; font-size:18px; font-weight:700; color:#fff;">💳 Заказ продления #{order_id}</h2>
             <span style="background:rgba(245, 158, 11, 0.15); border:1px solid rgba(245, 158, 11, 0.4); color:#f59e0b; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; display:inline-block;">Ожидает оплаты</span>
           </div>
-          <div style="font-size:32px; font-weight:800; color:#fff; margin:10px 0 16px;">
-            {order.get('final_price_rub', 0)} ₽ <span style="font-size:14px; color:var(--muted); font-weight:500;">({duration_days} дн.)</span>
+          <div style="font-size:28px; font-weight:800; color:#fff; margin:8px 0 14px;">
+            {order.get('final_price_rub', 0)} ₽ <span style="font-size:14px; color:var(--muted); font-weight:500;">({duration_days} дн., до {device_limit} устр.)</span>
           </div>
-          <div style="background:rgba(0,0,0,0.3); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px;">
-            <div style="color:var(--muted); font-size:14px; line-height:1.5;">
-              Нажмите кнопку <strong>«Оплатить переводом»</strong>, переведите ровно <strong>{order.get('final_price_rub', 0)} ₽</strong> через СБП ({sbp_phone} / {sbp_bank}), после чего нажмите <strong>«Я оплатил(а)»</strong>.
-            </div>
-          </div>
+          <p style="color:#e2e8f0; font-size:14px; line-height:1.5; margin:0 0 16px;">
+            Оплатите заказ онлайн (СБП, банковские карты, криптовалюта) на защищённой странице оплаты:
+          </p>
           <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
-            <a href="{html.escape(pay_link, quote=True)}" target="_blank" rel="noopener" class="button" style="min-height:46px; font-weight:800; text-decoration:none; background:var(--green); color:#000; display:inline-flex; align-items:center; justify-content:center;">Оплатить переводом 💳</a>
-            <form method="post" action="/{SECRET_SEGMENT}/paid/{order_id}{token_query}" style="margin:0;">
-              {token_input}
-              <button type="submit" class="button success" style="min-height:46px; font-weight:800; background:rgba(255,255,255,0.12); color:#fff; border:1px solid var(--line);">Я оплатил(а) ✓</button>
-            </form>
-            <a href="https://t.me/SilentConnectVPNBot?start=claim_{order_id}_{token}" target="_blank" class="button secondary" style="min-height:46px; font-weight:600; text-decoration:none; display:inline-flex; align-items:center;">Привязать в Telegram ✈️</a>
+            <a href="{html.escape(order_page_url, quote=True)}" class="button" style="min-height:44px; font-weight:700; text-decoration:none; background:var(--green); color:#000; display:inline-flex; align-items:center; justify-content:center; padding:10px 18px; border-radius:8px;">Перейти к оплате заказа →</a>
+            <a href="{html.escape(support_link, quote=True)}" target="_blank" rel="noopener" class="button secondary" style="min-height:44px; font-weight:600; text-decoration:none; display:inline-flex; align-items:center; padding:10px 16px; border-radius:8px;">Поддержка 💬</a>
             <form method="post" action="/{SECRET_SEGMENT}/cancel/{order_id}{token_query}" style="margin:0;">
               {token_input}
-              <button type="submit" class="button secondary" style="min-height:46px; font-weight:600; background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.3);">Отменить ✖</button>
+              <button type="submit" class="button secondary" style="min-height:44px; font-weight:600; background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.3); border-radius:8px; cursor:pointer; padding:10px 16px;">Отменить ✖</button>
             </form>
           </div>
         </section>
@@ -5861,6 +5866,10 @@ def setup_page_html(
             body: new URLSearchParams(new FormData(form))
           });
           const data = await res.json();
+          if (data && data.redirect_url) {
+            window.location.href = data.redirect_url;
+            return;
+          }
           if (data && data.html !== undefined) {
             const slot = document.getElementById("payment-card-slot");
             if (slot) {
@@ -6735,72 +6744,22 @@ class RequestHandler(BaseHTTPRequestHandler):
                     email_reminders=email_reminders,
                 )
 
-                source_url = public_subscription_url(self.headers, "json", sub_id)
-                quoted_sub_id = urllib.parse.quote(sub_id, safe="")
-                import_query = urllib.parse.urlencode({"url": source_url})
-
-                if res["status"] == "delivered":
-                    payment_card = """
-                    <section class="install" style="margin-bottom:24px; background:rgba(47,191,113,0.12); border:1px solid var(--green);">
-                      <h2 style="color:var(--green);">🎉 Подписка успешно продлена!</h2>
-                      <p style="color:#fff; font-size:15px; margin-top:8px;">Ваш срок доступа увеличен на <strong>{} дн.</strong> Ключ подключения и настройки в приложении обновились автоматически.</p>
-                    </section>
-                    """.format(duration_days)
-                else:
-                    pay_link = os.environ.get("PAYMENT_TRANSFER_URL", "https://t.tb.ru/c2c-qr-choose-bank?requisiteNumber=+79990000000&bankCode=100000000004")
-                    sbp_phone = os.environ.get("PAYMENT_SBP_PHONE", "+79990000000")
-                    sbp_bank = os.environ.get("PAYMENT_SBP_BANK", "СБП")
-                    tg_claim_base = HAPP_SUPPORT_URL or "https://t.me/your_vpn_bot"
-                    payment_card = """
-                    <section class="install" style="margin-bottom:24px; background:rgba(47,191,113,0.08); border:1px solid var(--green);">
-                      <div class="install-head" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
-                        <h2 style="margin:0; font-size:20px; font-weight:700; color:#fff;">💳 Оплата продления #{public_id}</h2>
-                        <span style="background:rgba(245, 158, 11, 0.15); border:1px solid rgba(245, 158, 11, 0.4); color:#f59e0b; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; display:inline-block;">Ожидает оплаты</span>
-                      </div>
-                      <div style="font-size:32px; font-weight:800; color:#fff; margin:10px 0 16px;">
-                        {price} ₽ <span style="font-size:14px; color:var(--muted); font-weight:500;">({days} дн.)</span>
-                      </div>
-                      <div style="background:rgba(0,0,0,0.3); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px;">
-                        <div style="color:var(--muted); font-size:14px; line-height:1.5;">
-                          Нажмите кнопку <strong>«Оплатить переводом»</strong>, переведите ровно <strong>{price} ₽</strong> через СБП ({phone} / {bank}), после чего нажмите <strong>«Я оплатил(а)»</strong>.
-                        </div>
-                      </div>
-                      <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
-                        <a href="{pay_url}" target="_blank" rel="noopener" class="button" style="min-height:46px; font-weight:800; text-decoration:none; background:var(--green); color:#000; display:inline-flex; align-items:center; justify-content:center;">Оплатить переводом 💳</a>
-                        <form method="post" action="/{segment}/paid/{public_id}" style="margin:0;">
-                          <button type="submit" class="button success" style="min-height:46px; font-weight:800; background:rgba(255,255,255,0.12); color:#fff; border:1px solid var(--line);">Я оплатил(а) ✓</button>
-                        </form>
-                        <a href="{tg_claim_base}?start=claim_{public_id}_{token}" target="_blank" class="button secondary" style="min-height:46px; font-weight:600; text-decoration:none; display:inline-flex; align-items:center;">Привязать в Telegram ✈️</a>
-                        <form method="post" action="/{segment}/cancel/{public_id}" style="margin:0;">
-                          <button type="submit" class="button secondary" style="min-height:46px; font-weight:600; background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.3);">Отменить ✖</button>
-                        </form>
-                      </div>
-                    </section>
-                    """.format(
-                        public_id=res["public_id"],
-                        price=res["final_price_rub"],
-                        days=duration_days,
-                        segment=SECRET_SEGMENT,
-                        token=res["web_token"],
-                        pay_url=html.escape(pay_link, quote=True),
-                        phone=html.escape(sbp_phone),
-                        bank=html.escape(sbp_bank),
-                        tg_claim_base=html.escape(tg_claim_base, quote=True),
-                    )
+                unified_order_url = f"{HAPP_WEB_PAGE_URL}/order/{res['public_id']}/{res['web_token']}"
 
                 if is_ajax:
-                    self._send_json(HTTPStatus.OK, {"ok": True, "html": payment_card, "order_public_id": res["public_id"]}, include_body=True)
+                    self._send_json(HTTPStatus.OK, {
+                        "ok": True,
+                        "redirect_url": unified_order_url,
+                        "order_public_id": res["public_id"],
+                        "status": res["status"],
+                    }, include_body=True)
                     return
 
-                generic_html = setup_page_html(
-                    subscription_url=source_url,
-                    subscription_id=sub_id,
-                    quoted_sub_id=quoted_sub_id,
-                    import_query=import_query,
-                    customer_email=res.get("customer_email") or customer_email,
-                    payment_card_html=payment_card,
-                )
-                self._send_html(HTTPStatus.OK, generic_html, include_body=True)
+                self.send_response(HTTPStatus.FOUND)
+                self.send_header("Location", unified_order_url)
+                for key, val in SECURITY_HEADERS:
+                    self.send_header(key, val)
+                self.end_headers()
                 return
 
             if len(path) == 3 and path[0] == SECRET_SEGMENT and path[1] in ("paid", "cancel"):

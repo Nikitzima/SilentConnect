@@ -100,7 +100,7 @@ class ShopBot:
             commands = [
                 {"command": "start", "description": "Главное меню"},
                 {"command": "prices", "description": "Тарифы и варианты доступа"},
-                {"command": "boost", "description": "Ускорение и стабильность (Boost)"},
+                {"command": "pay", "description": "Оплатить заказ или выбрать тариф"},
                 {"command": "cabinet", "description": "Личный кабинет и ссылки"},
                 {"command": "help", "description": "Как подключить"},
                 {"command": "faq", "description": "Частые вопросы"},
@@ -551,7 +551,7 @@ class ShopBot:
             rows.append([("🔄 Продлить подписку", "public:renew", "success"), ("🎁 Пробный период", "public:trial", "success")])
         rows.extend(
             [
-                [("🎟 Промокод", "public:promo"), ("🤝 Рефералы", "public:referral", "success"), ("⚡ Boost", "public:boost", "primary")],
+                [("🎟 Промокод", "public:promo"), ("🤝 Рефералы", "public:referral", "success")],
                 [("📖 Помощь & FAQ", "public:help", "primary"), ("💬 Поддержка", "public:support", "primary")],
             ]
         )
@@ -817,8 +817,9 @@ class ShopBot:
                 [
                     "",
                     "Для быстрой оплаты нажмите кнопку «💳 Оплатить онлайн» ниже.",
-                    "Поддерживаются СБП, банковские карты и криптовалюта.",
-                    "Комиссия сервиса эквайринга рассчитывается на форме оплаты.",
+                    "Поддерживаются СБП, банковские карты РФ и криптовалюта.",
+                    "",
+                    "💡 Комиссия шлюза оплачивается покупателем. Для прямой оплаты без комиссии обратитесь к менеджеру через кнопку «💬 Написать в поддержку».",
                     "",
                     "После подтверждения оплаты доступ будет выдан автоматически!",
                 ]
@@ -829,6 +830,8 @@ class ShopBot:
                     "",
                     "Для оплаты нажмите кнопку «💬 Написать оператору для оплаты» и отправьте менеджеру номер заказа.",
                     f"Номер заказа: `{order['public_id']}`.",
+                    "",
+                    "💡 Комиссия шлюза оплачивается покупателем. Для прямой оплаты без комиссии обратитесь к менеджеру через кнопку «💬 Написать в поддержку».",
                     "",
                     "После оплаты нажмите «Оплачено». Мы подтвердим заказ и бот сразу пришлёт ссылку доступа.",
                 ]
@@ -1032,12 +1035,15 @@ class ShopBot:
                     f"Лимит: {self.device_limit_label(offer.device_limit)}",
                     f"Срок: {self._duration_label(offer.duration_days)}",
                     f"К оплате: {price_line}",
+                    "",
+                    "💡 Комиссия шлюза оплачивается покупателем. Для прямой оплаты без комиссии обратитесь к менеджеру через кнопку «Поддержка».",
                 ]
             ),
             reply_markup=kb(
                 [
                     [("Перейти к оплате", "public:buy_confirm", "success")],
                     [("Выбрать другой срок", "public:buy_back:duration")],
+                    [("💬 Поддержка", (self.settings.support_tg_url or "").strip() or "https://t.me/SilentConnectHelp")],
                     [("« Назад в меню", "public:menu")],
                 ]
             ),
@@ -1306,12 +1312,15 @@ class ShopBot:
                     f"Новый оплаченный период: {self._duration_label(duration_days)}",
                     f"Лимит после оплаты: {self.device_limit_label(device_limit)}",
                     f"К оплате: {price_line}",
+                    "",
+                    "💡 Комиссия шлюза оплачивается покупателем. Для прямой оплаты без комиссии обратитесь к менеджеру через кнопку «Поддержка».",
                 ]
             ),
             reply_markup=kb(
                 [
                     [("Перейти к оплате", f"public:renew_confirm:{target['profile']['public_id']}:{duration_days}:{device_limit}", "success")],
                     [("Изменить срок", f"public:renew_duration:{target['profile']['public_id']}:{device_limit}")],
+                    [("💬 Поддержка", (self.settings.support_tg_url or "").strip() or "https://t.me/SilentConnectHelp")],
                     [("Назад", f"public:renew_devices:{target['profile']['public_id']}")],
                 ]
             ),
@@ -1628,47 +1637,6 @@ class ShopBot:
                 ]
             ),
             reply_markup=self._support_markup(),
-            message_id=message_id,
-        )
-
-    def show_public_boost(self, chat_id: int | str, *, message_id: int | None = None) -> None:
-        text = "\n".join(
-            [
-                "⚡ Ускорение и стабильность подключения (Boost)",
-                "",
-                "В сервисе SilentConnect доступны передовые протоколы с маскировкой трафика, обеспечивающие:",
-                "• Высокую скорость и защиту от замедлений провайдеров (XHTTP Reality / Hysteria 2)",
-                "• Оптимальный пинг и стабильный туннель для любых устройств",
-                "• Автоматическую балансировку и резервирование серверов (Failover)",
-                "",
-                "Выберите действие:",
-            ]
-        )
-        active_profile = self._active_profile_for_chat(int(chat_id) if str(chat_id).isdigit() else chat_id)
-        if active_profile and int(active_profile.get("expires_at", 0)) > now_ts():
-            markup = kb(
-                [
-                    [("👤 Личный кабинет", "public:cabinet", "success")],
-                    [("🔄 Продлить подписку", "public:renew", "success"), ("🚀 Сменить тариф", "public:access", "primary")],
-                    [("📖 Инструкция по подключению", "public:help", "primary")],
-                    [("💬 Поддержка", (self.settings.support_tg_url or "").strip() or "https://t.me/SilentConnectHelp")],
-                    [("Назад в меню", "public:menu")],
-                ]
-            )
-        else:
-            markup = kb(
-                [
-                    [("🚀 Подключить доступ / Выбрать тариф", "public:access", "success")],
-                    [("🎁 Бесплатный период", "public:trial", "primary")],
-                    [("📖 Как это работает", "public:help", "primary")],
-                    [("💬 Поддержка", (self.settings.support_tg_url or "").strip() or "https://t.me/SilentConnectHelp")],
-                    [("Назад в меню", "public:menu")],
-                ]
-            )
-        self._render_or_edit(
-            chat_id,
-            text,
-            reply_markup=markup,
             message_id=message_id,
         )
 
@@ -2906,8 +2874,16 @@ class ShopBot:
             self.show_public_support(chat_id)
             return
 
-        if command == "/boost":
-            self.show_public_boost(chat_id)
+        if command == "/pay":
+            active_order = self._fresh_active_order_for_chat(chat_id, notify_user=False)
+            if active_order:
+                self.telegram.send_message(
+                    chat_id,
+                    self._waiting_payment_message(active_order),
+                    reply_markup=self._public_waiting_payment_markup(str(active_order["public_id"]), active_order),
+                )
+            else:
+                self.show_public_access_menu(chat_id)
             return
 
         session = self.store.get_session(chat_id)
@@ -4677,11 +4653,6 @@ class ShopBot:
             if data == "public:access" and chat_id is not None:
                 self.telegram.answer_callback_query(callback_id)
                 self.show_public_access_menu(chat_id, message_id=message_id)
-                return
-
-            if data in ("public:boost", "public_boost") and chat_id is not None:
-                self.telegram.answer_callback_query(callback_id)
-                self.show_public_boost(chat_id, message_id=message_id)
                 return
 
             if data.startswith("public:buy_devices:") and chat_id is not None:

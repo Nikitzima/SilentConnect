@@ -245,7 +245,7 @@ class TestSecurityAuditScannerUnits(unittest.TestCase):
             'NL_MASTER_IP="198.51.100.10"\n'
             'FI_STANDBY_IP="203.0.113.10"\n'
             'MOCK_UUID="00000000-0000-0000-0000-000000000000"\n'
-            'BREVO_SMTP_KEY="your_smtp_password_or_token_here"\n'
+            'BREVO_SMTP_KEY="dummy_smtp_password_placeholder"\n'
             'PAYMENT_PHONE="+79990000000"\n',
             encoding="utf-8",
         )

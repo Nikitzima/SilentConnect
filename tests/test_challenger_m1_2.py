@@ -287,10 +287,10 @@ class EmpiricalChallengerTest(unittest.TestCase):
         self.assertEqual(fi_xhttp["reality-opts"]["public-key"], subjson_app.FI_XHTTP_REALITY_PUBLIC_KEY)
         self.assertEqual(fi_xhttp["reality-opts"]["short-id"], subjson_app.FI_XHTTP_REALITY_SHORT_ID)
 
-        # Check Hysteria2 Gecko Obfs
+        # Check Hysteria2 Salamander Obfs
         nl_hy2 = next(p for p in proxies if p["name"] == "🇳🇱 NL Speed Hysteria2")
         self.assertEqual(nl_hy2["type"], "hysteria2")
-        self.assertEqual(nl_hy2["obfs"], "gecko")
+        self.assertEqual(nl_hy2["obfs"], "salamander")
         self.assertEqual(nl_hy2["obfs-password"], "485a96779d1ad79d0fa80ca0")
 
         # Check Proxy Groups
@@ -362,7 +362,7 @@ class EmpiricalChallengerTest(unittest.TestCase):
         self.assertEqual(u2["port"], 443)
         self.assertEqual(u2["query"]["sni"][0], "sub.example.com")
         self.assertEqual(u2["query"]["alpn"][0], "h3")
-        self.assertEqual(u2["query"]["obfs"][0], "gecko")
+        self.assertEqual(u2["query"]["obfs"][0], "salamander")
         self.assertEqual(u2["query"]["obfs-password"][0], "485a96779d1ad79d0fa80ca0")
         self.assertIn("🇳🇱 3. Скоростной Hysteria2 (NL)", u2["tag"])
 
