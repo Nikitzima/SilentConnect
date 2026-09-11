@@ -5416,6 +5416,81 @@ def setup_page_html(
     }
     textarea { width:100%; max-width:100%; box-sizing:border-box; min-height:94px; margin-top:14px; border:1px solid var(--line); border-radius:12px; background:rgba(0,0,0,0.3); color:var(--text); padding:14px; font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; resize:vertical; }
     textarea:focus { outline:none; border-color:var(--green); }
+    .referral-card {
+      background: linear-gradient(135deg, rgba(47, 191, 113, 0.07) 0%, rgba(21, 28, 34, 0.95) 100%);
+      border: 1px solid rgba(47, 191, 113, 0.28);
+      border-radius: 16px;
+      padding: 22px 24px;
+      margin-bottom: 20px;
+      box-sizing: border-box;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    }
+    .referral-box {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 18px;
+    }
+    .referral-info {
+      flex: 1 1 480px;
+      min-width: 0;
+    }
+    .referral-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .referral-title {
+      font-size: 16.5px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.01em;
+    }
+    .referral-tag {
+      font-size: 11.5px;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 12px;
+      background: rgba(47, 191, 113, 0.16);
+      color: var(--green);
+      border: 1px solid rgba(47, 191, 113, 0.35);
+    }
+    .referral-desc {
+      font-size: 13.5px;
+      color: var(--muted);
+      line-height: 1.55;
+      margin: 0;
+    }
+    .referral-desc strong {
+      color: #eef2f3;
+      font-weight: 600;
+    }
+    .referral-action {
+      flex-shrink: 0;
+    }
+    .referral-btn {
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      background: var(--green) !important;
+      color: #0b1510 !important;
+      font-weight: 700 !important;
+      font-size: 14px !important;
+      padding: 10px 20px !important;
+      border-radius: 10px !important;
+      text-decoration: none !important;
+      box-shadow: 0 4px 14px rgba(47, 191, 113, 0.3) !important;
+      transition: all 0.2s ease !important;
+      white-space: nowrap !important;
+    }
+    .referral-btn:hover {
+      background: #38df84 !important;
+      transform: translateY(-1px) !important;
+      box-shadow: 0 6px 20px rgba(47, 191, 113, 0.45) !important;
+    }
     footer { margin-top:36px; text-align:center; padding:24px 0 32px; color:var(--muted); font-size:13.5px; border-top:1px solid var(--line); width:100%; box-sizing:border-box; }
     .footer-wrap { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; text-align:center; width:100%; box-sizing:border-box; }
     .footer-links { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:10px 18px; width:100%; box-sizing:border-box; }
@@ -5460,6 +5535,10 @@ def setup_page_html(
       .step p { font-size:13px; }
       #renew-header { padding: 14px 16px !important; }
       #renew-content { padding: 0 16px 16px 16px !important; }
+      .referral-card { padding: 16px; margin-bottom: 16px; }
+      .referral-box { flex-direction: column; align-items: stretch; gap: 14px; }
+      .referral-action { width: 100%; }
+      .referral-action .referral-btn { width: 100% !important; justify-content: center !important; }
       footer { margin-top:24px; padding:20px 0 28px; }
       .footer-wrap { gap:12px; padding:0 4px; }
       .footer-links { display:flex; flex-direction:row; flex-wrap:wrap; justify-content:center; align-items:center; gap:8px 10px; width:100%; }
@@ -5652,6 +5731,26 @@ def setup_page_html(
           <p>Если бесшовный переход не сработал: скопируйте зашифрованную ссылку ниже в буфер обмена и выберите пункт «Импорт из буфера обмена» (Import from Clipboard) в настройках приложения.</p>
           <div class="buttons"><button class="secondary" type="button" id="copy-sub">Скопировать ссылку 🔗</button></div>
           <textarea id="sub" readonly>__ESCAPED_SUBSCRIPTION__</textarea>
+        </div>
+      </div>
+    </section>
+
+    <section class="referral-card">
+      <div class="referral-box">
+        <div class="referral-info">
+          <div class="referral-header">
+            <span style="font-size: 20px; line-height: 1;">🤝</span>
+            <span class="referral-title">Партнёрская программа</span>
+            <span class="referral-tag">10% вам + 10% другу</span>
+          </div>
+          <p class="referral-desc">
+            Приглашайте друзей по вашей персональной ссылке: друг получит <strong>скидку 10%</strong> на первую подписку, а вы — <strong>10% с каждой его оплаты</strong>. Присоединиться к программе, получить реферальные ссылки (для сайта и для Telegram) и выводить начисления можно через нашего бота.
+          </p>
+        </div>
+        <div class="referral-action">
+          <a class="button success referral-btn" href="__BOT_REFERRAL_URL__" target="_blank" rel="noopener">
+            🤝 Присоединиться в Telegram-боте →
+          </a>
         </div>
       </div>
     </section>
@@ -6173,6 +6272,20 @@ def setup_page_html(
     result = result.replace("__LINKED_EMAIL_BADGE__", linked_badge_html)
     result = result.replace("__CUSTOMER_EMAIL__", html.escape(customer_email))
     result = result.replace("__PAYMENT_CARD_HTML__", payment_card_html)
+    bot_username = ""
+    try:
+        shop_settings = get_shop_settings()
+        if shop_settings:
+            bot_username = (getattr(shop_settings, "telegram_bot_username", "") or "").strip().lstrip("@")
+    except Exception:
+        pass
+    if not bot_username:
+        bot_username = os.environ.get("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@")
+    if not bot_username:
+        bot_username = "SilentConnectVPNBot"
+    bot_referral_url = f"https://t.me/{bot_username}?start=referral"
+
+    result = result.replace("__BOT_REFERRAL_URL__", html.escape(bot_referral_url, quote=True))
     result = result.replace("__APPS_JSON__", apps_json)
     result = result.replace("__PLATFORM_LABELS_JSON__", platform_labels_json)
     result = result.replace("__WEB_PAGE_URL__", HAPP_WEB_PAGE_URL)
