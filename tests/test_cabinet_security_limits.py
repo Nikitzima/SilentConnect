@@ -179,11 +179,29 @@ class CabinetSecurityLimitsTest(unittest.TestCase):
             self.assertIn('Нельзя менять почту более 5 раз в день', str(ctx.exception))
 
     def test_cabinet_referral_bot_link(self):
-        html_bytes = self.checkout.render_cabinet('client@test.com', [])
-        html_text = html_bytes.decode('utf-8')
-        self.assertIn('Партнёрская программа', html_text)
-        self.assertIn('10% вам + 10% другу', html_text)
-        self.assertIn('https://t.me/mock?start=referral', html_text)
+        # 1. Verify render_cabinet does NOT contain referral box (it was moved out of login/cabinet)
+        cabinet_html = self.checkout.render_cabinet('client@test.com', []).decode('utf-8')
+        self.assertNotIn('Партнёрская программа', cabinet_html)
+        self.assertNotIn('cabinet-referral-box', cabinet_html)
+
+        # 2. Verify setup_page_html (the subscription import page) contains referral program card
+        import importlib
+        from unittest.mock import patch
+        subjson_app = importlib.import_module('app')
+
+        with patch.object(subjson_app, 'get_shop_settings', return_value=self.settings):
+            setup_bytes = subjson_app.setup_page_html(
+                subscription_url='https://sub.example.com/sub/json/testsub123',
+                subscription_id='testsub123',
+                quoted_sub_id='testsub123',
+                import_query='v=1',
+                customer_email='client@test.com',
+            )
+            setup_text = setup_bytes.decode('utf-8')
+            self.assertIn('Партнёрская программа', setup_text)
+            self.assertIn('10% вам + 10% другу', setup_text)
+            self.assertIn('referral-card', setup_text)
+            self.assertIn('https://t.me/mock?start=referral', setup_text)
 
     def test_bot_referral_dual_links(self):
         from vpn_shop.bot import ShopBot
