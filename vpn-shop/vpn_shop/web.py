@@ -1139,8 +1139,6 @@ class WebCheckout:
         """
 
         support_url = (self.settings.support_tg_url or "").strip() or "https://t.me/SilentConnectSupport"
-        bot_username = (self.settings.telegram_bot_username or "").strip() or "SilentConnectVPNBot"
-        bot_ref_url = f"https://t.me/{bot_username}?start=referral"
 
         body = f"""
         <section class="section cabinet-section">
@@ -1155,24 +1153,6 @@ class WebCheckout:
 
           <div class="cabinet-cards-grid">
             {cards_str}
-          </div>
-
-          <div class="cabinet-referral-box">
-            <div class="cabinet-referral-info">
-              <div class="cabinet-referral-header">
-                <span style="font-size: 19px;">🤝</span>
-                <span class="cabinet-referral-title">Партнёрская программа</span>
-                <span class="cabinet-referral-tag">10% вам + 10% другу</span>
-              </div>
-              <div class="cabinet-referral-desc">
-                Приглашайте друзей по вашей реферальной ссылке: друг получит <strong>скидку 10%</strong> на первую подписку, а вы — <strong>10% с каждой его оплаты</strong>. Присоединиться к программе, получить персональные ссылки (для сайта и для Telegram) и выводить начисления можно через нашего бота.
-              </div>
-            </div>
-            <div class="cabinet-referral-actions">
-              <a class="btn cabinet-btn-referral" href="{html.escape(bot_ref_url, quote=True)}" target="_blank" rel="noopener">
-                🤝 Присоединиться в Telegram-боте →
-              </a>
-            </div>
           </div>
 
           <div class="cabinet-bottom-box">
@@ -1587,33 +1567,6 @@ class WebCheckout:
       min-height: 46px; font-size: 14.5px; font-weight: 700; width: 100%;
       border-radius: 10px; text-decoration: none; box-sizing: border-box; text-align: center;
     }}
-    .cabinet-referral-box {{
-      display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;
-      gap: 16px; background: linear-gradient(135deg, rgba(47, 191, 113, 0.08) 0%, rgba(20, 35, 28, 0.5) 100%);
-      border: 1px solid rgba(47, 191, 113, 0.28); border-radius: 14px; padding: 18px 24px;
-      margin-bottom: 20px; box-sizing: border-box; backdrop-filter: blur(12px);
-    }}
-    .cabinet-referral-info {{ flex: 1 1 500px; min-width: 0; }}
-    .cabinet-referral-header {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }}
-    .cabinet-referral-title {{ font-size: 16px; font-weight: 700; color: #fff; }}
-    .cabinet-referral-tag {{
-      font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 10px;
-      background: rgba(47, 191, 113, 0.18); color: #2fbf71; border: 1px solid rgba(47, 191, 113, 0.4);
-    }}
-    .cabinet-referral-desc {{ font-size: 13.5px; color: #94a3b8; line-height: 1.5; }}
-    .cabinet-referral-desc strong {{ color: #e2e8f0; font-weight: 600; }}
-    .cabinet-referral-actions {{ flex-shrink: 0; }}
-    .cabinet-btn-referral {{
-      background: #2fbf71 !important; color: #05140d !important; font-weight: 700 !important;
-      border: none !important; border-radius: 10px !important; min-height: 42px !important;
-      padding: 8px 18px !important; font-size: 14px !important; text-decoration: none !important;
-      display: inline-flex !important; align-items: center !important; justify-content: center !important;
-      box-shadow: 0 4px 14px rgba(47, 191, 113, 0.3) !important; transition: all 0.2s ease !important;
-    }}
-    .cabinet-btn-referral:hover {{
-      background: #38df84 !important; transform: translateY(-1px) !important;
-      box-shadow: 0 6px 20px rgba(47, 191, 113, 0.45) !important;
-    }}
     .cabinet-bottom-box {{
       display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;
       gap: 16px; background: rgba(255, 255, 255, 0.025); border: 1px solid var(--glass-border);
@@ -1629,9 +1582,6 @@ class WebCheckout:
       .cabinet-card {{ padding: 18px 16px; gap: 14px; }}
       .cabinet-table {{ font-size: 12.5px; }}
       .cabinet-btn-primary {{ min-height: 42px; font-size: 13.5px; }}
-      .cabinet-referral-box {{ padding: 16px; flex-direction: column; align-items: stretch; gap: 14px; }}
-      .cabinet-referral-actions {{ width: 100%; }}
-      .cabinet-referral-actions .btn {{ width: 100% !important; justify-content: center; }}
       .cabinet-bottom-box {{ padding: 14px 16px; flex-direction: column; align-items: stretch; gap: 14px; }}
       .cabinet-bottom-actions {{ flex-direction: column; width: 100%; }}
       .cabinet-bottom-actions .btn {{ width: 100% !important; justify-content: center; }}
