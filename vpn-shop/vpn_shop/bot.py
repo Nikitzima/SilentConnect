@@ -124,6 +124,15 @@ class ShopBot:
             raise RuntimeError("TELEGRAM_BOT_USERNAME is not configured")
         return f"https://t.me/{username}?start={referral_code}"
 
+    def web_referral_link(self, referral_code: str) -> str:
+        base = (self.settings.web_public_base_url or "").strip().rstrip("/")
+        if base:
+            return f"{base}/?ref={referral_code}"
+        parsed = urlsplit(self.settings.subscription_base_url)
+        if parsed.scheme and parsed.netloc:
+            return urlunsplit((parsed.scheme, parsed.netloc, "/", f"ref={referral_code}", ""))
+        return f"https://example.com/?ref={referral_code}"
+
     def public_access_link(self) -> str:
         username = (self.settings.telegram_bot_username or "").strip()
         if not username:
@@ -1656,25 +1665,36 @@ class ShopBot:
         referrer = self.store.get_referrer_by_user(user_id)
         if referrer:
             balance = self.store.get_referral_balance(int(referrer["id"])) or {}
+            ref_code = str(referrer["code"])
+            bot_link = self.referral_link(ref_code)
+            web_link = self.web_referral_link(ref_code)
+            balance_rub = int(balance.get("balance_rub") or 0)
+            referred_count = int(balance.get("referred_count") or 0)
             self._render_or_edit(
                 chat_id,
                 "\n".join(
                     [
-                        "Реферальная программа",
+                        "🤝 Реферальная программа",
                         "",
-                        "Ваша ссылка:",
-                        self.referral_link(str(referrer["code"])),
+                        "Ваши персональные ссылки для приглашения:",
                         "",
-                        f"Комиссия: {int(referrer['commission_percent'])}%",
-                        f"Текущий баланс: {int(balance.get('balance_rub') or 0)} RUB",
-                        f"Минимальная выплата: {REFERRAL_PAYOUT_MIN_RUB} RUB",
+                        f"🌐 Для покупок на сайте:\n{web_link}",
                         "",
-                        "Начисления идут только с подтверждённых платных покупок приглашённых пользователей.",
+                        f"📱 Для покупок в Telegram-боте:\n{bot_link}",
+                        "",
+                        f"• Ваша комиссия: {int(referrer['commission_percent'])}% с каждой оплаты",
+                        "• Скидка другу: 10% на первую подписку (и на сайте, и в боте)",
+                        f"• Баланс к выплате: {balance_rub} RUB",
+                        f"• Приглашено друзей: {referred_count}",
+                        f"• Минимальная выплата: {REFERRAL_PAYOUT_MIN_RUB} RUB",
+                        "",
+                        "Начисления поступают автоматически после подтверждения оплаты заказа приглашённым другом.",
                     ]
                 ),
                 reply_markup=kb(
                     [
-                        [{"text": "Скопировать ссылку", "copy_text": self.referral_link(str(referrer["code"])), "style": "primary"}],
+                        [{"text": "🌐 Скопировать ссылку на сайт", "copy_text": web_link, "style": "primary"}],
+                        [{"text": "📱 Скопировать ссылку в бота", "copy_text": bot_link, "style": "primary"}],
                         [("Назад в меню", "public:menu")],
                     ]
                 ),
@@ -1686,12 +1706,14 @@ class ShopBot:
             chat_id,
             "\n".join(
                 [
-                    "Реферальная программа",
+                    "🤝 Реферальная программа",
                     "",
-                    f"Вы получаете {REFERRAL_COMMISSION_PERCENT}% с каждой подтверждённой платной покупки приглашённого пользователя.",
-                    f"Выплаты вручную от {REFERRAL_PAYOUT_MIN_RUB} RUB, остаток переносится дальше.",
+                    f"Вы получаете {REFERRAL_COMMISSION_PERCENT}% с каждой подтверждённой покупки приглашённого пользователя, а ваш друг получает скидку 10% на первую подписку.",
                     "",
-                    "После подключения бот выдаст вашу личную ссылку.",
+                    "Программа действует как для покупок на сайте, так и в Telegram-боте.",
+                    f"Выплаты осуществляются вручную от {REFERRAL_PAYOUT_MIN_RUB} RUB, остаток переносится дальше.",
+                    "",
+                    "После подключения бот сразу выдаст ваши персональные ссылки (на сайт и в бота).",
                 ]
             ),
             reply_markup=kb(
@@ -1710,23 +1732,32 @@ class ShopBot:
             chat_id=chat_id,
             commission_percent=REFERRAL_COMMISSION_PERCENT,
         )
-        link = self.referral_link(str(referrer["code"]))
+        ref_code = str(referrer["code"])
+        bot_link = self.referral_link(ref_code)
+        web_link = self.web_referral_link(ref_code)
         self._render_or_edit(
             chat_id,
             "\n".join(
                 [
-                    "Вы участвуете в реферальной программе.",
+                    "🤝 Вы успешно подключились к реферальной программе!",
                     "",
-                    "Ваша ссылка:",
-                    link,
+                    "Ваши персональные ссылки для приглашения:",
                     "",
-                    f"Комиссия: {int(referrer['commission_percent'])}%",
-                    f"Выплата: от {REFERRAL_PAYOUT_MIN_RUB} RUB вручную.",
+                    f"🌐 Для покупок на сайте:\n{web_link}",
+                    "",
+                    f"📱 Для покупок в Telegram-боте:\n{bot_link}",
+                    "",
+                    f"• Ваша комиссия: {int(referrer['commission_percent'])}% с каждой оплаты",
+                    "• Скидка другу: 10% на первую покупку (и на сайте, и в боте)",
+                    f"• Выплата: от {REFERRAL_PAYOUT_MIN_RUB} RUB вручную.",
+                    "",
+                    "Отправляйте друзьям любую удобную ссылку — обе привязаны к вашему профилю!",
                 ]
             ),
             reply_markup=kb(
                 [
-                    [{"text": "Скопировать ссылку", "copy_text": link, "style": "primary"}],
+                    [{"text": "🌐 Скопировать ссылку на сайт", "copy_text": web_link, "style": "primary"}],
+                    [{"text": "📱 Скопировать ссылку в бота", "copy_text": bot_link, "style": "primary"}],
                     [("Назад в меню", "public:menu")],
                 ]
             ),
@@ -2845,6 +2876,10 @@ class ShopBot:
             self.show_public_cabinet(chat_id, user)
             return
 
+        if command in ("/referral", "/ref", "/partner"):
+            self.show_public_referral(chat_id, user)
+            return
+
         if command == "/client" and is_admin_user:
             self._merge_session_state(chat_id, "public", "menu")
             self.handle_public_start(chat_id, "", user)
@@ -3024,6 +3059,9 @@ class ShopBot:
                 "Ссылка доступа активирована. Можно выбрать тариф, пробную неделю или реферальную программу.",
                 hero=True,
             )
+            return
+        if start_arg in ("referral", "ref", "referrals"):
+            self.show_public_referral(chat_id, user or {})
             return
         if start_arg.startswith("claim_"):
             payload = start_arg.removeprefix("claim_")

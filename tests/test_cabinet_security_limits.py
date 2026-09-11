@@ -178,5 +178,35 @@ class CabinetSecurityLimitsTest(unittest.TestCase):
                 )
             self.assertIn('Нельзя менять почту более 5 раз в день', str(ctx.exception))
 
+    def test_cabinet_referral_bot_link(self):
+        html_bytes = self.checkout.render_cabinet('client@test.com', [])
+        html_text = html_bytes.decode('utf-8')
+        self.assertIn('Партнёрская программа', html_text)
+        self.assertIn('10% вам + 10% другу', html_text)
+        self.assertIn('https://t.me/mock?start=referral', html_text)
+
+    def test_bot_referral_dual_links(self):
+        from vpn_shop.bot import ShopBot
+        from unittest.mock import MagicMock
+        bot = ShopBot(settings=self.settings, store=self.store)
+        bot.telegram = MagicMock()
+        user = {'id': 12345, 'username': 'testuser'}
+        
+        # Join referral
+        bot.join_public_referral(chat_id=12345, user=user)
+        bot.telegram.send_message.assert_called()
+        msg_text = bot.telegram.send_message.call_args[0][1]
+        self.assertIn('https://example.com/?ref=', msg_text)
+        self.assertIn('https://t.me/mock?start=', msg_text)
+        self.assertIn('10%', msg_text)
+
+        # Show referral
+        bot.telegram.send_message.reset_mock()
+        bot.show_public_referral(chat_id=12345, user=user)
+        msg_text2 = bot.telegram.send_message.call_args[0][1]
+        self.assertIn('https://example.com/?ref=', msg_text2)
+        self.assertIn('https://t.me/mock?start=', msg_text2)
+
 if __name__ == '__main__':
     unittest.main()
+
