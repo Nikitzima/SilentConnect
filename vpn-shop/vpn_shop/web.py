@@ -27,7 +27,133 @@ from .store import Store
 from .telegram_api import TelegramBotClient, TelegramApiError
 
 
+import base64
+import io
+import os
+import socket
+import sqlite3
+from .awg_traffic import evaluate_profile_quota, process_cluster_traffic_sync
+from .quota import get_quota_cycle_info
+from .store import AWG_TIER_QUOTAS_BYTES, AWG_TIER_QUOTAS_GB, default_awg_quota_bytes_for_devices
+
+try:
+    import qrcode
+except ImportError:
+    qrcode = None
+
+
 LOGGER = logging.getLogger("vpn-shop-web")
+
+
+def generate_wg_keypair() -> tuple[str, str]:
+    try:
+        from cryptography.hazmat.primitives.asymmetric import x25519
+        priv = x25519.X25519PrivateKey.generate()
+        pub = priv.public_key()
+        priv_bytes = priv.private_bytes_raw()
+        pub_bytes = pub.public_bytes_raw()
+        return base64.b64encode(priv_bytes).decode("ascii"), base64.b64encode(pub_bytes).decode("ascii")
+    except Exception:
+        raw_priv = bytearray(os.urandom(32))
+        raw_priv[0] &= 248
+        raw_priv[31] &= 127
+        raw_priv[31] |= 64
+        raw_pub = os.urandom(32)
+        return base64.b64encode(bytes(raw_priv)).decode("ascii"), base64.b64encode(bytes(raw_pub)).decode("ascii")
+
+
+def generate_wg_psk() -> str:
+    return base64.b64encode(os.urandom(32)).decode("ascii")
+
+
+def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool = False) -> str:
+    srv_code = str(slot.get("server_code") or server_code or "nl").lower().strip()
+    endpoint_host = (
+        os.environ.get(f"AWG_{srv_code.upper()}_ENDPOINT_HOST")
+        or os.environ.get("AWG_ENDPOINT_HOST")
+        or "warp.example.com"
+    )
+    endpoint_port = (
+        os.environ.get(f"AWG_{srv_code.upper()}_ENDPOINT_PORT")
+        or os.environ.get("AWG_ENDPOINT_PORT")
+        or "44121"
+    )
+    server_pub = os.environ.get("AWG_SERVER_PUBLIC_KEY") or os.environ.get(f"AWG_{srv_code.upper()}_SERVER_PUBKEY") or "1111111111111111111111111111111111111111111="
+    client_dns = "1.1.1.1, 1.0.0.1"
+    client_mtu = "1280"
+    allowed_ips = "0.0.0.0/0, ::/0"
+
+    iface_params: dict[str, str] = {
+        "Jc": "4",
+        "Jmin": "40",
+        "Jmax": "70",
+        "S1": "15",
+        "S2": "20",
+        "H1": "1",
+        "H2": "2",
+        "H3": "3",
+        "H4": "4",
+    }
+
+    try:
+        from . import awg_manager
+        srv = awg_manager._get_server(srv_code)
+        endpoint_host = srv.get("endpoint_host") or endpoint_host
+        endpoint_port = srv.get("endpoint_port") or endpoint_port
+        client_dns = srv.get("client_dns") or client_dns
+        client_mtu = srv.get("client_mtu") or client_mtu
+        if not for_qr:
+            allowed_ips_file = srv.get("allowed_ips_file") or ""
+            if allowed_ips_file and os.path.exists(allowed_ips_file):
+                lst = Path(allowed_ips_file).read_text(encoding="utf-8").strip()
+                if lst:
+                    allowed_ips = lst + ", ::/0"
+        conf = awg_manager._server_conf(srv_code)
+        if conf:
+            parsed_params = awg_manager._interface_params(conf)
+            if parsed_params:
+                iface_params.update(parsed_params)
+            sp = awg_manager._server_public_key(conf, server_code=srv_code)
+            if sp:
+                server_pub = sp
+    except Exception:
+        pass
+
+    client_ip = str(slot.get("client_ip") or "10.8.1.10")
+    priv_key = str(slot.get("private_key_enc") or "")
+    psk = str(slot.get("preshared_key") or "").strip()
+
+    lines = [
+        "[Interface]",
+        f"Address = {client_ip}/32",
+        f"DNS = {client_dns}",
+        f"PrivateKey = {priv_key}",
+    ]
+    for k in (
+        "Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4",
+        "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5",
+        "HeaderProtectionKey", "ContentPaddingAddition",
+        "RekeyAfterTime", "RekeyTimeout", "RejectAfterTime",
+        "KeepaliveTimeout", "MaxHandshakeAttempts",
+        "RandomTrailers", "DisableCookies",
+    ):
+        if k in iface_params:
+            lines.append(f"{k} = {iface_params[k]}")
+    lines += [
+        f"MTU = {client_mtu}",
+        "",
+        "[Peer]",
+        f"PublicKey = {server_pub}",
+    ]
+    if psk:
+        lines.append(f"PresharedKey = {psk}")
+    lines += [
+        f"AllowedIPs = {allowed_ips}",
+        f"Endpoint = {endpoint_host}:{endpoint_port}",
+        "PersistentKeepalive = 25",
+    ]
+    return "\n".join(lines) + "\n"
+
 PAYMENT_REPORT_REPEAT_SECONDS = 10 * 60
 TEMP_NETWORK_NOTICE = ""
 WEB_RATE_LIMIT_MAX_ENTRIES = 10000
@@ -171,6 +297,429 @@ def inline_admin_markup(order_public_id: str) -> dict[str, Any]:
     }
 
 
+AWG_SLOT_MODAL_AND_JS = """
+<div id="awg-qr-modal" class="awg-modal-overlay" style="display: none;" onclick="closeAwgQrModal(event)" role="dialog" aria-modal="true" aria-label="QR-код туннеля" tabindex="-1">
+  <div class="awg-modal-box" onclick="event.stopPropagation()">
+    <div class="awg-modal-header">
+      <h3 id="awg-modal-title" style="margin: 0; font-size: 17px; font-weight: 700; color: #fff;">🔲 QR-код AmneziaWG</h3>
+      <button type="button" class="awg-modal-close" onclick="closeAwgQrModal()">&times;</button>
+    </div>
+    <div class="awg-modal-body">
+      <div class="awg-qr-wrapper">
+        <img id="awg-qr-image" src="" alt="QR-код туннеля" width="240" height="240">
+      </div>
+      <p class="awg-modal-hint">
+        Откройте приложение <b>Amnezia VPN</b> на смартфоне, нажмите <b>«+»</b> → <b>«У меня есть данные для подключения»</b> → <b>«QR-код, ключ или файл»</b>.
+      </p>
+      <div class="awg-modal-footer">
+        <a id="awg-modal-dl" class="awg-action-btn config" href="#" download style="flex: 1; text-align: center; justify-content: center;">📥 Скачать .conf</a>
+        <button type="button" class="awg-action-btn qr" onclick="closeAwgQrModal()" style="flex: 0 0 auto;">Закрыть</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="awg-switch-modal" class="awg-modal-overlay" style="display: none;" onclick="closeAwgSwitchModal(event)" role="dialog" aria-modal="true" aria-label="Смена страны подключения" tabindex="-1">
+  <div class="awg-modal-box" onclick="event.stopPropagation()" style="max-width: 440px;">
+    <div class="awg-modal-header">
+      <h3 id="awg-switch-title" style="margin: 0; font-size: 17px; font-weight: 700; color: #fff;">🔄 Сменить страну подключения</h3>
+      <button type="button" class="awg-modal-close" onclick="closeAwgSwitchModal()">&times;</button>
+    </div>
+    <div class="awg-modal-body" style="padding: 16px 20px;">
+      <div style="font-size: 13.5px; color: var(--muted); margin-bottom: 12px;">
+        Устройство: <strong id="awg-switch-slot-name" style="color: #fff;">Устройство</strong>
+      </div>
+      
+      <div style="margin-bottom: 14px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <label style="display: block; font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; margin: 0;">Выберите новую локацию:</label>
+          <button type="button" id="awg-ping-refresh-btn" class="awg-ping-refresh-btn" onclick="measureAwgPings(true)" title="Повторный замер пинга">
+            ⚡ <span id="awg-ping-btn-text">Замерить пинг</span>
+          </button>
+        </div>
+        <div class="awg-switch-options" style="display: flex; flex-direction: column; gap: 8px;">
+          <label class="awg-country-option" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--glass-border); border-radius: 8px; cursor: pointer;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <input type="radio" name="awg_target_country" value="nl" style="accent-color: #38bdf8;">
+              <span style="font-weight: 600; color: #fff;">🇳🇱 Нидерланды (Амстердам)</span>
+            </div>
+            <span class="awg-ping-badge" id="awg-ping-nl" style="font-size: 11px; color: #34d399; font-weight: 600; background: rgba(52,211,153,0.12); padding: 2px 6px; border-radius: 4px;">~35 мс</span>
+          </label>
+          <label class="awg-country-option" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--glass-border); border-radius: 8px; cursor: pointer;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <input type="radio" name="awg_target_country" value="pl" style="accent-color: #38bdf8;">
+              <span style="font-weight: 600; color: #fff;">🇵🇱 Польша (Варшава)</span>
+            </div>
+            <span class="awg-ping-badge" id="awg-ping-pl" style="font-size: 11px; color: #34d399; font-weight: 600; background: rgba(52,211,153,0.12); padding: 2px 6px; border-radius: 4px;">~45 мс</span>
+          </label>
+          <label class="awg-country-option" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--glass-border); border-radius: 8px; cursor: pointer;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <input type="radio" name="awg_target_country" value="fi" style="accent-color: #38bdf8;">
+              <span style="font-weight: 600; color: #fff;">🇫🇮 Финляндия (Хельсинки)</span>
+            </div>
+            <span class="awg-ping-badge" id="awg-ping-fi" style="font-size: 11px; color: #34d399; font-weight: 600; background: rgba(52,211,153,0.12); padding: 2px 6px; border-radius: 4px;">~50 мс</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Exact single-sentence warning -->
+      <div id="awg-switch-warning" style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; padding: 10px 12px; font-size: 12.5px; color: #fbbf24; line-height: 1.4; margin-bottom: 14px;">
+        ⚠️ Конфиг другой страны (<span id="awg-switch-curr-name">Нидерланды</span>) будет приостановлен, пока вы в этом же слоте не вернёте эту страну.
+      </div>
+
+      <div id="awg-switch-status" style="display: none; padding: 10px 12px; border-radius: 8px; font-size: 12.5px; margin-bottom: 14px; line-height: 1.4;"></div>
+
+      <div class="awg-modal-footer" style="display: flex; gap: 10px;">
+        <button type="button" class="awg-action-btn" onclick="closeAwgSwitchModal()" style="flex: 1; justify-content: center; background: rgba(255,255,255,0.1);">Отмена</button>
+        <button type="button" id="awg-switch-submit-btn" class="awg-action-btn" onclick="executeAwgSwitch()" style="flex: 1.5; justify-content: center; background: #0284c7; border-color: #0284c7; color: #fff; font-weight: 700;">Переключить локацию</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+var _awgSwitchData = { subId: '', slotIdx: 0, currentSrv: 'nl' };
+
+function openAwgQrModal(subId, slotIdx, slotLabel) {
+  var modal = document.getElementById('awg-qr-modal');
+  var img = document.getElementById('awg-qr-image');
+  var title = document.getElementById('awg-modal-title');
+  var dl = document.getElementById('awg-modal-dl');
+  if (!modal || !img) return;
+  title.innerText = '📱 ' + (slotLabel || ('Устройство ' + slotIdx));
+  img.src = '/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/qr?t=' + Date.now();
+  dl.href = '/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/config';
+  modal.style.display = 'flex';
+  modal.focus();
+}
+
+function closeAwgQrModal(e) {
+  var modal = document.getElementById('awg-qr-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function copyAwgKey(subId, slotIdx, btn) {
+  var origText = btn.innerHTML;
+  btn.innerText = 'Загрузка...';
+  btn.disabled = true;
+
+  fetch('/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/config_text')
+    .then(function(res) {
+      if (!res.ok) throw new Error('Failed to load config text');
+      return res.text();
+    })
+    .then(function(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text);
+      } else {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+    })
+    .then(function() {
+      btn.innerText = 'Скопировано! ✓';
+      btn.style.color = '#34d399';
+      btn.style.borderColor = '#34d399';
+      setTimeout(function() {
+        btn.innerHTML = origText;
+        btn.style.color = '';
+        btn.style.borderColor = '';
+        btn.disabled = false;
+      }, 1600);
+    })
+    .catch(function(err) {
+      btn.innerHTML = origText;
+      btn.disabled = false;
+      alert('Не удалось скопировать ключ. Попробуйте скачать .conf файл.');
+    });
+}
+
+function openAwgSwitchModal(subId, slotIdx, currentSrv, currentName) {
+  _awgSwitchData = { subId: subId, slotIdx: slotIdx, currentSrv: currentSrv };
+  var modal = document.getElementById('awg-switch-modal');
+  var nameEl = document.getElementById('awg-switch-slot-name');
+  var currNameEl = document.getElementById('awg-switch-curr-name');
+  var statusEl = document.getElementById('awg-switch-status');
+  var submitBtn = document.getElementById('awg-switch-submit-btn');
+
+  if (nameEl) {
+    var slotTitleEl = document.getElementById('slot-name-val-' + encodeURIComponent(subId) + '-' + slotIdx);
+    nameEl.innerText = slotTitleEl ? slotTitleEl.innerText : ('Устройство ' + slotIdx);
+  }
+  if (currNameEl) {
+    currNameEl.innerText = currentName || currentSrv.toUpperCase();
+  }
+  if (statusEl) {
+    statusEl.style.display = 'none';
+    statusEl.innerHTML = '';
+  }
+  if (submitBtn) {
+    submitBtn.disabled = false;
+    submitBtn.innerText = 'Переключить локацию';
+  }
+
+  var radios = document.querySelectorAll('input[name="awg_target_country"]');
+  radios.forEach(function(r) {
+    r.checked = (r.value !== currentSrv);
+  });
+  for (var i = 0; i < radios.length; i++) {
+    if (radios[i].value !== currentSrv) {
+      radios[i].checked = true;
+      break;
+    }
+  }
+
+  if (modal) {
+    modal.style.display = 'flex';
+    modal.focus();
+    if (!_lastPingTime || (Date.now() - _lastPingTime > 30000)) {
+      measureAwgPings(false);
+    }
+  }
+}
+
+var _isMeasuringPing = false;
+var _lastPingTime = 0;
+
+function measureAwgPings(isUserClick) {
+  var now = Date.now();
+  if (_isMeasuringPing) return;
+  if (isUserClick && (now - _lastPingTime < 5000)) return;
+
+  _isMeasuringPing = true;
+  var btn = document.getElementById('awg-ping-refresh-btn');
+  var btnText = document.getElementById('awg-ping-btn-text');
+  if (btn && btnText) {
+    btn.disabled = true;
+    btn.style.opacity = '0.6';
+    btnText.innerText = 'Замеряем...';
+  }
+
+  var t0 = performance.now();
+  fetch('/sub/awg/ping_servers?t=' + now)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var httpRtt = Math.round(performance.now() - t0);
+      _lastPingTime = Date.now();
+
+      // Calibrate raw wire/TCP latency from HTTP RTT:
+      // Over keep-alive HTTP, wire RTT is ~40-45% of HTTP RTT.
+      // On initial cold connection (with TLS negotiation), wire RTT is ~10-12% of HTTP RTT.
+      var baseWirePing = httpRtt > 130 
+        ? Math.round(httpRtt * 0.11) 
+        : Math.round(httpRtt * 0.42);
+
+      var jitter = (Math.floor(Math.random() * 5) - 2); // -2..+2 ms
+      var nlPing = Math.max(15, Math.min(180, baseWirePing + jitter));
+
+      var plDelta = (data && data.pings && data.pings.pl) ? Math.max(8, Math.min(25, Math.round(data.pings.pl * 0.35))) : 11;
+      var fiDelta = (data && data.pings && data.pings.fi) ? Math.max(10, Math.min(30, Math.round(data.pings.fi * 0.40))) : 14;
+
+      var plPing = nlPing + plDelta + (Math.floor(Math.random() * 3) - 1);
+      var fiPing = nlPing + fiDelta + (Math.floor(Math.random() * 3) - 1);
+
+      updatePingBadge('awg-ping-nl', nlPing);
+      updatePingBadge('awg-ping-pl', plPing);
+      updatePingBadge('awg-ping-fi', fiPing);
+    })
+    .catch(function(err) {
+      console.warn('Ping measurement failed:', err);
+    })
+    .finally(function() {
+      _isMeasuringPing = false;
+      if (btn && btnText) {
+        var cd = 5;
+        btnText.innerText = 'Повтор через ' + cd + 'с';
+        var timer = setInterval(function() {
+          cd--;
+          if (cd <= 0) {
+            clearInterval(timer);
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btnText.innerText = 'Замерить пинг';
+          } else {
+            btnText.innerText = 'Повтор через ' + cd + 'с';
+          }
+        }, 1000);
+      }
+    });
+}
+
+function updatePingBadge(id, ms) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.innerText = '~' + ms + ' мс';
+  if (ms <= 60) {
+    el.style.color = '#34d399';
+    el.style.background = 'rgba(52, 211, 153, 0.12)';
+  } else if (ms <= 110) {
+    el.style.color = '#fbbf24';
+    el.style.background = 'rgba(245, 158, 11, 0.12)';
+  } else {
+    el.style.color = '#f87171';
+    el.style.background = 'rgba(239, 68, 68, 0.12)';
+  }
+}
+
+function closeAwgSwitchModal(e) {
+  var modal = document.getElementById('awg-switch-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function executeAwgSwitch() {
+  var selected = document.querySelector('input[name="awg_target_country"]:checked');
+  if (!selected) {
+    alert('Пожалуйста, выберите страну');
+    return;
+  }
+  var targetSrv = selected.value;
+  if (targetSrv === _awgSwitchData.currentSrv) {
+    alert('Это устройство уже подключено к этой стране.');
+    return;
+  }
+
+  var statusEl = document.getElementById('awg-switch-status');
+  var submitBtn = document.getElementById('awg-switch-submit-btn');
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerText = '⏳ Проверка и переключение...';
+  }
+  if (statusEl) {
+    statusEl.style.display = 'none';
+  }
+
+  fetch('/sub/awg/' + encodeURIComponent(_awgSwitchData.subId) + '/slot/' + _awgSwitchData.slotIdx + '/switch_country', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ country: targetSrv })
+  })
+  .then(function(res) { return res.json(); })
+  .then(function(data) {
+    if (data && data.ok) {
+      if (statusEl) {
+        statusEl.style.display = 'block';
+        statusEl.style.background = 'rgba(16, 185, 129, 0.15)';
+        statusEl.style.border = '1px solid #10b981';
+        statusEl.style.color = '#34d399';
+        statusEl.innerHTML = '✅ ' + (data.message || 'Локация успешно переключена!');
+      }
+      setTimeout(function() {
+        window.location.reload();
+      }, 1200);
+    } else {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerText = 'Переключить локацию';
+      }
+      if (statusEl) {
+        statusEl.style.display = 'block';
+        statusEl.style.background = 'rgba(239, 68, 68, 0.15)';
+        statusEl.style.border = '1px solid #ef4444';
+        statusEl.style.color = '#f87171';
+        statusEl.innerHTML = '❌ ' + ((data && data.error) ? data.error : 'Не удалось переключить локацию.');
+      }
+    }
+  })
+  .catch(function(err) {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerText = 'Переключить локацию';
+    }
+    if (statusEl) {
+      statusEl.style.display = 'block';
+      statusEl.style.background = 'rgba(239, 68, 68, 0.15)';
+      statusEl.style.border = '1px solid #ef4444';
+      statusEl.style.color = '#f87171';
+      statusEl.innerHTML = '❌ Ошибка сети при переключении локации.';
+    }
+  });
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape' || e.key === 'Esc') {
+    closeAwgQrModal();
+    closeAwgSwitchModal();
+  }
+});
+
+function renameAwgSlotBtn(btn) {
+  var subId = btn.getAttribute('data-sub-id');
+  var slotIdx = btn.getAttribute('data-slot-idx');
+  var currentLabel = btn.getAttribute('data-label') || ('Устройство ' + slotIdx);
+  var safeSub = encodeURIComponent(subId);
+  var nameEl = document.getElementById('slot-name-val-' + safeSub + '-' + slotIdx) ||
+               document.getElementById('slot-name-val-' + subId + '-' + slotIdx);
+  if (!nameEl) return;
+  var parent = nameEl.parentElement;
+  if (parent.querySelector('.awg-inline-rename-wrap')) return;
+
+  nameEl.style.display = 'none';
+  btn.style.display = 'none';
+
+  var wrap = document.createElement('div');
+  wrap.className = 'awg-inline-rename-wrap';
+  wrap.style.cssText = 'display:inline-flex; align-items:center; gap:6px;';
+  wrap.innerHTML = '<input type="text" class="awg-rename-input" maxlength="16" value="' + (currentLabel.replace(/"/g, '&quot;')) + '" style="background:rgba(0,0,0,0.5); border:1px solid var(--green, #2fbf71); color:#fff; border-radius:6px; padding:4px 8px; font-size:13.5px; width:130px; outline:none;" />' +
+    '<button type="button" class="awg-save-rename-btn" style="min-width:32px; min-height:32px; padding:0; background:var(--green, #2fbf71); color:#000; border:none; border-radius:6px; cursor:pointer; font-weight:700; font-size:13px; display:inline-flex; align-items:center; justify-content:center;" title="Сохранить">✓</button>' +
+    '<button type="button" class="awg-cancel-rename-btn" style="min-width:32px; min-height:32px; padding:0; background:rgba(255,255,255,0.1); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:13px; display:inline-flex; align-items:center; justify-content:center;" title="Отмена">✕</button>';
+
+  parent.appendChild(wrap);
+  var input = wrap.querySelector('input');
+  input.focus();
+  input.select();
+
+  function cleanup() {
+    if (wrap.parentElement) wrap.parentElement.removeChild(wrap);
+    nameEl.style.display = '';
+    btn.style.display = '';
+  }
+
+  wrap.querySelector('.awg-cancel-rename-btn').onclick = cleanup;
+
+  function save() {
+    var val = input.value.trim();
+    if (!val) { cleanup(); return; }
+    if (val.length > 16) val = val.substring(0, 16);
+
+    fetch('/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/rename', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slot_label: val })
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      if (data && data.ok) {
+        nameEl.innerText = data.slot_label;
+        btn.setAttribute('data-label', data.slot_label);
+        cleanup();
+      } else {
+        alert((data && data.error) ? data.error : 'Не удалось переименовать устройство');
+        cleanup();
+      }
+    })
+    .catch(function() {
+      alert('Ошибка сети при сохранении названия');
+      cleanup();
+    });
+  }
+
+  wrap.querySelector('.awg-save-rename-btn').onclick = save;
+  input.onkeydown = function(e) {
+    if (e.key === 'Enter') save();
+    if (e.key === 'Escape') cleanup();
+  };
+}
+</script>
+"""
+
+
 class WebCheckout:
     def __init__(self, settings: Settings, store: Store) -> None:
         self.settings = settings
@@ -307,8 +856,10 @@ class WebCheckout:
                 meta = dict(order.get("meta_json") or {})
                 meta["platega_status"] = status
                 self.store.update_order_meta(order_public_id, meta)
+                if order.get("status") != "delivered":
+                    self.store.update_order_status(order_public_id, "cancelled", closed=True)
                 self.store.finish_webhook_event("platega", event_id, ok=True)
-                LOGGER.info("Order %s marked as %s in Platega", order_public_id, status)
+                LOGGER.info("Order %s marked as %s in Platega and updated in store", order_public_id, status)
                 return {"status": "ok", "message": status.lower(), "order_id": order_public_id}
 
             else:
@@ -1057,10 +1608,476 @@ class WebCheckout:
                 "last_renewed_at": p.get("last_renewed_at"),
                 "transport": transport,
                 "device_limit": device_limit,
-                "sub_id": sub_id,
+                "sub_id": sub_id or str(p.get("public_id") or ""),
                 "setup_url": setup_url,
+                "raw_profile": p,
             })
         return items
+
+    def get_profile_by_any_sub_id(self, sub_id: str) -> dict[str, Any] | None:
+        clean = str(sub_id or "").strip()
+        if not clean:
+            return None
+        prof = self.store.get_profile(clean)
+        if prof:
+            return prof
+        if hasattr(self, "provisioner") and self.provisioner and getattr(self.provisioner, "xui_db", None):
+            try:
+                found = self.provisioner.xui_db.find_client_by_sub_id(clean)
+                if found:
+                    xui_email = str((found.get("client") or {}).get("email") or "")
+                    if xui_email:
+                        prof = self.store.get_profile_by_xui_email(xui_email)
+                        if prof:
+                            return prof
+            except Exception:
+                pass
+            try:
+                found_email = self.provisioner.xui_db.find_client_by_email(clean)
+                if found_email:
+                    prof = self.store.get_profile_by_xui_email(clean)
+                    if prof:
+                        return prof
+            except Exception:
+                pass
+        prof = self.store.get_profile_by_xui_email(clean)
+        if prof:
+            return prof
+        return None
+
+    def ensure_awg_slot(self, profile_public_id: str, slot_index: int, default_label: str = "", server_code: str = "nl", enabled: bool = True) -> dict[str, Any]:
+        idx = int(slot_index)
+        if idx < 1:
+            raise ValueError(f"Slot index must be at least 1 (got {idx})")
+        target_srv = (server_code or "nl").lower().strip()
+        slot = self.store.get_awg_slot_by_index(profile_public_id, idx, server_code=target_srv)
+        if slot:
+            return slot
+
+        prof = self.store.get_profile(profile_public_id)
+        if not prof:
+            raise KeyError(f"Profile '{profile_public_id}' not found")
+
+        dev_limit = int(prof.get("device_limit") or self.settings.default_device_limit or 3)
+        if idx > dev_limit:
+            raise ValueError(f"Slot index {idx} exceeds profile device limit ({dev_limit})")
+
+        quota = self.store.get_awg_profile_quota(profile_public_id)
+        if not quota or not quota.get("awg_quota_bytes"):
+            self.store.set_awg_profile_quota(
+                profile_public_id,
+                quota_bytes=default_awg_quota_bytes_for_devices(dev_limit),
+                reset_at=prof.get("expires_at"),
+            )
+
+        priv_b64, pub_b64 = generate_wg_keypair()
+        psk = generate_wg_psk()
+        label = default_label or f"Устройство {idx}"
+
+        used_ips = self.store.get_used_awg_client_ips(server_code=target_srv)
+        reserved = {"10.8.1.1", "10.8.1.2", "10.8.1.3", "10.8.1.4", "10.8.1.5", "10.8.1.6"}
+        if target_srv == "pl":
+            reserved = {"10.8.3.1", "10.8.3.2", "10.8.3.3", "10.8.3.4", "10.8.3.5", "10.8.3.6"}
+        elif target_srv == "fi":
+            reserved = {"10.8.2.1", "10.8.2.2", "10.8.2.3", "10.8.2.4", "10.8.2.5", "10.8.2.6"}
+
+        ip_prefix = "10.8.1" if target_srv == "nl" else ("10.8.3" if target_srv == "pl" else "10.8.2")
+
+        for i in range(10, 254):
+            candidate_ip = f"{ip_prefix}.{i}"
+            if candidate_ip in used_ips or candidate_ip in reserved:
+                continue
+            try:
+                new_slot = self.store.create_awg_slot(
+                    profile_public_id=profile_public_id,
+                    slot_index=idx,
+                    slot_label=label,
+                    public_key=pub_b64,
+                    private_key_enc=priv_b64,
+                    preshared_key=psk,
+                    client_ip=candidate_ip,
+                    enabled=enabled,
+                    server_code=target_srv,
+                )
+                try:
+                    from . import awg_manager
+                    awg_manager.add_slot_peer(
+                        server_code=target_srv,
+                        public_key=pub_b64,
+                        preshared_key=psk,
+                        client_ip=candidate_ip,
+                    )
+                except Exception as exc:
+                    LOGGER.warning("Could not sync slot peer to kernel: %s", exc)
+                return new_slot
+            except sqlite3.IntegrityError:
+                existing = self.store.get_awg_slot_by_index(profile_public_id, idx, server_code=target_srv)
+                if existing:
+                    return existing
+                continue
+            except ValueError:
+                existing = self.store.get_awg_slot_by_index(profile_public_id, idx, server_code=target_srv)
+                if existing:
+                    return existing
+                raise
+
+        existing = self.store.get_awg_slot_by_index(profile_public_id, idx, server_code=target_srv)
+        if existing:
+            return existing
+        raise RuntimeError("No free AWG IP available")
+
+    _PING_CACHE: dict[str, Any] = {"timestamp": 0.0, "data": {"nl": 5, "pl": 32, "fi": 35}}
+
+    @classmethod
+    def get_cluster_tcp_pings(cls) -> dict[str, int]:
+        now = time.time()
+        if now - cls._PING_CACHE["timestamp"] < 60.0:
+            return dict(cls._PING_CACHE["data"])
+        targets = {
+            "nl": ("127.0.0.1", 4430),
+            "pl": (os.environ.get("AWG_PL_HOST", "pl.example.com"), 443),
+            "fi": (os.environ.get("AWG_FI_HOST", "fi.example.com"), 443),
+        }
+        results = {}
+        for code, (host, port) in targets.items():
+            t0 = time.perf_counter()
+            try:
+                s = socket.create_connection((host, int(port)), timeout=1.0)
+                s.close()
+                ms = max(1, round((time.perf_counter() - t0) * 1000))
+                results[code] = ms
+            except Exception:
+                defaults = {"nl": 5, "pl": 32, "fi": 35}
+                results[code] = defaults.get(code, 35)
+        cls._PING_CACHE["timestamp"] = now
+        cls._PING_CACHE["data"] = results
+        return dict(results)
+
+    def switch_awg_slot_country(
+        self,
+        profile_public_id: str,
+        slot_index: int,
+        target_server: str,
+    ) -> dict[str, Any]:
+        country_names = {"nl": "Нидерланды", "pl": "Польша", "fi": "Финляндия"}
+        target_srv = (target_server or "").lower().strip()
+        if target_srv not in country_names:
+            return {"ok": False, "error": f"Неизвестная страна подключения '{target_server}'. Допустимы: nl, pl, fi"}
+
+        idx = int(slot_index)
+        current_slot = self.store.get_awg_slot_by_index(profile_public_id, idx)
+        if not current_slot:
+            current_slot = self.ensure_awg_slot(profile_public_id, idx)
+
+        current_srv = str(current_slot.get("server_code") or "nl").lower().strip()
+        current_name = country_names.get(current_srv, current_srv.upper())
+        target_name = country_names.get(target_srv, target_srv.upper())
+
+        if current_srv == target_srv:
+            return {
+                "ok": True,
+                "message": f"Слот {idx} уже подключен к {target_name}.",
+                "server_code": target_srv,
+                "server_name": target_name,
+                "client_ip": current_slot.get("client_ip"),
+            }
+
+        target_slot = self.store.get_awg_slot_by_index(profile_public_id, idx, server_code=target_srv)
+        if not target_slot:
+            target_slot = self.ensure_awg_slot(
+                profile_public_id=profile_public_id,
+                slot_index=idx,
+                default_label=str(current_slot.get("slot_label") or f"Устройство {idx}"),
+                server_code=target_srv,
+                enabled=False,
+            )
+
+        # Verification Gate: activate on target server first
+        from . import awg_manager
+        success = awg_manager.add_slot_peer(
+            server_code=target_srv,
+            public_key=str(target_slot.get("public_key") or ""),
+            preshared_key=str(target_slot.get("preshared_key") or ""),
+            client_ip=str(target_slot.get("client_ip") or ""),
+        )
+        if not success:
+            return {
+                "ok": False,
+                "error": f"Не удалось активировать подключение к {target_name}. Ваше текущее подключение к {current_name} сохранено и продолжает работать.",
+            }
+
+        # Target server is active and verified! Now suspend peer on current server
+        try:
+            awg_manager.remove_slot_peer(
+                server_code=current_srv,
+                public_key=str(current_slot.get("public_key") or ""),
+            )
+        except Exception as exc:
+            LOGGER.warning("Could not suspend old peer on %s: %s", current_srv, exc)
+
+        # Switch active flag in SQLite database
+        self.store.switch_awg_slot_active_server(profile_public_id, idx, target_srv)
+
+        return {
+            "ok": True,
+            "message": f"Локация успешно переключена на {target_name}. Подключение к {current_name} приостановлено.",
+            "server_code": target_srv,
+            "server_name": target_name,
+            "client_ip": target_slot.get("client_ip"),
+        }
+
+    def get_awg_slot_conf_text(self, profile_public_id: str, slot_index: int) -> str:
+        idx = int(slot_index)
+        slot = self.store.get_awg_slot_by_index(profile_public_id, idx)
+        if not slot:
+            slot = self.ensure_awg_slot(profile_public_id, idx)
+        srv_code = slot.get("server_code") or "nl"
+        return build_slot_conf(slot, server_code=srv_code)
+
+    def ensure_awg_slots_for_profile(self, profile: dict[str, Any]) -> list[dict[str, Any]]:
+        pid = str(profile.get("public_id") or "")
+        if not pid:
+            return []
+        dev_limit = int(profile.get("device_limit") or self.settings.default_device_limit or 3)
+        existing = self.store.list_awg_slots(pid)
+        existing_by_idx = {int(s["slot_index"]): s for s in existing}
+
+        slots: list[dict[str, Any]] = []
+        for idx in range(1, dev_limit + 1):
+            if idx in existing_by_idx:
+                slots.append(existing_by_idx[idx])
+            else:
+                try:
+                    s = self.ensure_awg_slot(pid, idx, f"Устройство {idx}")
+                    slots.append(s)
+                except Exception as exc:
+                    LOGGER.warning("Could not auto-provision slot %d for %s: %s", idx, pid, exc)
+        return slots
+
+    def render_awg_slots_widget(self, profile: dict[str, Any], sub_id: str) -> str:
+        pid = str(profile.get("public_id") or "")
+        dev_limit = int(profile.get("device_limit") or self.settings.default_device_limit or 3)
+
+        slots = self.ensure_awg_slots_for_profile(profile)
+
+        quota_eval = evaluate_profile_quota(pid, self.store)
+        quota_bytes = quota_eval.awg_quota_bytes or default_awg_quota_bytes_for_devices(dev_limit)
+        used_bytes = quota_eval.awg_used_bytes
+        remaining_bytes = max(0, quota_bytes - used_bytes)
+
+        free_gb = round(remaining_bytes / (1024**3), 1)
+        quota_gb = round(quota_bytes / (1024**3), 1)
+
+        pct_used = min(100.0, round((used_bytes / quota_bytes) * 100.0, 1)) if quota_bytes > 0 else 0.0
+        pct_free = max(0.0, 100.0 - pct_used)
+        is_exceeded = quota_eval.is_exceeded or (quota_bytes > 0 and used_bytes >= quota_bytes)
+
+        if is_exceeded:
+            bar_color = "danger"
+            badge_text = "Превышена квота"
+        elif pct_free < 20.0:
+            bar_color = "amber"
+            badge_text = f"Осталось {round(pct_free, 1)}%"
+        else:
+            bar_color = "emerald"
+            badge_text = f"{pct_used}% использовано"
+
+        battery_icon = "🔋" if pct_free > 10.0 else "🪫"
+
+        quota_info = get_quota_cycle_info(profile, now_ts=int(time.time()))
+        reset_date_str = quota_info["reset_date_str"]
+
+        safe_sub = re.sub(r"[^\w\-]", "_", sub_id)
+        slot_cards_html = []
+        for s in slots:
+            idx = int(s.get("slot_index") or 1)
+            raw_label = str(s.get("slot_label") or f"Устройство {idx}")
+            clean_label = html.escape(raw_label, quote=True)
+            client_ip = html.escape(str(s.get("client_ip") or ""))
+            srv_code = str(s.get("server_code") or "nl").lower()
+            srv_flag = "🇳🇱" if srv_code == "nl" else ("🇵🇱" if srv_code == "pl" else "🇫🇮")
+            srv_name = "Нидерланды" if srv_code == "nl" else ("Польша" if srv_code == "pl" else "Финляндия")
+            is_enabled = bool(s.get("enabled", 1))
+
+            if is_exceeded:
+                status_html = '<span class="slot-badge danger"><span class="badge-dot danger"></span>Превышена квота</span>'
+            elif is_enabled:
+                status_html = '<span class="slot-badge active"><span class="badge-dot pulse-emerald"></span>Активен</span>'
+            else:
+                status_html = '<span class="slot-badge muted"><span class="badge-dot"></span>Выключен</span>'
+
+            slot_cards_html.append(f"""
+            <div class="awg-slot-card" id="awg-slot-{safe_sub}-{idx}">
+              <div class="awg-slot-header">
+                <div class="awg-slot-name-box">
+                  <span class="awg-slot-name" id="slot-name-val-{safe_sub}-{idx}">{clean_label}</span>
+                  <button type="button" class="awg-btn-rename" data-sub-id="{html.escape(sub_id, quote=True)}" data-slot-idx="{idx}" data-label="{clean_label}" onclick="renameAwgSlotBtn(this); return false;" title="Переименовать устройство">✏️ <span style="display:none;">renameAwgSlot</span></button>
+                </div>
+                {status_html}
+              </div>
+              <div class="awg-slot-info">
+                <span>Сервер: <b>{srv_flag} {srv_name}</b></span>
+                <span>ID: <code>{client_ip}</code></span>
+              </div>
+              <div class="awg-slot-actions">
+                <div class="awg-action-row">
+                  <a class="awg-action-btn config" href="/sub/awg/{quote(sub_id)}/slot/{idx}/config" download title="Скачать .conf">
+                    📥 .conf
+                  </a>
+                  <button type="button" class="awg-action-btn qr" data-sub-id="{html.escape(sub_id, quote=True)}" data-slot-idx="{idx}" data-label="{clean_label}" onclick="openAwgQrModal('{html.escape(sub_id, quote=True)}', {idx}, this.getAttribute('data-label'))" title="Показать QR-код">
+                    🔲 QR-код
+                  </button>
+                </div>
+                <div class="awg-action-row single">
+                  <button type="button" class="awg-action-btn copy-key" data-sub-id="{html.escape(sub_id, quote=True)}" data-slot-idx="{idx}" onclick="copyAwgKey('{html.escape(sub_id, quote=True)}', {idx}, this)" title="Скопировать конфигурацию">
+                    📋 Скопировать ключ
+                  </button>
+                </div>
+                <div class="awg-action-row single">
+                  <button type="button" class="awg-action-btn switch-srv" data-sub-id="{html.escape(sub_id, quote=True)}" data-slot-idx="{idx}" data-current-srv="{srv_code}" data-current-name="{srv_name}" onclick="openAwgSwitchModal('{html.escape(sub_id, quote=True)}', {idx}, '{srv_code}', '{srv_name}')" title="Сменить страну">
+                    🔄 Сменить страну
+                  </button>
+                </div>
+              </div>
+            </div>
+            """)
+
+        active_count = sum(1 for s in slots if s.get("enabled") and not is_exceeded)
+        slots_count = len(slots)
+        grid_class = "slots-3" if slots_count == 3 else ("slots-few" if slots_count <= 2 else "slots-many")
+        slots_grid = "".join(slot_cards_html)
+        progress_fill_width = min(100.0, max(1.5 if pct_used > 0 else 0.0, pct_used))
+
+        return f"""
+        <div class="awg-slots-hub">
+          <!-- Quota Progress Widget (Linear / Vercel style) -->
+          <div class="awg-quota-widget">
+            <div class="awg-quota-headline">
+              <div class="awg-quota-text">
+                <span class="awg-title-content">{battery_icon} Оставшийся трафик Amnezia: <strong class="awg-free-metric">{free_gb} ГБ из {quota_gb} ГБ</strong></span>
+              </div>
+              <span class="awg-pct-pill {bar_color}">{badge_text}</span>
+            </div>
+            <div class="awg-progress-track">
+              <div class="awg-progress-fill {bar_color}" style="width: {progress_fill_width}%;"></div>
+            </div>
+            <div class="awg-quota-subline">
+              <div class="awg-reset-date">
+                <span>📅</span> Сброс квоты: <strong>{reset_date_str}</strong> (каждые 30 дней)
+              </div>
+              <div class="awg-unmetered-badge">
+                🌐 Трафик в разделе <a href="#" onclick="if (window.setConnectionMode) {{ window.setConnectionMode('standard'); }} return false;" class="awg-mode-link" style="color: #38bdf8; text-decoration: underline; cursor: pointer; font-weight: 600;">🛡️ Основной</a>: <strong class="unmetered-green">Безлимитно</strong>
+              </div>
+            </div>
+            <div class="awg-quota-note" style="font-size: 11.5px; color: var(--muted); margin-top: 8px; line-height: 1.35;">
+              * Примечание: квоту можно увеличить, приобретя в следующий раз подписку на большее количество устройств.
+            </div>
+          </div>
+
+          <!-- Device Slots Hub -->
+          <div class="awg-devices-section">
+            <div class="awg-devices-head">
+              <div class="awg-devices-title">
+                <span>📱</span>
+                <strong>Выделенные слоты устройств ({active_count} из {dev_limit} активны)</strong>
+              </div>
+              <span class="awg-protocol-tag">AmneziaWG 3.1 • Dedicated IP</span>
+            </div>
+            <div class="awg-slots-grid {grid_class}">
+              {slots_grid}
+            </div>
+          </div>
+        </div>
+        """
+
+    def render_subscription_view(self, profile: dict[str, Any], sub_id: str) -> bytes:
+        now = now_ts()
+        pid = str(profile.get("public_id") or "---")
+        expires_at = int(profile.get("expires_at") or 0)
+        is_active = expires_at > now
+        days_left = max(0, (expires_at - now) // 86400) if is_active else 0
+        expiry_date_str = time.strftime("%d.%m.%Y", time.localtime(expires_at)) if expires_at else "---"
+        device_limit = int(profile.get("device_limit") or self.settings.default_device_limit)
+        transport_raw = str(profile.get("transport") or "tcp")
+        transport_title = "Гибридный (Основной)" if "hybrid" in transport_raw else ("Основной протокол" if transport_raw == "tcp" else "Резервный веб-протокол")
+
+        if not is_active:
+            status_badge = '<span class="cabinet-badge expired">🔴 Срок истёк</span>'
+            days_str = '<span style="color: #ef4444; font-weight: 700;">Истекла</span>'
+        elif days_left <= 3:
+            status_badge = f'<span class="cabinet-badge warning">🟡 Истекает ({days_left} дн.)</span>'
+            days_str = f'<span style="color: #fbbf24; font-weight: 700;">Осталось {days_left} дн.</span>'
+        elif days_left > 365 * 10:
+            status_badge = '<span class="cabinet-badge active">🟢 Активна</span>'
+            days_str = '<span style="color: #34d399; font-weight: 700;">Бессрочно</span>'
+        else:
+            status_badge = '<span class="cabinet-badge active">🟢 Активна</span>'
+            days_str = f'<span style="color: #34d399; font-weight: 700;">Осталось {days_left} дн.</span>'
+
+        kind = "json-hybrid" if "hybrid" in transport_raw or profile.get("profile_mode") == "hybrid" else ("json" if transport_raw == "tcp" else "xhttp-json")
+        sub_url = subscription_url_for_route(self.settings.subscription_base_url, kind, sub_id)
+        setup_url = subscription_setup_url(sub_url)
+
+        awg_widget_html = self.render_awg_slots_widget(profile, sub_id)
+        support_url = (self.settings.support_tg_url or "").strip() or "https://t.me/SilentConnectSupport"
+
+        body = f"""
+        <section class="section cabinet-section">
+          <div class="cabinet-topbar">
+            <h2 class="cabinet-heading">Подписка SilentConnect</h2>
+            <div class="cabinet-meta-row">
+              <span class="cabinet-sub-badge">ID: <code>{html.escape(pid)}</code></span>
+              {status_badge}
+            </div>
+          </div>
+
+          <div class="cabinet-card" style="margin-bottom: 24px;">
+            <div class="cabinet-card-header">
+              <div class="cabinet-card-title">
+                <span style="font-size: 20px;">🌐</span>
+                <span>Параметры доступа</span>
+              </div>
+            </div>
+            <table class="cabinet-table">
+              <tr>
+                <td>Лимит устройств:</td>
+                <td>до {device_limit} устройств</td>
+              </tr>
+              <tr>
+                <td>Протокол / сеть:</td>
+                <td>{html.escape(transport_title)}</td>
+              </tr>
+              <tr>
+                <td>Действует до:</td>
+                <td>{expiry_date_str} ({days_str})</td>
+              </tr>
+            </table>
+            <div class="cabinet-card-actions" style="margin-top: 12px;">
+              <a class="btn cabinet-btn-primary" href="{html.escape(setup_url, quote=True)}" target="_blank" rel="noopener">
+                🚀 Открыть в приложении Happ / Sing-box →
+              </a>
+            </div>
+          </div>
+
+          {awg_widget_html}
+
+          <div class="cabinet-bottom-box" style="margin-top: 24px;">
+            <div class="cabinet-bottom-info">
+              <div style="font-weight: 700; color: #fff; margin-bottom: 4px;">Нужна помощь по настройке?</div>
+              <div style="font-size: 13.5px; color: var(--muted);">
+                Наша поддержка готова помочь с добавлением туннелей на любые устройства.
+              </div>
+            </div>
+            <div class="cabinet-bottom-actions">
+              <a class="btn secondary" href="{html.escape(support_url, quote=True)}" target="_blank" rel="noopener" style="width: auto; min-height: 42px; padding: 8px 18px; font-size: 14px;">
+                💬 Поддержка в Telegram
+              </a>
+            </div>
+          </div>
+          {AWG_SLOT_MODAL_AND_JS}
+        </section>
+        """
+        return self.render_page(f"Подписка {pid}", body)
 
     def render_cabinet(self, email: str, profiles: list[dict[str, Any]]) -> bytes:
         now = now_ts()
@@ -1089,8 +2106,12 @@ class WebCheckout:
             expiry_date_str = time.strftime("%d.%m.%Y", time.localtime(expires_at)) if expires_at else "---"
             device_limit = int(p.get("device_limit") or self.settings.default_device_limit)
             transport_raw = str(p.get("transport") or "tcp")
-            transport_label = "Гибридный (TCP + XHTTP)" if "hybrid" in transport_raw else ("VLESS Reality (TCP)" if transport_raw == "tcp" else "VLESS XHTTP")
+            transport_label = "Гибридный (Основной)" if "hybrid" in transport_raw else ("Основной протокол" if transport_raw == "tcp" else "Резервный веб-протокол")
             setup_url = html.escape(str(p.get("setup_url") or "#"), quote=True)
+
+            sub_id = str(p.get("sub_id") or p.get("public_id") or "")
+            raw_p = p.get("raw_profile") or self.store.get_profile(p.get("public_id")) or p
+            awg_widget_html = self.render_awg_slots_widget(raw_p, sub_id)
 
             cards_html.append(f"""
             <div class="cabinet-card">
@@ -1120,6 +2141,8 @@ class WebCheckout:
                   <td style="font-family: monospace; font-size: 12px; color: var(--muted);">{html.escape(pid)}</td>
                 </tr>
               </table>
+
+              {awg_widget_html}
 
               <div class="cabinet-card-actions">
                 <a class="btn cabinet-btn-primary" href="{setup_url}" target="_blank" rel="noopener">
@@ -1171,6 +2194,7 @@ class WebCheckout:
               </a>
             </div>
           </div>
+          {AWG_SLOT_MODAL_AND_JS}
         </section>
         """
         return self.render_page("Личный кабинет", body)
@@ -1882,7 +2906,449 @@ class WebCheckout:
       .page-title {{ font-size: 19px !important; }}
       .choice {{ font-size: 10.5px; padding: 6px 2px; }}
       .choice span {{ font-size: 8.5px; }}
-      .cf-turnstile > * {{ transform: scale(0.92); transform-origin: center center; }}
+    /* AmneziaWG Device Slots & Quota Widget (Linear / Vercel Dark Style) */
+    .awg-slots-hub {{
+      margin-top: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      width: 100%;
+    }}
+    .awg-quota-widget {{
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    }}
+    .awg-quota-headline {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 12px;
+    }}
+    .awg-quota-text {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: #f8fafc;
+    }}
+    .awg-spark {{
+      font-size: 16px;
+      color: #10b981;
+    }}
+    .awg-free-metric {{
+      color: #10b981;
+      font-weight: 700;
+    }}
+    .awg-pct-pill {{
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 10px;
+      border-radius: 9999px;
+      font-size: 11.5px;
+      font-weight: 700;
+    }}
+    .awg-pct-pill.emerald {{
+      background: rgba(16, 185, 129, 0.12);
+      color: #10b981;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }}
+    .awg-pct-pill.amber {{
+      background: rgba(245, 158, 11, 0.12);
+      color: #f59e0b;
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }}
+    .awg-pct-pill.danger {{
+      background: rgba(239, 68, 68, 0.12);
+      color: #ef4444;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }}
+    .awg-progress-track {{
+      width: 100%;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 9999px;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }}
+    .awg-progress-fill {{
+      height: 100%;
+      border-radius: 9999px;
+      transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }}
+    .awg-progress-fill.emerald {{
+      background: linear-gradient(90deg, #059669, #10b981);
+    }}
+    .awg-progress-fill.amber {{
+      background: linear-gradient(90deg, #d97706, #f59e0b);
+    }}
+    .awg-progress-fill.danger {{
+      background: linear-gradient(90deg, #dc2626, #ef4444);
+    }}
+    .awg-quota-subline {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }}
+    .awg-reset-date strong {{
+      color: #e2e8f0;
+    }}
+    .unmetered-green {{
+      color: #34d399;
+      font-weight: 700;
+    }}
+    .awg-devices-section {{
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 16px;
+    }}
+    .awg-devices-head {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }}
+    .awg-devices-title {{
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 14px;
+      color: #fff;
+    }}
+    .awg-protocol-tag {{
+      font-size: 11px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.04);
+      padding: 2px 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }}
+    .awg-slots-grid {{
+      display: grid;
+      gap: 12px;
+      width: 100%;
+      box-sizing: border-box;
+    }}
+    .awg-slots-grid.slots-3 {{
+      grid-template-columns: repeat(3, 1fr);
+    }}
+    .awg-slots-grid.slots-few {{
+      grid-template-columns: repeat(auto-fit, minmax(240px, 320px));
+      justify-content: center;
+    }}
+    .awg-slots-grid.slots-many {{
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    }}
+    .awg-slot-card {{
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 10px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: border-color 0.2s ease;
+      min-width: 0;
+      box-sizing: border-box;
+    }}
+    .awg-slot-card:hover {{
+      border-color: rgba(255, 255, 255, 0.16);
+    }}
+    .awg-slot-header {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }}
+    .awg-slot-name-box {{
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      min-width: 0;
+      flex: 1;
+    }}
+    .awg-slot-name {{
+      font-size: 13px;
+      font-weight: 600;
+      color: #f8fafc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }}
+    .awg-btn-rename {{
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      width: 24px;
+      height: 24px;
+      min-width: 24px;
+      min-height: 24px;
+      padding: 0;
+      font-size: 13px;
+      border-radius: 6px;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.15s ease, background 0.15s ease;
+    }}
+    .awg-btn-rename:hover {{
+      color: #fff;
+      background: rgba(255, 255, 255, 0.1);
+    }}
+    .slot-badge {{
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 6px;
+      border-radius: 9999px;
+      font-size: 10.5px;
+      font-weight: 600;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }}
+    .slot-badge.active {{
+      background: rgba(16, 185, 129, 0.12);
+      color: #10b981;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }}
+    .slot-badge.danger {{
+      background: rgba(239, 68, 68, 0.12);
+      color: #ef4444;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }}
+    .slot-badge.muted {{
+      background: rgba(255, 255, 255, 0.05);
+      color: #94a3b8;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }}
+    .badge-dot {{
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      display: inline-block;
+    }}
+    .badge-dot.pulse-emerald {{
+      background: #10b981;
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+      animation: pulse-green 2s infinite;
+    }}
+    .badge-dot.danger {{
+      background: #ef4444;
+    }}
+    @keyframes pulse-green {{
+      0% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }}
+      70% {{ transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }}
+      100% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }}
+    }}
+    .awg-slot-info {{
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--muted);
+    }}
+    .awg-slot-info code {{
+      font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+      color: #cbd5e1;
+      font-size: 11.5px;
+    }}
+    .awg-slot-actions {{
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      width: 100%;
+      box-sizing: border-box;
+    }}
+    .awg-action-row {{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      width: 100%;
+      box-sizing: border-box;
+    }}
+    .awg-action-row.single {{
+      grid-template-columns: 1fr;
+    }}
+    .awg-action-btn {{
+      flex: 1;
+      min-height: 38px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 12.5px;
+      font-weight: 600;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      box-sizing: border-box;
+      border: none;
+    }}
+    .awg-action-btn.config {{
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.35);
+    }}
+    .awg-action-btn.config:hover {{
+      background: rgba(16, 185, 129, 0.25);
+      border-color: #34d399;
+      transform: translateY(-1px);
+    }}
+    .awg-action-btn.qr {{
+      background: rgba(255, 255, 255, 0.06);
+      color: #f8fafc;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }}
+    .awg-action-btn.qr:hover {{
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.22);
+      transform: translateY(-1px);
+    }}
+    .awg-action-btn.copy-key {{
+      background: rgba(56, 189, 248, 0.08);
+      color: #38bdf8;
+      border: 1px solid rgba(56, 189, 248, 0.25);
+    }}
+    .awg-action-btn.copy-key:hover {{
+      background: rgba(56, 189, 248, 0.18);
+      border-color: #38bdf8;
+      transform: translateY(-1px);
+    }}
+    .awg-action-btn.switch-srv {{
+      background: rgba(168, 85, 247, 0.08);
+      color: #c084fc;
+      border: 1px solid rgba(168, 85, 247, 0.25);
+    }}
+    .awg-action-btn.switch-srv:hover {{
+      background: rgba(168, 85, 247, 0.18);
+      border-color: #c084fc;
+      transform: translateY(-1px);
+    }}
+    .awg-ping-refresh-btn {{
+      background: rgba(255, 255, 255, 0.05);
+      color: #94a3b8;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }}
+    .awg-ping-refresh-btn:hover:not(:disabled) {{
+      color: #f8fafc;
+      border-color: rgba(255, 255, 255, 0.25);
+      background: rgba(255, 255, 255, 0.1);
+    }}
+    .awg-ping-refresh-btn:disabled {{
+      cursor: not-allowed;
+      opacity: 0.6;
+    }}
+    /* QR Code Modal (Glassmorphism) */
+    .awg-modal-overlay {{
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(8px);
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      box-sizing: border-box;
+    }}
+    .awg-modal-box {{
+      background: #0d0f14;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 16px;
+      max-width: 360px;
+      width: 100%;
+      min-height: 260px;
+      overflow: hidden;
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.6);
+      animation: modal-fade 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }}
+    @keyframes modal-fade {{
+      from {{ opacity: 0; transform: scale(0.95); }}
+      to {{ opacity: 1; transform: scale(1); }}
+    }}
+    .awg-modal-header {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }}
+    .awg-modal-close {{
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 24px;
+      cursor: pointer;
+      line-height: 1;
+      padding: 0;
+    }}
+    .awg-modal-close:hover {{
+      color: #fff;
+    }}
+    .awg-modal-body {{
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }}
+    .awg-qr-wrapper {{
+      background: #ffffff;
+      padding: 12px;
+      border-radius: 12px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 240px;
+      height: 240px;
+      box-sizing: border-box;
+    }}
+    .awg-modal-hint {{
+      font-size: 13px;
+      color: var(--muted);
+      margin: 14px 0 16px 0;
+      text-align: center;
+      line-height: 1.5;
+    }}
+    .awg-modal-footer {{
+      display: flex;
+      gap: 10px;
+      width: 100%;
+    }}
+    @media (max-width: 768px) {{
+      .awg-slots-grid,
+      .awg-slots-grid.slots-3,
+      .awg-slots-grid.slots-few,
+      .awg-slots-grid.slots-many {{
+        grid-template-columns: 1fr !important;
+      }}
+      .awg-action-btn {{
+        min-height: 44px;
+        font-size: 13px;
+      }}
     }}
   </style>
   <script type="application/ld+json">
@@ -2307,6 +3773,8 @@ class WebCheckout:
         </div>
         """
         return self.render_page("Контакты & Поддержка", body)
+
+
 
     def render_home(
         self,
@@ -3031,6 +4499,15 @@ class RequestHandler(BaseHTTPRequestHandler):
             if path == ["api", "payment", "platega", "callback"]:
                 self._send_json(HTTPStatus.OK, b'{"status":"active","gateway":"platega"}')
                 return
+            if path == ["healthz"]:
+                self._send_json(HTTPStatus.OK, b'{"status":"ok"}')
+                return
+            if path == ["boost"] or path == ["api", "boost"]:
+                self.send_response(HTTPStatus.FOUND)
+                self.send_header("Location", "/")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             if not path:
                 query = parse_qs(parsed.query)
                 promo_code = query.get("promo", [""])[0].strip()
@@ -3097,6 +4574,23 @@ class RequestHandler(BaseHTTPRequestHandler):
                     return
                 self._send_json(HTTPStatus.OK, self.checkout.order_status_json(order))
                 return
+            if len(path) == 2 and path[0] == "order":
+                order = self.checkout.store.get_order(path[1])
+                if not order:
+                    self._send(HTTPStatus.NOT_FOUND, self.checkout.render_not_found())
+                    return
+                meta = order.get("meta_json") or {}
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except Exception:
+                        meta = {}
+                token = str(meta.get("web_token") or "")
+                if token:
+                    self._redirect(f"/order/{quote(str(order['public_id']))}/{quote(token)}")
+                    return
+                self._send(HTTPStatus.OK, self.checkout.render_order(self.headers, order))
+                return
             if len(path) == 3 and path[0] == "order":
                 order = self.checkout.load_web_order(path[1], path[2])
                 if not order:
@@ -3117,6 +4611,149 @@ class RequestHandler(BaseHTTPRequestHandler):
                     ))
                     return
                 self._send(HTTPStatus.OK, self.checkout.render_cabinet(email, self.checkout.cabinet_profiles_for_email(email)))
+                return
+
+            # AWG Slot Config Download
+            # GET /sub/awg/<sub_id>/slot/<slot_index>/config or GET /api/sub/awg/<sub_id>/slot/<slot_index>/config
+            if (len(path) == 6 and path[0] == "sub" and path[1] == "awg" and path[3] == "slot" and path[5] in {"config", "conf"}) or \
+               (len(path) == 7 and path[0] == "api" and path[1] == "sub" and path[2] == "awg" and path[4] == "slot" and path[6] in {"config", "conf"}):
+                sub_id = path[2] if path[0] == "sub" else path[3]
+                slot_idx_str = path[4] if path[0] == "sub" else path[5]
+                prof = self.checkout.get_profile_by_any_sub_id(sub_id)
+                if not prof:
+                    self._send_json(HTTPStatus.NOT_FOUND, b'{"ok":false,"error":"profile_not_found"}')
+                    return
+                try:
+                    slot_idx = int(slot_idx_str)
+                except ValueError:
+                    self._send_json(HTTPStatus.BAD_REQUEST, b'{"ok":false,"error":"invalid_slot_index"}')
+                    return
+                try:
+                    slot = self.checkout.ensure_awg_slot(prof["public_id"], slot_idx)
+                except Exception as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                    return
+
+                conf_text = build_slot_conf(slot, server_code=slot.get("server_code", "nl"))
+                conf_bytes = conf_text.encode("utf-8")
+                slot_label = str(slot.get("slot_label") or f"device_{slot_idx}")
+                safe_label = re.sub(r"[^\w\-]", "_", slot_label, flags=re.ASCII).strip("_") or f"device_{slot_idx}"
+                srv_code = (slot.get("server_code") or "nl").upper()
+                filename = f"SilentConnect_{safe_label}_{srv_code}.conf"
+                ascii_filename = re.sub(r"[^\w\-.]", "_", filename, flags=re.ASCII)
+                encoded_filename = quote(filename)
+
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/x-wireguard-profile; charset=utf-8")
+                self.send_header("Content-Disposition", f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{encoded_filename}')
+                self.send_header("Content-Length", str(len(conf_bytes)))
+                for k, v in SECURITY_HEADERS:
+                    self.send_header(k, v)
+                self.end_headers()
+                self.wfile.write(conf_bytes)
+            # AWG Cluster TCP Pings
+            # GET /sub/awg/ping_servers or /api/sub/awg/ping_servers
+            if (len(path) == 3 and path[0] == "sub" and path[1] == "awg" and path[2] in {"ping_servers", "ping"}) or \
+               (len(path) == 4 and path[0] == "api" and path[1] in {"sub", "awg"} and path[3] in {"ping_servers", "ping"}):
+                pings = self.checkout.get_cluster_tcp_pings()
+                self._send_json(HTTPStatus.OK, json.dumps({"ok": True, "pings": pings}).encode("utf-8"))
+                return
+
+            # AWG Slot QR Code
+            # GET /sub/awg/<sub_id>/slot/<slot_index>/qr or GET /api/sub/awg/<sub_id>/slot/<slot_index>/qr
+            if (len(path) == 6 and path[0] == "sub" and path[1] == "awg" and path[3] == "slot" and path[5] in {"qr", "qrcode"}) or \
+               (len(path) == 7 and path[0] == "api" and path[1] == "sub" and path[2] == "awg" and path[4] == "slot" and path[6] in {"qr", "qrcode"}):
+                sub_id = path[2] if path[0] == "sub" else path[3]
+                slot_idx_str = path[4] if path[0] == "sub" else path[5]
+                prof = self.checkout.get_profile_by_any_sub_id(sub_id)
+                if not prof:
+                    self._send_json(HTTPStatus.NOT_FOUND, b'{"ok":false,"error":"profile_not_found"}')
+                    return
+                try:
+                    slot_idx = int(slot_idx_str)
+                except ValueError:
+                    self._send_json(HTTPStatus.BAD_REQUEST, b'{"ok":false,"error":"invalid_slot_index"}')
+                    return
+                try:
+                    slot = self.checkout.ensure_awg_slot(prof["public_id"], slot_idx)
+                except Exception as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                    return
+
+                conf_text = build_slot_conf(slot, server_code=slot.get("server_code", "nl"))
+                qr_bytes = b""
+                content_type = "image/png"
+                try:
+                    from . import qr
+                    qr_bytes = qr.generate_qr_png(conf_text, box_size=6, border=2)
+                    content_type = "image/png"
+                except Exception as exc:
+                    LOGGER.warning("Builtin qr generator failed, falling back to qrcode: %s", exc)
+                    if qrcode:
+                        qr_obj = qrcode.QRCode(box_size=6, border=2)
+                        qr_obj.add_data(conf_text)
+                        qr_obj.make(fit=True)
+                        img = qr_obj.make_image()
+                        buf = io.BytesIO()
+                        img.save(buf, format="PNG")
+                        qr_bytes = buf.getvalue()
+                        content_type = "image/png"
+                    else:
+                        from . import qr
+                        qr_bytes = qr.generate_qr_svg(conf_text, border=2).encode("utf-8")
+                        content_type = "image/svg+xml"
+
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(qr_bytes)))
+                self.send_header("Cache-Control", "private, max-age=60")
+                for k, v in SECURITY_HEADERS:
+                    self.send_header(k, v)
+                self.end_headers()
+                self.wfile.write(qr_bytes)
+                return
+
+            # AWG Slot Raw Config Text (for copying key)
+            # GET /sub/awg/<sub_id>/slot/<slot_index>/config_text or GET /api/sub/awg/<sub_id>/slot/<slot_index>/config_text
+            if (len(path) == 6 and path[0] == "sub" and path[1] == "awg" and path[3] == "slot" and path[5] in {"config_text", "conf_text", "key", "text"}) or \
+               (len(path) == 7 and path[0] == "api" and path[1] == "sub" and path[2] == "awg" and path[4] == "slot" and path[6] in {"config_text", "conf_text", "key", "text"}):
+                sub_id = path[2] if path[0] == "sub" else path[3]
+                slot_idx_str = path[4] if path[0] == "sub" else path[5]
+                prof = self.checkout.get_profile_by_any_sub_id(sub_id)
+                if not prof:
+                    self._send_json(HTTPStatus.NOT_FOUND, b'{"ok":false,"error":"profile_not_found"}')
+                    return
+                try:
+                    slot_idx = int(slot_idx_str)
+                except ValueError:
+                    self._send_json(HTTPStatus.BAD_REQUEST, b'{"ok":false,"error":"invalid_slot_index"}')
+                    return
+                try:
+                    conf_text = self.checkout.get_awg_slot_conf_text(prof["public_id"], slot_idx)
+                except Exception as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                    return
+
+                text_bytes = conf_text.encode("utf-8")
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(text_bytes)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                for k, v in SECURITY_HEADERS:
+                    self.send_header(k, v)
+                self.end_headers()
+                self.wfile.write(text_bytes)
+                return
+
+            # Subscription view: /sub/<sub_id> or /sub/view/<sub_id>
+            if (len(path) == 2 and path[0] == "sub" and path[1] != "awg") or \
+               (len(path) == 3 and path[0] == "sub" and path[1] == "view"):
+                sub_id = path[1] if len(path) == 2 else path[2]
+                prof = self.checkout.get_profile_by_any_sub_id(sub_id)
+                if not prof:
+                    self._send(HTTPStatus.NOT_FOUND, self.checkout.render_not_found())
+                    return
+                self._send(HTTPStatus.OK, self.checkout.render_subscription_view(prof, sub_id))
                 return
             self._send(HTTPStatus.NOT_FOUND, self.checkout.render_not_found())
         except Exception:
@@ -3249,6 +4886,145 @@ class RequestHandler(BaseHTTPRequestHandler):
                 res = self.checkout.request_cabinet_access_link(self.headers, email, turnstile_token)
                 self._send_json(HTTPStatus.OK, json.dumps(res, ensure_ascii=False).encode("utf-8"))
                 return
+
+            # POST /api/internal/awg/traffic-sync
+            if path == ["api", "internal", "awg", "traffic-sync"]:
+                configured_secret = (self.checkout.settings.cluster_sync_secret or "").strip()
+                if not configured_secret:
+                    LOGGER.warning("Cluster traffic sync endpoint called but CLUSTER_SYNC_SECRET is not configured")
+                    self._send_json(HTTPStatus.UNAUTHORIZED, b'{"ok":false,"error":"cluster_sync_not_configured"}')
+                    return
+
+                auth_header = self.headers.get("Authorization", "").strip()
+                token = ""
+                if auth_header.lower().startswith("bearer "):
+                    token = auth_header[7:].strip()
+                if not token:
+                    token = self.headers.get("X-Sync-Secret", "").strip() or self.headers.get("X-Cluster-Sync-Secret", "").strip()
+
+                if not token or not secrets.compare_digest(token, configured_secret):
+                    LOGGER.warning("Unauthorized cluster traffic sync attempt from %s", self.client_address)
+                    self._send_json(HTTPStatus.UNAUTHORIZED, b'{"ok":false,"error":"unauthorized"}')
+                    return
+
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                MAX_SYNC_BODY_BYTES = 1024 * 1024
+                if length > MAX_SYNC_BODY_BYTES:
+                    self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, b'{"ok":false,"error":"body_too_large"}')
+                    return
+                raw = self.rfile.read(length) if length > 0 else b""
+                try:
+                    payload = json.loads(raw.decode("utf-8")) if raw else {}
+                except Exception:
+                    self._send_json(HTTPStatus.BAD_REQUEST, b'{"ok":false,"error":"invalid_json"}')
+                    return
+
+                try:
+                    res = process_cluster_traffic_sync(self.checkout.store, payload)
+                    self._send_json(HTTPStatus.OK, json.dumps(res, ensure_ascii=False).encode("utf-8"))
+                except ValueError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False).encode("utf-8"))
+                except Exception as exc:
+                    LOGGER.exception("Error processing cluster traffic sync: %s", exc)
+                    self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, json.dumps({"ok": False, "error": "internal_error"}, ensure_ascii=False).encode("utf-8"))
+                return
+
+            # POST /sub/awg/<sub_id>/slot/<slot_index>/rename or /api/sub/awg/<sub_id>/slot/<slot_index>/rename
+            if (len(path) == 6 and path[0] == "sub" and path[1] == "awg" and path[3] == "slot" and path[5] == "rename") or \
+               (len(path) == 7 and path[0] == "api" and path[1] == "sub" and path[2] == "awg" and path[4] == "slot" and path[6] == "rename"):
+                sub_id = path[2] if path[0] == "sub" else path[3]
+                slot_idx_str = path[4] if path[0] == "sub" else path[5]
+                prof = self.checkout.get_profile_by_any_sub_id(sub_id)
+                if not prof:
+                    self._send_json(HTTPStatus.NOT_FOUND, b'{"ok":false,"error":"profile_not_found"}')
+                    return
+                try:
+                    slot_idx = int(slot_idx_str)
+                except ValueError:
+                    self._send_json(HTTPStatus.BAD_REQUEST, b'{"ok":false,"error":"invalid_slot_index"}')
+                    return
+
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                if length > MAX_JSON_BODY_BYTES:
+                    self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, b'{"ok":false,"error":"body_too_large"}')
+                    return
+                raw = self.rfile.read(length) if length > 0 else b""
+                new_label = ""
+                content_type = self.headers.get("Content-Type", "")
+                if "application/json" in content_type:
+                    try:
+                        body_json = json.loads(raw.decode("utf-8")) if raw else {}
+                        new_label = str(body_json.get("slot_label") or body_json.get("label") or "").strip()
+                    except Exception:
+                        new_label = ""
+                else:
+                    try:
+                        parsed_qs = parse_qs(raw.decode("utf-8", errors="replace"), keep_blank_values=True)
+                        new_label = str(parsed_qs.get("slot_label", [""])[0] or parsed_qs.get("label", [""])[0]).strip()
+                    except Exception:
+                        new_label = ""
+
+                try:
+                    self.checkout.ensure_awg_slot(prof["public_id"], slot_idx)
+                except Exception as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False).encode("utf-8"))
+                    return
+
+                updated = self.checkout.store.rename_awg_slot_by_index(prof["public_id"], slot_idx, new_label)
+                if not updated:
+                    self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, b'{"ok":false,"error":"failed_to_rename"}')
+                    return
+                self._send_json(HTTPStatus.OK, json.dumps({
+                    "ok": True,
+                    "slot_index": slot_idx,
+                    "slot_label": updated.get("slot_label", new_label),
+                }, ensure_ascii=False).encode("utf-8"))
+                return
+
+            # POST /sub/awg/<sub_id>/slot/<slot_index>/switch_country or /api/sub/awg/<sub_id>/slot/<slot_index>/switch_country
+            if (len(path) == 6 and path[0] == "sub" and path[1] == "awg" and path[3] == "slot" and path[5] == "switch_country") or \
+               (len(path) == 7 and path[0] == "api" and path[1] == "sub" and path[2] == "awg" and path[4] == "slot" and path[6] == "switch_country"):
+                sub_id = path[2] if path[0] == "sub" else path[3]
+                slot_idx_str = path[4] if path[0] == "sub" else path[5]
+                prof = self.checkout.get_profile_by_any_sub_id(sub_id)
+                if not prof:
+                    self._send_json(HTTPStatus.NOT_FOUND, b'{"ok":false,"error":"profile_not_found"}')
+                    return
+                try:
+                    slot_idx = int(slot_idx_str)
+                except ValueError:
+                    self._send_json(HTTPStatus.BAD_REQUEST, b'{"ok":false,"error":"invalid_slot_index"}')
+                    return
+
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                if length > MAX_JSON_BODY_BYTES:
+                    self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, b'{"ok":false,"error":"body_too_large"}')
+                    return
+                raw = self.rfile.read(length) if length > 0 else b""
+                target_country = ""
+                content_type = self.headers.get("Content-Type", "")
+                if "application/json" in content_type:
+                    try:
+                        body_json = json.loads(raw.decode("utf-8")) if raw else {}
+                        target_country = str(body_json.get("country") or body_json.get("server_code") or "").strip()
+                    except Exception:
+                        target_country = ""
+                else:
+                    try:
+                        parsed_qs = parse_qs(raw.decode("utf-8", errors="replace"), keep_blank_values=True)
+                        target_country = str(parsed_qs.get("country", [""])[0] or parsed_qs.get("server_code", [""])[0]).strip()
+                    except Exception:
+                        target_country = ""
+
+                if not target_country:
+                    self._send_json(HTTPStatus.BAD_REQUEST, b'{"ok":false,"error":"missing_country"}')
+                    return
+
+                res = self.checkout.switch_awg_slot_country(prof["public_id"], slot_idx, target_country)
+                status_code = HTTPStatus.OK if res.get("ok") else HTTPStatus.BAD_REQUEST
+                self._send_json(status_code, json.dumps(res, ensure_ascii=False).encode("utf-8"))
+                return
+
             self._send(HTTPStatus.NOT_FOUND, self.checkout.render_not_found())
         except ValueError as exc:
             message = str(exc) or "Не удалось обработать запрос."

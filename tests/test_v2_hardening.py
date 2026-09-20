@@ -264,7 +264,7 @@ class SecurityHelperTests(unittest.TestCase):
         tok = security.sign_token({"email": "a@b"}, purpose="magic_link", ttl_seconds=60)
         self.assertEqual(security.verify_token(tok, purpose="magic_link")["email"], "a@b")
         self.assertIsNone(security.verify_token(tok, purpose="order_web"))
-        tampered = tok[:-1] + ("A" if tok[-1] != "A" else "B")
+        tampered = tok[:20] + ("A" if tok[20] != "A" else "B") + tok[21:]
         self.assertIsNone(security.verify_token(tampered, purpose="magic_link"))
 
     def test_client_ip_ignores_headers_from_untrusted_peer(self):

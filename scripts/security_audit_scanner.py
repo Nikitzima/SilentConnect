@@ -235,7 +235,7 @@ SAFE_WHITELIST_TOKENS: Set[str] = {
     "192.0.2.1",
     "00000000-0000-0000-0000-000000000000",
     "034d060d-8f33-4280-b22c-6b128813646f",
-    "dummy_smtp_password_placeholder",
+    "YOUR_SMTP_PASSWORD",
     "+79990000000",
     "+79001234567",
     "+7 (999) 000-00-00",

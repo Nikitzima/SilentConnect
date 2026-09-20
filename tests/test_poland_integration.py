@@ -40,18 +40,18 @@ class PolandProfilesIntegrationTest(unittest.TestCase):
         raw_text = base64.b64decode(b64_str).decode('utf-8')
         lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
 
-        self.assertEqual(len(lines), 15, f'Expected 15 URIs with Poland, got {len(lines)}')
+        self.assertEqual(len(lines), 15, f'Expected 15 URIs with Poland (no loopbacks), got {len(lines)}')
         
         pl_lines = [l for l in lines if 'pl.silentconnect.net' in l or 'Польша' in l or 'PL' in l]  # PLACEHOLDER
         self.assertEqual(len(pl_lines), 5, f'Expected 5 Poland URIs, found: {pl_lines}')
 
         pl_classic = next(l for l in pl_lines if '11. Классический' in urllib.parse.unquote(l))
-        self.assertIn('sni=swdist.apple.com', pl_classic)
+        self.assertIn('sni=allegro.pl', pl_classic)
         self.assertIn(':443', pl_classic)
         self.assertIn('security=reality', pl_classic)
 
         pl_fast = next(l for l in pl_lines if '12. Быстрый' in urllib.parse.unquote(l))
-        self.assertIn('sni=gateway.icloud.com', pl_fast)
+        self.assertIn('sni=speed.cloudflare.com', pl_fast)
         self.assertIn(':443', pl_fast)
 
         pl_hy2 = next(l for l in pl_lines if '13. Скоростной' in urllib.parse.unquote(l))
@@ -64,6 +64,8 @@ class PolandProfilesIntegrationTest(unittest.TestCase):
         pl_xhttp = next(l for l in pl_lines if '15. Незаметный' in urllib.parse.unquote(l))
         self.assertIn(':8443', pl_xhttp)
         self.assertIn('type=xhttp', pl_xhttp)
+
+        self.assertFalse(any(l.startswith('socks://') for l in lines), "SOCKS loopbacks must be absent from Streisand bundle")
 
     def test_four_profiles_includes_poland_5_profiles(self):
         profiles = subjson_app.build_four_profiles('MainDefConf', 'sub.example.com')

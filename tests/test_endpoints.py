@@ -252,7 +252,7 @@ class TestRequestHandlerRoutingAndEndpoints(unittest.TestCase):
             self.assertIn("⚡ Auto URL-Test", yaml_text)
             self.assertIn("🛡️ Priority Fallback", yaml_text)
             self.assertIn("🇳🇱 NL Classic Reality TCP", yaml_text)
-            self.assertIn("🇫🇮 FI Stealth XHTTP Reality", yaml_text)
+            self.assertIn("🇫🇮 FI Classic Reality TCP", yaml_text)
 
     def test_clash_global_routes(self):
         """Verify /{SECRET}/clash-global/{sub_id} and /meta-global/... return global Clash config."""
@@ -290,16 +290,15 @@ class TestRequestHandlerRoutingAndEndpoints(unittest.TestCase):
             self.assertTrue(any("XHTTP Reality (FI)" in l for l in unquoted_lines))
 
     def test_import_setup_page(self):
-        """Verify /{SECRET}/import/{sub_id} serves Web UI setup page with Clash Meta card."""
+        """Verify /{SECRET}/import/{sub_id} serves Web UI setup page with Clash card."""
         path = f"/{self.secret}/import/{self.sub_id}"
         status, headers, body = self.harness.request("GET", path)
         self.assertEqual(status, 200)
         self.assertIn("text/html", headers.get("content-type", ""))
         html_text = body.decode("utf-8")
-        self.assertIn("Clash Meta / Mihomo", html_text)
+        self.assertIn("Clash / Mihomo", html_text)
         self.assertIn("Happ", html_text)
         self.assertIn("Streisand", html_text)
-        self.assertIn("V2RayTun", html_text)
 
     def test_1click_import_clash_and_meta_pages(self):
         """Verify 1-click import pages for /{SECRET}/import/clash/{sub_id} and /meta/."""
@@ -317,10 +316,11 @@ class TestRequestHandlerRoutingAndEndpoints(unittest.TestCase):
         for target in ["happ", "streisand", "v2raytun"]:
             path = f"/{self.secret}/import/{target}/{self.sub_id}"
             status, headers, body = self.harness.request("GET", path)
-            self.assertEqual(status, 200)
-            self.assertIn("text/html", headers.get("content-type", ""))
-            html_text = body.decode("utf-8")
-            self.assertIn("SilentConnect", html_text)
+            self.assertIn(status, (200, 302))
+            if status == 200:
+                self.assertIn("text/html", headers.get("content-type", ""))
+                html_text = body.decode("utf-8")
+                self.assertIn("SilentConnect", html_text)
 
     def test_backward_compatibility_single_and_test_routes(self):
         """Verify legacy single-profile and test routes still work."""

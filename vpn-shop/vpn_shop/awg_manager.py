@@ -12,6 +12,7 @@ Live-изменения через `awg set` + персистентность в
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shlex
@@ -21,6 +22,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+
+LOGGER = logging.getLogger("vpn_shop.awg_manager")
 
 SERVERS: dict[str, dict[str, Any]] = {
     "nl": {
@@ -66,8 +69,8 @@ SERVERS: dict[str, dict[str, Any]] = {
         "flag": "🇵🇱",
         "mode": "ssh",
         "exec_mode": "ssh",
-        "host": os.environ.get("AWG_PL_HOST", "2.56.125.177"),  # PLACEHOLDER
-        "ssh_host": os.environ.get("AWG_PL_HOST", "2.56.125.177"),  # PLACEHOLDER
+        "host": os.environ.get("AWG_PL_HOST", "pl.silentconnect.net"),  # PLACEHOLDER
+        "ssh_host": os.environ.get("AWG_PL_HOST", "pl.silentconnect.net"),  # PLACEHOLDER
         "ssh_user": os.environ.get("AWG_PL_SSH_USER", "root"),
         "ssh_port": int(os.environ.get("AWG_PL_SSH_PORT", "22")),
         "container": os.environ.get("AWG_PL_CONTAINER", "amnezia-awg2"),
@@ -604,3 +607,78 @@ def all_peers(active_only: bool = True, server_code: str | None = None) -> list[
         q += " WHERE " + " AND ".join(clauses)
     with _db() as conn:
         return [dict(r) for r in conn.execute(q, params).fetchall()]
+
+
+def add_slot_peer(
+    server_code: str = "nl",
+    public_key: str = "",
+    preshared_key: str = "",
+    client_ip: str = "",
+) -> bool:
+    """Add a slot peer to live WireGuard interface and persist to awg0.conf."""
+    server_code = (server_code or "nl").lower().strip()
+    srv = _get_server(server_code)
+    pub = public_key.strip()
+    psk = preshared_key.strip()
+    ip = client_ip.strip()
+    if not pub or not ip:
+        return False
+
+    # 1. Live add in container
+    psk_file = "/tmp/.awg-psk.tmp"
+    try:
+        if psk:
+            _dex(f"echo '{psk}' > {psk_file}", server_code=server_code)
+            _dex(f"awg set awg0 peer {pub} allowed-ips {ip}/32 preshared-key {psk_file}", server_code=server_code)
+            _dex(f"rm -f {psk_file}", server_code=server_code)
+        else:
+            _dex(f"awg set awg0 peer {pub} allowed-ips {ip}/32", server_code=server_code)
+    except Exception as exc:
+        LOGGER.warning("Could not live-add AWG peer %s on %s: %s", pub, server_code, exc)
+
+    # 2. Persist to awg0.conf if not already present
+    try:
+        conf = _server_conf(server_code)
+        if pub not in conf:
+            if psk:
+                block = f"\n[Peer]\nPublicKey = {pub}\nPresharedKey = {psk}\nAllowedIPs = {ip}/32\n"
+            else:
+                block = f"\n[Peer]\nPublicKey = {pub}\nAllowedIPs = {ip}/32\n"
+            _dex(f"cat >> {srv['conf_path']}", inp=block, server_code=server_code)
+    except Exception as exc:
+        LOGGER.warning("Could not persist AWG peer %s to %s on %s: %s", pub, srv.get("conf_path"), server_code, exc)
+    return True
+
+
+def remove_slot_peer(server_code: str = "nl", public_key: str = "") -> bool:
+    """Remove a slot peer from live WireGuard interface and strip from awg0.conf.
+    DO NOT delete from database to preserve traffic history and allow instant reactivation.
+    """
+    server_code = (server_code or "nl").lower().strip()
+    srv = _get_server(server_code)
+    pub = public_key.strip()
+    if not pub:
+        return False
+    # 1. Live remove in container kernel
+    try:
+        _dex(f"awg set awg0 peer {pub} remove", server_code=server_code)
+    except Exception as exc:
+        LOGGER.warning("Could not live-remove AWG peer %s on %s: %s", pub, server_code, exc)
+
+    # 2. Persist removal to awg0.conf
+    try:
+        conf = _server_conf(server_code)
+        if pub in conf:
+            blocks = conf.split("\n[Peer]\n")
+            kept = [blocks[0]]
+            for b in blocks[1:]:
+                if pub not in b:
+                    kept.append(b)
+            new_conf = "\n[Peer]\n".join(kept)
+            if not new_conf.endswith("\n"):
+                new_conf += "\n"
+            _dex(f"cat > {srv['conf_path']}", inp=new_conf, server_code=server_code)
+    except Exception as exc:
+        LOGGER.warning("Could not strip AWG peer %s from %s on %s: %s", pub, srv.get("conf_path"), server_code, exc)
+    return True
+
