@@ -192,6 +192,22 @@ class ManualPaymentProcessor:
             public_id = str(order["public_id"])
             try:
                 profile = self.store.get_profile_for_order(public_id)
+                if not profile:
+                    is_hybrid = str(order.get("transport")) == "hybrid"
+                    check_alias = f"{public_id}-tcp" if is_hybrid else public_id
+                    existing = self.store.get_profile_by_xui_email(check_alias)
+                    if existing:
+                        profile = existing
+                    elif hasattr(self.provisioner, "xui_db"):
+                        found = self.provisioner.xui_db.find_client_by_email(check_alias)
+                        if found and found.get("client"):
+                            inbound_id = int(found.get("inbound_id") or self.provisioner._transport_inbound_id(order["transport"] if not is_hybrid else "tcp"))
+                            profile = self.store.ensure_profile_for_xui_client(
+                                inbound_id,
+                                found["client"],
+                                transport="tcp" if is_hybrid else order["transport"],
+                            )
+
                 if profile and profile.get("public_id"):
                     final = self.store.finalize_order_delivered(
                         public_id,

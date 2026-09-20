@@ -23,7 +23,7 @@ from .platega import PlategaClient
 import hashlib
 from .provisioning import Provisioner
 from .security import client_ip_from_headers, hash_token, is_allowed_host, random_web_token, sign_token, verify_token,  now_ts
-from .store import Store
+from .store import OrderStateError, Store
 from .telegram_api import TelegramBotClient, TelegramApiError
 
 
@@ -982,6 +982,24 @@ class WebCheckout:
         if int(order.get("final_price_rub") or 0) > 0:
             return order
 
+        order_pub_id = str(order["public_id"])
+        current_status = str(order.get("status") or "")
+        if current_status == "delivered":
+            return order
+
+        # Atomic CAS: auto_provision -> provisioning
+        try:
+            order = self.store.transition_order(
+                order_pub_id,
+                "provisioning",
+                expected_from=("auto_provision",),
+                actor="web_auto_free",
+                reason="auto delivery start",
+            )
+        except OrderStateError:
+            latest = self.store.get_order(order_pub_id)
+            return latest or order
+
         promo_id = order.get("promo_id")
         invite_id = order.get("invite_id")
         promo_reserved = False
@@ -990,6 +1008,16 @@ class WebCheckout:
         if promo_id:
             consumed = self.store.consume_promo_code(int(promo_id))
             if not consumed:
+                try:
+                    self.store.transition_order(
+                        order_pub_id,
+                        "failed",
+                        expected_from=("provisioning",),
+                        actor="web_auto_free",
+                        reason="promo_exhausted",
+                    )
+                except Exception:
+                    pass
                 raise ValueError("Промокод больше недоступен или исчерпан.")
             promo_reserved = True
 
@@ -998,26 +1026,58 @@ class WebCheckout:
             if not consumed:
                 if promo_reserved:
                     self.store.restore_promo_code(int(promo_id))
+                try:
+                    self.store.transition_order(
+                        order_pub_id,
+                        "failed",
+                        expected_from=("provisioning",),
+                        actor="web_auto_free",
+                        reason="invite_exhausted",
+                    )
+                except Exception:
+                    pass
                 raise ValueError("Инвайт-код больше недоступен или исчерпан.")
             invite_reserved = True
 
         try:
             result = self.provisioner.create_profile_for_order(order)
-            self.store.update_order_status(str(order["public_id"]), "delivered", closed=True)
+            self.store.transition_order(
+                order_pub_id,
+                "delivered",
+                expected_from=("provisioning",),
+                actor="web_auto_free",
+                reason="auto free delivery succeeded",
+            )
             self.store.record_admin_action(
                 action_type="web_auto_free_order",
                 target_type="order",
-                target_public_id=str(order["public_id"]),
+                target_public_id=order_pub_id,
                 actor="web",
                 meta={"transport": order["transport"], "profile_public_id": result["profile"]["public_id"]},
             )
-        except Exception:
+        except Exception as exc:
             if promo_reserved and promo_id:
-                self.store.restore_promo_code(int(promo_id))
+                try:
+                    self.store.restore_promo_code(int(promo_id))
+                except Exception:
+                    pass
             if invite_reserved and invite_id:
-                self.store.restore_invite(int(invite_id))
+                try:
+                    self.store.restore_invite(int(invite_id))
+                except Exception:
+                    pass
+            try:
+                self.store.transition_order(
+                    order_pub_id,
+                    "failed",
+                    expected_from=("provisioning",),
+                    actor="web_auto_free",
+                    reason=str(exc)[:500],
+                )
+            except Exception:
+                pass
             raise
-        delivered = self.store.get_order(str(order["public_id"])) or order
+        delivered = self.store.get_order(order_pub_id) or order
         customer_email = str(delivered.get("customer_email") or (delivered.get("meta_json") or {}).get("customer_email") or "").strip()
         if customer_email:
             try:
