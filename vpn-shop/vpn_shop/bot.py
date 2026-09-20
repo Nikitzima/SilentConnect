@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit, urlunspl
 from . import awg_manager
 
 from .catalog import Offer, build_offers
-from .config import DEFAULT_MANAGER_TG_ID, REFERRAL_INVITEE_DISCOUNT_PERCENT, Settings
+from .config import REFERRAL_INVITEE_DISCOUNT_PERCENT, Settings
 from .mailer import send_subscription_email_async
 from .platega import PlategaClient
 from .provisioning import ADMIN_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES, TEST_PROFILE_NOTES, Provisioner
@@ -2835,14 +2835,8 @@ class ShopBot:
             user_id = int(raw_user_id) if raw_user_id is not None else None
         except (TypeError, ValueError):
             user_id = None
-        if user_id == DEFAULT_MANAGER_TG_ID:
-            return True
         admin_user_ids = getattr(getattr(self, "settings", None), "admin_user_ids", None)
         if user_id is not None and admin_user_ids and user_id in admin_user_ids:
-            return True
-        username = normalize_username(user.get("username"))
-        admin_usernames = getattr(getattr(self, "settings", None), "admin_usernames", None)
-        if username and admin_usernames and username in admin_usernames:
             return True
         return False
 

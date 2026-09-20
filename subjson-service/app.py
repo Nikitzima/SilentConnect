@@ -969,7 +969,7 @@ def _notify_admins_new_renewal_order(
             except Exception:
                 pass
 
-        env_admin_ids = os.environ.get("ADMIN_TG_IDS", "958026436").strip()
+        env_admin_ids = os.environ.get("ADMIN_TG_IDS", "").strip()
         if env_admin_ids:
             for cid in env_admin_ids.split(","):
                 cid = cid.strip()
@@ -1567,7 +1567,7 @@ def handle_inline_order_paid(order_public_id: str, web_token: str | None = None)
                 except Exception:
                     pass
 
-            env_admin_ids = os.environ.get("ADMIN_TG_IDS", "958026436").strip()
+            env_admin_ids = os.environ.get("ADMIN_TG_IDS", "").strip()
             if env_admin_ids:
                 for cid in env_admin_ids.split(","):
                     cid = cid.strip()

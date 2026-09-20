@@ -36,7 +36,6 @@ os.environ["FI_STANDBY_HOST"] = "fi.example.com"
 
 import app as subjson_app
 from vpn_shop.bot import ShopBot
-from vpn_shop.config import DEFAULT_MANAGER_TG_ID
 
 
 class TestSingboxHappRedesign(unittest.TestCase):
@@ -147,25 +146,24 @@ class TestSingboxHappRedesign(unittest.TestCase):
             self.assertEqual(len(old_direct_rules), 0, "No rule should route to old tag 'direct'")
 
     def test_telegram_bot_is_admin_safe(self):
-        """Verify is_admin handles None, int, str, dict and DEFAULT_MANAGER_TG_ID."""
+        """Verify is_admin handles None, int, str, dict and strictly checks numeric admin_user_ids."""
         bot = ShopBot.__new__(ShopBot)
         mock_settings = MagicMock()
-        mock_settings.admin_user_ids = (111222333,)  # PLACEHOLDER
+        test_admin_id = 12345
+        mock_settings.admin_user_ids = (test_admin_id,)
         mock_settings.admin_usernames = ()
         bot.settings = mock_settings
 
-        self.assertTrue(bot.is_admin(111222333))
-        self.assertTrue(bot.is_admin("111222333"))
-        self.assertTrue(bot.is_admin({"id": 111222333}))
-        self.assertTrue(bot.is_admin({"user_id": 111222333}))
-        self.assertTrue(bot.is_admin(DEFAULT_MANAGER_TG_ID))
-        self.assertTrue(bot.is_admin(str(DEFAULT_MANAGER_TG_ID)))
-        self.assertTrue(bot.is_admin({"id": DEFAULT_MANAGER_TG_ID}))
-        self.assertTrue(bot.is_admin({"user_id": DEFAULT_MANAGER_TG_ID}))
+        self.assertTrue(bot.is_admin(test_admin_id))
+        self.assertTrue(bot.is_admin(str(test_admin_id)))
+        self.assertTrue(bot.is_admin({"id": test_admin_id}))
+        self.assertTrue(bot.is_admin({"user_id": test_admin_id}))
 
         self.assertFalse(bot.is_admin(None))
         self.assertFalse(bot.is_admin({}))
-        self.assertFalse(bot.is_admin(999999999))
+        self.assertFalse(bot.is_admin(99999))
+        self.assertFalse(bot.is_admin("99999"))
+        self.assertFalse(bot.is_admin({"id": 99999}))
         self.assertFalse(bot.is_admin("invalid"))
 
     def test_telegram_bot_home_markup(self):
