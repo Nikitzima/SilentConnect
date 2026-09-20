@@ -2751,6 +2751,86 @@ class ShopBot:
                 except TelegramApiError:
                     LOGGER.exception("Failed to send %s reminder for profile %s", reminder_kind, profile.get("public_id"))
 
+    def recover_stale_orders(self, older_than_seconds: int = 600) -> list[dict[str, Any]]:
+        stale_orders = self.store.list_stale_provisioning_orders(older_than_seconds=older_than_seconds)
+        if not stale_orders:
+            return []
+
+        results: list[dict[str, Any]] = []
+        for order in stale_orders:
+            public_id = str(order["public_id"])
+            claimed = False
+            with self.store._connect() as conn:
+                cur = conn.execute(
+                    "UPDATE orders SET updated_at = ? WHERE public_id = ? AND status = 'provisioning' AND updated_at = ?",
+                    (now_ts(), public_id, order["updated_at"]),
+                )
+                conn.commit()
+                if cur.rowcount == 1:
+                    claimed = True
+
+            if not claimed:
+                continue
+
+            try:
+                # 1. Check if profile was already linked to order
+                profile = self.store.get_profile_for_order(public_id)
+                if profile and profile.get("public_id"):
+                    self.store.finalize_order_delivered(
+                        public_id,
+                        profile_public_id=str(profile["public_id"]),
+                        actor="stale_recovery",
+                    )
+                    results.append({"order": public_id, "action": "delivered", "profile": profile["public_id"]})
+                    continue
+
+                # 2. Check if client exists in X-UI (or store by email)
+                alias = str(order["public_id"])
+                is_hybrid = str(order.get("transport")) == "hybrid"
+                check_alias = f"{public_id}-tcp" if is_hybrid else alias
+
+                existing_profile = self.store.get_profile_by_xui_email(check_alias)
+                xui_client = None
+                if not existing_profile:
+                    found = self.provisioner.xui_db.find_client_by_email(check_alias)
+                    if found and found.get("client"):
+                        xui_client = found
+
+                if existing_profile:
+                    self.store.finalize_order_delivered(
+                        public_id,
+                        profile_public_id=str(existing_profile["public_id"]),
+                        actor="stale_recovery",
+                    )
+                    results.append({"order": public_id, "action": "delivered", "profile": existing_profile["public_id"]})
+                elif xui_client:
+                    inbound_id = int(xui_client.get("inbound_id") or self.provisioner._transport_inbound_id(order["transport"] if not is_hybrid else "tcp"))
+                    new_prof = self.store.ensure_profile_for_xui_client(
+                        inbound_id,
+                        xui_client["client"],
+                        transport="tcp" if is_hybrid else order["transport"],
+                    )
+                    self.store.finalize_order_delivered(
+                        public_id,
+                        profile_public_id=str(new_prof["public_id"]),
+                        actor="stale_recovery",
+                    )
+                    results.append({"order": public_id, "action": "delivered", "profile": new_prof["public_id"]})
+                else:
+                    # 3. Crash happened before X-UI client was created. Fail order and restore promo/invite
+                    self.store.fail_order_provisioning(
+                        public_id,
+                        actor="stale_recovery",
+                        error="Crash recovery: provisioning timed out without profile or X-UI client",
+                        release_reservations=True,
+                    )
+                    results.append({"order": public_id, "action": "failed"})
+            except Exception as exc:
+                LOGGER.exception("Failed to recover stale order %s: %s", public_id, exc)
+                results.append({"order": public_id, "action": "error", "error": str(exc)})
+
+        return results
+
     def _execute_periodic_tasks(self) -> None:
         try:
             self.cleanup_expired_test_profiles()
@@ -2764,6 +2844,10 @@ class ShopBot:
             self.send_subscription_expiry_reminders()
         except Exception:
             LOGGER.exception("Periodic subscription reminder failed")
+        try:
+            self.recover_stale_orders()
+        except Exception:
+            LOGGER.exception("Periodic stale orders recovery failed")
 
     def run_periodic_tasks(self, async_dispatch: bool = False) -> None:
         now = now_ts()

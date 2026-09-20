@@ -356,7 +356,7 @@ def default_awg_quota_bytes_for_devices(device_limit: int) -> int:
 # storage layer, regardless of what the caller asks for.
 ORDER_TRANSITIONS: dict[str, frozenset[str]] = {
     "waiting_payment": frozenset({"provisioning", "auto_provision", "cancelled", "expired"}),
-    "auto_provision": frozenset({"provisioning", "delivered", "failed", "cancelled"}),
+    "auto_provision": frozenset({"provisioning", "failed", "cancelled"}),
     "provisioning": frozenset({"delivered", "failed", "waiting_payment"}),
     "failed": frozenset({"provisioning", "delivered", "cancelled"}),
     # terminal states

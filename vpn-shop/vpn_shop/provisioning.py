@@ -97,93 +97,100 @@ class Provisioner:
         inbound_id = self._transport_inbound_id(transport)
         expires_at_s = days_from_now(int(duration_days))
         alias = alias or family_label or random_alias()
-        inbound = self.xui_api.get_inbound(inbound_id)
-        client = self._build_client(inbound, alias=alias, expires_at_s=expires_at_s, device_limit=device_limit)
-        self.xui_api.add_client(inbound_id, client)
 
-        found = None
-        for _ in range(5):
-            found = self.xui_db.find_client_by_email(alias)
-            if found:
-                break
-            time.sleep(0.2)
-
+        # Idempotency check: if client already exists in x-ui, reuse it!
+        found = self.xui_db.find_client_by_email(alias)
+        client = None
         if not found:
+            inbound = self.xui_api.get_inbound(inbound_id)
+            client = self._build_client(inbound, alias=alias, expires_at_s=expires_at_s, device_limit=device_limit)
+            self.xui_api.add_client(inbound_id, client)
+
+            for _ in range(5):
+                found = self.xui_db.find_client_by_email(alias)
+                if found:
+                    break
+                time.sleep(0.2)
+
+            if not found:
+                try:
+                    ib = self.xui_api.get_inbound(inbound_id)
+                    raw_st = ib.get("settings") or "{}"
+                    st = json.loads(raw_st) if isinstance(raw_st, str) else raw_st
+                    for cl in st.get("clients") or []:
+                        if cl.get("email") == alias:
+                            found = {
+                                "inbound_id": inbound_id,
+                                "remark": ib.get("remark"),
+                                "protocol": ib.get("protocol"),
+                                "port": ib.get("port"),
+                                "client": cl,
+                                "settings": st,
+                                "stream_settings": ib.get("streamSettings") or {},
+                                "sniffing": ib.get("sniffing") or {},
+                            }
+                            break
+                except Exception:
+                    pass
+
+            if not found:
+                found = {
+                    "inbound_id": inbound_id,
+                    "remark": inbound.get("remark"),
+                    "protocol": inbound.get("protocol"),
+                    "port": inbound.get("port"),
+                    "client": client,
+                    "settings": {},
+                    "stream_settings": {},
+                    "sniffing": {},
+                }
+
             try:
-                ib = self.xui_api.get_inbound(inbound_id)
-                raw_st = ib.get("settings") or "{}"
-                st = json.loads(raw_st) if isinstance(raw_st, str) else raw_st
-                for cl in st.get("clients") or []:
-                    if cl.get("email") == alias:
-                        found = {
-                            "inbound_id": inbound_id,
-                            "remark": ib.get("remark"),
-                            "protocol": ib.get("protocol"),
-                            "port": ib.get("port"),
-                            "client": cl,
-                            "settings": st,
-                            "stream_settings": ib.get("streamSettings") or {},
-                            "sniffing": ib.get("sniffing") or {},
-                        }
-                        break
-            except Exception:
-                pass
-
-        if not found:
-            found = {
-                "inbound_id": inbound_id,
-                "remark": inbound.get("remark"),
-                "protocol": inbound.get("protocol"),
-                "port": inbound.get("port"),
-                "client": client,
-                "settings": {},
-                "stream_settings": {},
-                "sniffing": {},
-            }
-
-        try:
-            with sqlite3.connect(self.settings.xui_db_path.as_posix(), timeout=5.0) as db_conn:
-                db_row = db_conn.execute("SELECT settings FROM inbounds WHERE id = ?", (inbound_id,)).fetchone()
-                if db_row and db_row[0]:
-                    try:
-                        db_st = json.loads(db_row[0])
-                    except json.JSONDecodeError:
-                        db_st = {}
-                    existing_clients = db_st.setdefault("clients", [])
-                    if not any(c.get("email") == alias for c in existing_clients):
-                        existing_clients.append(found["client"])
-                        db_conn.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(db_st, ensure_ascii=False), inbound_id))
+                with sqlite3.connect(self.settings.xui_db_path.as_posix(), timeout=5.0) as db_conn:
+                    db_row = db_conn.execute("SELECT settings FROM inbounds WHERE id = ?", (inbound_id,)).fetchone()
+                    if db_row and db_row[0]:
                         try:
-                            db_conn.execute(
-                                """
-                                INSERT INTO client_traffics (inbound_id, enable, email, up, down, total, expiry_time)
-                                VALUES (?, 1, ?, 0, 0, 0, ?)
-                                ON CONFLICT(email) DO UPDATE SET
-                                    enable = 1,
-                                    inbound_id = excluded.inbound_id,
-                                    expiry_time = excluded.expiry_time
-                                """,
-                                (inbound_id, alias, to_xui_ms(expires_at_s)),
-                            )
-                        except sqlite3.OperationalError:
-                            pass
-        except sqlite3.Error as exc:
-            LOGGER.error("Direct SQLite fallback failed for inbound %s: %s", inbound_id, exc)
+                            db_st = json.loads(db_row[0])
+                        except json.JSONDecodeError:
+                            db_st = {}
+                        existing_clients = db_st.setdefault("clients", [])
+                        if not any(c.get("email") == alias for c in existing_clients):
+                            existing_clients.append(found["client"])
+                            db_conn.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(db_st, ensure_ascii=False), inbound_id))
+                            try:
+                                db_conn.execute(
+                                    """
+                                    INSERT INTO client_traffics (inbound_id, enable, email, up, down, total, expiry_time)
+                                    VALUES (?, 1, ?, 0, 0, 0, ?)
+                                    ON CONFLICT(email) DO UPDATE SET
+                                        enable = 1,
+                                        inbound_id = excluded.inbound_id,
+                                        expiry_time = excluded.expiry_time
+                                    """,
+                                    (inbound_id, alias, to_xui_ms(expires_at_s)),
+                                )
+                            except sqlite3.OperationalError:
+                                pass
+            except sqlite3.Error as exc:
+                LOGGER.error("Direct SQLite fallback failed for inbound %s: %s", inbound_id, exc)
 
-        sub_id = found["client"].get("subId") or client.get("subId")
+        sub_id = found["client"].get("subId") or (client.get("subId") if client else None)
         if not sub_id:
             raise RuntimeError(f"Client {alias} has no subId")
 
-        profile = self.store.create_profile(
-            xui_inbound_id=inbound_id,
-            transport=transport,
-            profile_mode=profile_mode,
-            family_label=family_label,
-            xui_email=alias,
-            xui_client_id=found["client"].get("id") or found["client"].get("password") or alias,
-            expires_at=expires_at_s,
-            notes=notes,
-        )
+        # Idempotency check: reuse profile if already created in store
+        profile = self.store.get_profile_by_xui_email(alias)
+        if not profile:
+            profile = self.store.create_profile(
+                xui_inbound_id=inbound_id,
+                transport=transport,
+                profile_mode=profile_mode,
+                family_label=family_label,
+                xui_email=alias,
+                xui_client_id=found["client"].get("id") or found["client"].get("password") or alias,
+                expires_at=expires_at_s,
+                notes=notes,
+            )
 
         return {
             "profile": profile,
@@ -214,13 +221,14 @@ class Provisioner:
             duration_days=int(order["duration_days"]),
             profile_mode=order["profile_mode"],
             family_label=order["family_label"],
+            alias=str(order["public_id"]),
             device_limit=device_limit,
         )
         self.store.link_order_profile(order["public_id"], result["profile"]["public_id"])
         return result
 
     def create_hybrid_profile_for_order(self, order: dict[str, Any], *, device_limit: int) -> dict[str, Any]:
-        alias_prefix = random_alias(prefix="hybrid", size=6)
+        order_pub_id = str(order["public_id"])
         tcp_result: dict[str, Any] | None = None
         try:
             tcp_result = self._provision_profile(
@@ -228,7 +236,7 @@ class Provisioner:
                 duration_days=int(order["duration_days"]),
                 profile_mode=str(order["profile_mode"]),
                 family_label=None,
-                alias=f"{alias_prefix}-tcp",
+                alias=f"{order_pub_id}-tcp",
                 device_limit=device_limit,
             )
             xhttp_result = self._provision_profile(
@@ -236,7 +244,7 @@ class Provisioner:
                 duration_days=int(order["duration_days"]),
                 profile_mode=str(order["profile_mode"]),
                 family_label=None,
-                alias=f"{alias_prefix}-xhttp",
+                alias=f"{order_pub_id}-xhttp",
                 device_limit=device_limit,
             )
         except Exception as exc:
