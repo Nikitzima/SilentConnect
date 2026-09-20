@@ -171,7 +171,7 @@ class TestOrderRaceCondition(unittest.TestCase):
             discount_percent=100,
             fixed_price_rub=0,
             profile_mode="anonymous",
-            max_uses=1,
+            max_uses=2,
         )
 
         order = self.store.create_order(
@@ -316,6 +316,8 @@ class TestOrderRaceCondition(unittest.TestCase):
             )
             conn.commit()
 
+        bot_instance.telegram = MagicMock()
+
         recovered = bot_instance.recover_stale_orders(older_than_seconds=600)
         self.assertEqual(len(recovered), 1)
         self.assertEqual(recovered[0]["action"], "delivered")
@@ -327,4 +329,10 @@ class TestOrderRaceCondition(unittest.TestCase):
         linked_profile = self.store.get_profile_for_order(order["public_id"])
         self.assertIsNotNone(linked_profile)
         self.assertEqual(linked_profile["xui_email"], str(order["public_id"]))
+
+        # Customer must have received the subscription link in Telegram!
+        bot_instance.telegram.send_message.assert_called_once()
+        sent_chat_id, sent_text = bot_instance.telegram.send_message.call_args[0]
+        self.assertEqual(str(sent_chat_id), "123456")
+        self.assertIn("mocksub123", sent_text)
 

@@ -2751,6 +2751,56 @@ class ShopBot:
                 except TelegramApiError:
                     LOGGER.exception("Failed to send %s reminder for profile %s", reminder_kind, profile.get("public_id"))
 
+    def _notify_customer_after_recovery(self, order: dict[str, Any]) -> None:
+        """Send delivery message to customer after crash recovery."""
+        public_id = str(order["public_id"])
+        rec_result = self._recover_subscription_for_order(order) or {}
+        sub_url = str(rec_result.get("subscription_url") or "")
+        profile_public_id = str((rec_result.get("profile") or {}).get("public_id") or order.get("provisioned_profile_id") or "")
+
+        # 1. Telegram delivery
+        customer_chat_id = order.get("customer_chat_id")
+        if customer_chat_id is not None:
+            try:
+                if profile_public_id:
+                    self.store.link_profile_owner(
+                        profile_public_id=profile_public_id,
+                        user_id=customer_chat_id,
+                        chat_id=customer_chat_id,
+                        source_order_public_id=public_id,
+                    )
+                if sub_url:
+                    self._send_public_subscription(
+                        customer_chat_id,
+                        sub_url,
+                        prefix="Оплата подтверждена. Ваша ссылка:",
+                    )
+                if order.get("profile_mode") == "anonymous":
+                    self.store.clear_order_customer_contact(public_id)
+            except Exception:
+                LOGGER.exception("Failed to notify customer %s after stale recovery of %s", customer_chat_id, public_id)
+
+        # 2. Email delivery
+        customer_email = str(order.get("customer_email") or (order.get("meta_json") or {}).get("customer_email") or "").strip()
+        if customer_email and sub_url:
+            try:
+                web_token = str((order.get("meta_json") or {}).get("web_token") or "")
+                cabinet_url = f"{self.settings.web_public_base_url}/order/{quote(public_id, safe='')}/{quote(web_token, safe='')}" if web_token else self.settings.web_public_base_url
+                setup_url = subscription_setup_url(sub_url) if sub_url else cabinet_url
+                send_subscription_email_async(
+                    self.settings,
+                    customer_email=customer_email,
+                    order_public_id=public_id,
+                    plan_name=f"SilentConnect ({order.get('duration_days', 30)} дн.)",
+                    duration_days=int(order.get("duration_days") or 30),
+                    setup_url=setup_url,
+                    json_url=sub_url,
+                    cabinet_url=cabinet_url,
+                    expires_ts=(rec_result.get("profile") or {}).get("expires_at"),
+                )
+            except Exception:
+                LOGGER.exception("Failed to dispatch subscription email after stale recovery of %s", public_id)
+
     def recover_stale_orders(self, older_than_seconds: int = 600) -> list[dict[str, Any]]:
         stale_orders = self.store.list_stale_provisioning_orders(older_than_seconds=older_than_seconds)
         if not stale_orders:
@@ -2776,11 +2826,12 @@ class ShopBot:
                 # 1. Check if profile was already linked to order
                 profile = self.store.get_profile_for_order(public_id)
                 if profile and profile.get("public_id"):
-                    self.store.finalize_order_delivered(
+                    final_order = self.store.finalize_order_delivered(
                         public_id,
                         profile_public_id=str(profile["public_id"]),
                         actor="stale_recovery",
                     )
+                    self._notify_customer_after_recovery(final_order)
                     results.append({"order": public_id, "action": "delivered", "profile": profile["public_id"]})
                     continue
 
@@ -2797,11 +2848,12 @@ class ShopBot:
                         xui_client = found
 
                 if existing_profile:
-                    self.store.finalize_order_delivered(
+                    final_order = self.store.finalize_order_delivered(
                         public_id,
                         profile_public_id=str(existing_profile["public_id"]),
                         actor="stale_recovery",
                     )
+                    self._notify_customer_after_recovery(final_order)
                     results.append({"order": public_id, "action": "delivered", "profile": existing_profile["public_id"]})
                 elif xui_client:
                     inbound_id = int(xui_client.get("inbound_id") or self.provisioner._transport_inbound_id(order["transport"] if not is_hybrid else "tcp"))
@@ -2810,11 +2862,12 @@ class ShopBot:
                         xui_client["client"],
                         transport="tcp" if is_hybrid else order["transport"],
                     )
-                    self.store.finalize_order_delivered(
+                    final_order = self.store.finalize_order_delivered(
                         public_id,
                         profile_public_id=str(new_prof["public_id"]),
                         actor="stale_recovery",
                     )
+                    self._notify_customer_after_recovery(final_order)
                     results.append({"order": public_id, "action": "delivered", "profile": new_prof["public_id"]})
                 else:
                     # 3. Crash happened before X-UI client was created. Fail order and restore promo/invite
