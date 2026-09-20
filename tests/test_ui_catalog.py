@@ -132,7 +132,7 @@ class TestUICatalogAndLayout(unittest.TestCase):
         apps = json.loads(match.group(1))
 
         app_ids = [app["id"] for app in apps]
-        expected_ids = ["happ", "clash", "v2rayn", "nekobox", "v2rayng", "streisand", "v2raytun", "singbox"]
+        expected_ids = ["happ", "clash", "v2rayn", "nekobox", "v2rayng", "streisand", "singbox"]
         for expected in expected_ids:
             self.assertIn(expected, app_ids, f"App ID '{expected}' must be present in the apps catalog")
 
@@ -181,13 +181,7 @@ class TestUICatalogAndLayout(unittest.TestCase):
         self.assertIn("ios", streisand["platforms"])
         self.assertIn("macos", streisand["platforms"])
 
-        # 7. V2RayTun (Backup)
-        v2raytun = apps_by_id["v2raytun"]
-        self.assertEqual(v2raytun["name"], "V2RayTun")
-        self.assertIn("ios", v2raytun["platforms"])
-        self.assertIn("android", v2raytun["platforms"])
-
-        # 8. Sing-box
+        # 7. Sing-box
         singbox = apps_by_id["singbox"]
         self.assertEqual(singbox["name"], "Sing-box")
         for p in ["ios", "android", "windows", "macos", "linux"]:
@@ -361,7 +355,7 @@ class TestUICatalogAndLayout(unittest.TestCase):
 
         # 3. Sing-box URLs
         self.assertEqual(subjson_app.SINGBOX_DOWNLOAD_URL, "https://github.com/SagerNet/sing-box/releases")
-        self.assertEqual(subjson_app.SINGBOX_IOS_URL, "https://apps.apple.com/app/sing-box/id6451272673")
+        self.assertEqual(subjson_app.SINGBOX_IOS_URL, "https://apps.apple.com/app/sing-box-mt/id6785326793")
 
         # 4. Happ URLs
         self.assertEqual(subjson_app.HAPP_DOWNLOAD_URL, "https://www.happ.su/main")
@@ -515,6 +509,40 @@ class TestUICatalogAndLayout(unittest.TestCase):
 
                 card_new = subjson_app.check_pending_payment_card("sub_xyz")
                 self.assertIn("ord_new2", card_new)
+
+                # 5. Stale waiting_payment order older than 24 hours expires
+                conn = sqlite3.connect(db_path)
+                old_ts = now - 90000  # > 24 hours ago
+                conn.execute("INSERT INTO orders VALUES (12, 'ord_old_unpaid', 'waiting_payment', 30, 300, 1, ?, ?, ?, '');",
+                             (old_ts, old_ts, json.dumps({"device_limit": 3})))
+                conn.commit()
+                conn.close()
+
+                card_old = subjson_app.check_pending_payment_card("sub_xyz")
+                self.assertEqual(card_old, "")
+
+                # 6. Active waiting_payment order with platega_status = 'CANCELED' is suppressed
+                conn = sqlite3.connect(db_path)
+                conn.execute("INSERT INTO orders VALUES (13, 'ord_canceled_gateway', 'waiting_payment', 30, 300, 1, ?, ?, ?, '');",
+                             (now, now, json.dumps({"device_limit": 3, "platega_status": "CANCELED"})))
+                conn.commit()
+                conn.close()
+
+                card_gate_canceled = subjson_app.check_pending_payment_card("sub_xyz")
+                self.assertEqual(card_gate_canceled, "")
+
+                # 7. Valid active waiting_payment order shows clean UI: 'Оплатить' without arrow and 'Отменить ✖'
+                conn = sqlite3.connect(db_path)
+                conn.execute("INSERT INTO orders VALUES (14, 'ord_active_pending', 'waiting_payment', 30, 300, 1, ?, ?, ?, '');",
+                             (now, now, json.dumps({"device_limit": 3})))
+                conn.commit()
+                conn.close()
+
+                card_active = subjson_app.check_pending_payment_card("sub_xyz")
+                self.assertIn("ord_active_pending", card_active)
+                self.assertIn("Оплатить", card_active)
+                self.assertNotIn("Оплатить →", card_active)
+                self.assertIn("Отменить ✖", card_active)
 
     def test_dismiss_notice_endpoint(self):
         import importlib

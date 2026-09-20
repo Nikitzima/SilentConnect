@@ -153,6 +153,20 @@ class Provisioner:
                     if not any(c.get("email") == alias for c in existing_clients):
                         existing_clients.append(found["client"])
                         db_conn.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(db_st, ensure_ascii=False), inbound_id))
+                        try:
+                            db_conn.execute(
+                                """
+                                INSERT INTO client_traffics (inbound_id, enable, email, up, down, total, expiry_time)
+                                VALUES (?, 1, ?, 0, 0, 0, ?)
+                                ON CONFLICT(email) DO UPDATE SET
+                                    enable = 1,
+                                    inbound_id = excluded.inbound_id,
+                                    expiry_time = excluded.expiry_time
+                                """,
+                                (inbound_id, alias, to_xui_ms(expires_at_s)),
+                            )
+                        except sqlite3.OperationalError:
+                            pass
         except sqlite3.Error as exc:
             LOGGER.error("Direct SQLite fallback failed for inbound %s: %s", inbound_id, exc)
 
@@ -376,7 +390,16 @@ class Provisioner:
             raise RuntimeError(f"Profile {profile_public_id} has no x-ui client key")
 
         inbound_id = int(found.get("inbound_id") or profile["xui_inbound_id"])
-        self.xui_api.update_client(inbound_id, client_key, client)
+        try:
+            self.xui_api.update_client(inbound_id, client_key, client)
+        except Exception:
+            pass
+        self.xui_db.update_client_expiry_direct(
+            inbound_id,
+            str(profile["xui_email"]),
+            int(client.get("expiryTime") or to_xui_ms(profile.get("expires_at") or 0)),
+            enable=bool(enabled),
+        )
 
         return {
             "profile": profile,

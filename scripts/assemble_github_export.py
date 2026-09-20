@@ -58,6 +58,12 @@ FORBIDDEN_EXTENSIONS = {
 FORBIDDEN_EXACT_FILENAMES = {
     ".env", ".env.local", ".env.production", ".env.staging", ".env.silentconnect", ".env.platega", "subjson.env",
     "outage_metrics.json", "cluster_doctor.py",
+    # Operational deployment & failover scripts with production IPs / secrets
+    "hunt_clean_hetzner_ip.py", "deploy_phase3_slots_hub.py", "deploy_platega_boost.py",
+    "switch_primary.py", "sync_xui_to_remote.py", "generate_screenshots.py",
+    "fix_reality_snis.py", "deploy_all.py", "deploy_smart_selector.py",
+    "deploy_subjson_catalog.py", "deploy_ui_upgrade.py", "promote.sh", "demote.sh",
+    "promote_fi.sh", "demote_fi.sh", "cf-failover-dns.sh", "live_audit_nl.py", "scan_fi.py",
 }
 
 ALLOWED_EXEMPT_NAMES = {
@@ -144,6 +150,16 @@ def assemble():
         if not src_sub.exists():
             print(f"[WARN] Subdirectory {sub} does not exist in source root")
             continue
+        if dst_sub.exists():
+            for r, dirs, files in os.walk(dst_sub):
+                for f in files:
+                    fp = Path(r) / f
+                    if not is_file_allowed(fp):
+                        try:
+                            fp.unlink()
+                            print(f"[PURGE-REMOVED] {fp.relative_to(EXPORT_DIR)}")
+                        except Exception:
+                            pass
         count = copy_tree_sanitized(src_sub, dst_sub)
         print(f"[COPY-SUBDIR] {sub}/ : {count} files copied")
         total_copied += count

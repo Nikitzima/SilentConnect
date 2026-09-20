@@ -122,6 +122,18 @@ class TestRenewalAndRedesign(unittest.TestCase):
             self.assertNotIn("Boost", t)
             self.assertNotIn("⚡", t)
 
+    def test_web_landing_no_boost_in_navbar_or_footer(self):
+        landing_html = self.checkout.render_home().decode("utf-8")
+        self.assertNotIn('href="/boost"', landing_html)
+        self.assertNotIn("⚡ Boost", landing_html)
+        self.assertNotIn("⚡ Ускорение (Boost)", landing_html)
+        self.assertIn("Тарифы", landing_html)
+        self.assertIn("О сервисе", landing_html)
+        self.assertIn("Контакты", landing_html)
+        self.assertIn("Telegram-бот", landing_html)
+        self.assertIn("Поддержка", landing_html)
+        self.assertIn("🔑 Личный кабинет", landing_html)
+
     def test_unified_pricing_no_99_placeholder(self):
         from vpn_shop.catalog import quote_price
         # 3 devices must be 149 (NOT 99)

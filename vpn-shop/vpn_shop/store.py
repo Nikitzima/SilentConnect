@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Iterable, Iterator
@@ -79,6 +80,7 @@ CREATE TABLE IF NOT EXISTS orders (
   updated_at INTEGER NOT NULL,
   closed_at INTEGER,
   meta_json TEXT NOT NULL DEFAULT '{}',
+  external_id TEXT,
   FOREIGN KEY (promo_id) REFERENCES promo_codes(id),
   FOREIGN KEY (invite_id) REFERENCES invite_tokens(id),
   FOREIGN KEY (provisioned_profile_id) REFERENCES profiles(id)
@@ -91,6 +93,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_open_orders_promo
 CREATE UNIQUE INDEX IF NOT EXISTS uq_open_orders_invite
   ON orders(invite_id) WHERE invite_id IS NOT NULL
   AND status IN ('waiting_payment', 'auto_provision');
+
+CREATE INDEX IF NOT EXISTS idx_orders_external_id
+  ON orders(external_id) WHERE external_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS profiles (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,7 +111,11 @@ CREATE TABLE IF NOT EXISTS profiles (
   expires_at INTEGER NOT NULL,
   last_renewed_at INTEGER,
   deleted_at INTEGER,
-  notes TEXT
+  notes TEXT,
+  awg_quota_bytes INTEGER NOT NULL DEFAULT 0,
+  awg_used_bytes INTEGER NOT NULL DEFAULT 0,
+  awg_reset_at INTEGER,
+  device_limit INTEGER NOT NULL DEFAULT 3
 );
 
 CREATE TABLE IF NOT EXISTS profile_owners (
@@ -274,7 +283,43 @@ CREATE TABLE IF NOT EXISTS magic_links (
   used_at INTEGER,
   request_ip TEXT
 );
-CREATE INDEX IF NOT EXISTS ix_magic_links_email ON magic_links(email, created_at);
+CREATE TABLE IF NOT EXISTS awg_slots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_public_id TEXT NOT NULL,
+  slot_index INTEGER NOT NULL,
+  slot_label TEXT NOT NULL,
+  public_key TEXT NOT NULL UNIQUE,
+  private_key_enc TEXT NOT NULL,
+  preshared_key TEXT,
+  client_ip TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  server_code TEXT NOT NULL DEFAULT 'nl',
+  FOREIGN KEY (profile_public_id) REFERENCES profiles(public_id),
+  UNIQUE(profile_public_id, slot_index, server_code)
+);
+
+CREATE INDEX IF NOT EXISTS ix_awg_slots_profile ON awg_slots(profile_public_id);
+CREATE INDEX IF NOT EXISTS ix_awg_slots_public_key ON awg_slots(public_key);
+CREATE INDEX IF NOT EXISTS ix_awg_slots_client_ip ON awg_slots(client_ip);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_awg_slots_server_ip ON awg_slots(server_code, client_ip);
+
+CREATE TABLE IF NOT EXISTS awg_traffic_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  node_id TEXT NOT NULL,
+  slot_id INTEGER,
+  profile_public_id TEXT NOT NULL,
+  delta_rx_bytes INTEGER NOT NULL DEFAULT 0,
+  delta_tx_bytes INTEGER NOT NULL DEFAULT 0,
+  collected_at INTEGER NOT NULL,
+  FOREIGN KEY (slot_id) REFERENCES awg_slots(id) ON DELETE SET NULL,
+  FOREIGN KEY (profile_public_id) REFERENCES profiles(public_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS ix_awg_traffic_ledger_profile ON awg_traffic_ledger(profile_public_id, collected_at);
+CREATE INDEX IF NOT EXISTS ix_awg_traffic_ledger_slot ON awg_traffic_ledger(slot_id);
+CREATE INDEX IF NOT EXISTS ix_awg_traffic_ledger_node ON awg_traffic_ledger(node_id, collected_at);
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version INTEGER PRIMARY KEY,
@@ -287,12 +332,30 @@ CREATE INDEX IF NOT EXISTS ix_profiles_status_expires ON profiles(status, expire
 CREATE INDEX IF NOT EXISTS ix_orders_customer_email ON orders(customer_email);
 """
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+
+AWG_TIER_QUOTAS_GB: dict[int, int] = {
+    3: 250,
+    6: 500,
+    9: 1000,
+}
+AWG_TIER_QUOTAS_BYTES: dict[int, int] = {
+    devices: gb * 1024 * 1024 * 1024
+    for devices, gb in AWG_TIER_QUOTAS_GB.items()
+}
+
+
+def default_awg_quota_bytes_for_devices(device_limit: int) -> int:
+    if device_limit <= 3:
+        return AWG_TIER_QUOTAS_BYTES[3]
+    if device_limit <= 6:
+        return AWG_TIER_QUOTAS_BYTES[6]
+    return AWG_TIER_QUOTAS_BYTES[9]
 
 # Order finite-state machine. Any transition not listed here is rejected at the
 # storage layer, regardless of what the caller asks for.
 ORDER_TRANSITIONS: dict[str, frozenset[str]] = {
-    "waiting_payment": frozenset({"provisioning", "delivered", "cancelled", "expired", "auto_provision"}),
+    "waiting_payment": frozenset({"provisioning", "auto_provision", "delivered", "cancelled", "expired"}),
     "auto_provision": frozenset({"provisioning", "delivered", "failed", "cancelled"}),
     "provisioning": frozenset({"delivered", "failed", "waiting_payment"}),
     "failed": frozenset({"provisioning", "delivered", "cancelled"}),
@@ -315,6 +378,55 @@ class Store:
     def init(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
+            existing_tables = {
+                str(row["name"])
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            }
+            if "orders" in existing_tables:
+                self._ensure_column(conn, "orders", "customer_email", "TEXT NOT NULL DEFAULT ''")
+                self._ensure_column(conn, "orders", "web_token_hash", "TEXT")
+                self._ensure_column(conn, "orders", "version", "INTEGER NOT NULL DEFAULT 0")
+                self._ensure_column(conn, "orders", "external_id", "TEXT")
+            if "profiles" in existing_tables:
+                self._ensure_column(conn, "profiles", "awg_quota_bytes", "INTEGER NOT NULL DEFAULT 0")
+                self._ensure_column(conn, "profiles", "awg_used_bytes", "INTEGER NOT NULL DEFAULT 0")
+                self._ensure_column(conn, "profiles", "awg_reset_at", "INTEGER")
+                self._ensure_column(conn, "profiles", "device_limit", "INTEGER NOT NULL DEFAULT 3")
+            if "awg_slots" in existing_tables:
+                self._ensure_column(conn, "awg_slots", "server_code", "TEXT NOT NULL DEFAULT 'nl'")
+                table_sql_row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='awg_slots'").fetchone()
+                table_sql = str(table_sql_row["sql"] or "") if table_sql_row else ""
+                if "UNIQUE(profile_public_id, slot_index)" in table_sql:
+                    # Migrate awg_slots table to UNIQUE(profile_public_id, slot_index, server_code)
+                    conn.execute("ALTER TABLE awg_slots RENAME TO awg_slots_migration_old;")
+                    conn.execute("""
+                    CREATE TABLE awg_slots (
+                      id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      profile_public_id TEXT NOT NULL,
+                      slot_index INTEGER NOT NULL,
+                      slot_label TEXT NOT NULL,
+                      public_key TEXT NOT NULL UNIQUE,
+                      private_key_enc TEXT NOT NULL,
+                      preshared_key TEXT,
+                      client_ip TEXT NOT NULL,
+                      enabled INTEGER NOT NULL DEFAULT 1,
+                      created_at INTEGER NOT NULL,
+                      updated_at INTEGER NOT NULL,
+                      server_code TEXT NOT NULL DEFAULT 'nl',
+                      FOREIGN KEY (profile_public_id) REFERENCES profiles(public_id),
+                      UNIQUE(profile_public_id, slot_index, server_code)
+                    );
+                    """)
+                    conn.execute("""
+                    INSERT INTO awg_slots(id, profile_public_id, slot_index, slot_label, public_key, private_key_enc, preshared_key, client_ip, enabled, created_at, updated_at, server_code)
+                    SELECT id, profile_public_id, slot_index, slot_label, public_key, private_key_enc, preshared_key, client_ip, enabled, created_at, updated_at, COALESCE(server_code, 'nl')
+                    FROM awg_slots_migration_old;
+                    """)
+                    conn.execute("DROP TABLE awg_slots_migration_old;")
+                    conn.execute("CREATE INDEX IF NOT EXISTS ix_awg_slots_profile ON awg_slots(profile_public_id);")
+                    conn.execute("CREATE INDEX IF NOT EXISTS ix_awg_slots_public_key ON awg_slots(public_key);")
+                    conn.execute("CREATE INDEX IF NOT EXISTS ix_awg_slots_client_ip ON awg_slots(client_ip);")
+                    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_awg_slots_server_ip ON awg_slots(server_code, client_ip);")
             conn.executescript(SCHEMA)
             self._ensure_column(conn, "promo_codes", "promo_type", "TEXT NOT NULL DEFAULT 'fixed'")
             self._ensure_column(conn, "promo_codes", "device_limit", "INTEGER NOT NULL DEFAULT 3")
@@ -323,11 +435,18 @@ class Store:
             self._ensure_column(conn, "orders", "customer_email", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "orders", "web_token_hash", "TEXT")
             self._ensure_column(conn, "orders", "version", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "orders", "external_id", "TEXT")
             self._ensure_column(conn, "webhook_events", "status", "TEXT NOT NULL DEFAULT 'processed'")
             self._ensure_column(conn, "webhook_events", "payload_sha256", "TEXT")
             self._ensure_column(conn, "webhook_events", "attempts", "INTEGER NOT NULL DEFAULT 1")
             self._ensure_column(conn, "webhook_events", "last_error", "TEXT")
             self._ensure_column(conn, "webhook_events", "updated_at", "INTEGER")
+            self._ensure_column(conn, "profiles", "awg_quota_bytes", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "profiles", "awg_used_bytes", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "profiles", "awg_reset_at", "INTEGER")
+            self._ensure_column(conn, "profiles", "device_limit", "INTEGER NOT NULL DEFAULT 3")
+            self._ensure_column(conn, "awg_slots", "server_code", "TEXT NOT NULL DEFAULT 'nl'")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_awg_slots_server_ip ON awg_slots(server_code, client_ip);")
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)",
                 (SCHEMA_VERSION, now_ts()),
@@ -1227,6 +1346,15 @@ class Store:
     def get_order_by_platega_tx_id(self, tx_id: str) -> dict[str, Any] | None:
         if not tx_id:
             return None
+        # Сначала ищем по новой колонке external_id (быстрый путь)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM orders WHERE external_id = ? LIMIT 1",
+                (tx_id,),
+            ).fetchone()
+        if row:
+            return self._row_to_dict(row)
+        # Fallback: ищем в meta_json (для старых ордеров, созданных до миграции)
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM orders WHERE meta_json LIKE ? ORDER BY id DESC LIMIT 5",
@@ -1239,6 +1367,17 @@ class Store:
                 if str(meta.get("platega_transaction_id") or "") == str(tx_id):
                     return d
         return None
+
+    def link_order_external_id(self, public_id_value: str, external_id: str) -> None:
+        """Привязывает external_id (Platega tx_id) к ордеру. Idempotent — без ошибок при повторном вызове."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE orders SET external_id = ?, updated_at = ?
+                WHERE public_id = ? AND external_id IS NULL
+                """,
+                (external_id, now_ts(), public_id_value),
+            )
 
     def record_webhook_event(
         self,
@@ -1576,17 +1715,32 @@ class Store:
         xui_client_id: str,
         expires_at: int,
         notes: str = "",
+        awg_quota_bytes: int = 0,
+        awg_reset_at: int | None = None,
+        device_limit: int | None = None,
     ) -> dict[str, Any]:
         now = now_ts()
         public = public_id("prf")
-        with self._connect() as conn:
+        reset_at = awg_reset_at if awg_reset_at is not None else expires_at
+        quota_val = int(awg_quota_bytes or 0)
+        if device_limit is not None:
+            eff_device_limit = max(1, min(9, int(device_limit)))
+        elif quota_val >= AWG_TIER_QUOTAS_BYTES[9]:
+            eff_device_limit = 9
+        elif quota_val >= AWG_TIER_QUOTAS_BYTES[6]:
+            eff_device_limit = 6
+        else:
+            eff_device_limit = 3
+
+        with self.transaction() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO profiles(
                   public_id, xui_inbound_id, transport, profile_mode, family_label,
-                  xui_email, xui_client_id, status, created_at, expires_at, last_renewed_at, notes
+                  xui_email, xui_client_id, status, created_at, expires_at, last_renewed_at, notes,
+                  awg_quota_bytes, awg_used_bytes, awg_reset_at, device_limit
                 )
-                VALUES(?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+                VALUES(?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, 0, ?, ?)
                 """,
                 (
                     public,
@@ -1600,6 +1754,9 @@ class Store:
                     expires_at,
                     now,
                     notes or None,
+                    quota_val,
+                    reset_at,
+                    eff_device_limit,
                 ),
             )
             row = conn.execute("SELECT * FROM profiles WHERE id = ?", (cursor.lastrowid,)).fetchone()
@@ -1652,17 +1809,34 @@ class Store:
                 (profile_row["id"], now_ts(), order_public_id),
             )
 
-    def extend_profile(self, profile_public_id: str, expires_at: int) -> dict[str, Any]:
+    def extend_profile(
+        self,
+        profile_public_id: str,
+        expires_at: int,
+        *,
+        reset_awg_quota: bool = True,
+    ) -> dict[str, Any]:
         now = now_ts()
         with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE profiles
-                SET expires_at = ?, last_renewed_at = ?, status = 'active', deleted_at = NULL
-                WHERE public_id = ? AND status != 'deleted'
-                """,
-                (int(expires_at), now, profile_public_id),
-            )
+            if reset_awg_quota:
+                conn.execute(
+                    """
+                    UPDATE profiles
+                    SET expires_at = ?, last_renewed_at = ?, status = 'active', deleted_at = NULL,
+                        awg_used_bytes = 0, awg_reset_at = ?
+                    WHERE public_id = ? AND status != 'deleted'
+                    """,
+                    (int(expires_at), now, int(expires_at), profile_public_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE profiles
+                    SET expires_at = ?, last_renewed_at = ?, status = 'active', deleted_at = NULL
+                    WHERE public_id = ? AND status != 'deleted'
+                    """,
+                    (int(expires_at), now, profile_public_id),
+                )
             row = conn.execute("SELECT * FROM profiles WHERE public_id = ?", (profile_public_id,)).fetchone()
         return self._row_to_dict(row) or {}
 
@@ -2497,3 +2671,472 @@ class Store:
                 seen_profile_ids.add(pid)
                 result.append(d)
         return result
+
+    # ------------------------------------------------------------------
+    # AmneziaWG Device Slots & Traffic Ledger (Phase 1)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def sanitize_device_label(label: str, max_length: int = 16) -> str:
+        """Валидация и очистка имени устройства от спецсимволов и XSS (1..16 символов)."""
+        if not label:
+            raise ValueError("Device label must not be empty")
+        sanitized = re.sub(r'[<>"\'&;\\`]', "", str(label)).strip()
+        if not sanitized:
+            raise ValueError("Device label contains only invalid characters")
+        if len(sanitized) > max_length:
+            raise ValueError(f"Device label exceeds maximum length of {max_length} characters (got {len(sanitized)})")
+        return sanitized
+
+    def create_awg_slot(
+        self,
+        *,
+        profile_public_id: str,
+        slot_index: int,
+        slot_label: str,
+        public_key: str,
+        private_key_enc: str,
+        preshared_key: str | None = None,
+        client_ip: str,
+        enabled: bool = True,
+        server_code: str = "nl",
+    ) -> dict[str, Any]:
+        idx = int(slot_index)
+        if not (1 <= idx <= 9):
+            raise ValueError(f"slot_index must be between 1 and 9, got {slot_index}")
+        raw_label = (slot_label or "").strip()
+        clean_label = self.sanitize_device_label(raw_label, 16) if raw_label else f"Устройство {idx}"
+        clean_pubkey = (public_key or "").strip()
+        if not clean_pubkey:
+            raise ValueError("public_key must not be empty")
+        clean_privkey = (private_key_enc or "").strip()
+        if not clean_privkey:
+            raise ValueError("private_key_enc must not be empty")
+        clean_ip = (client_ip or "").strip()
+        if not clean_ip:
+            raise ValueError("client_ip must not be empty")
+        srv_code = (server_code or "nl").strip().lower()
+
+        now = now_ts()
+        with self.transaction() as conn:
+            # Validate profile existence and device tier
+            p_row = conn.execute(
+                "SELECT id, awg_quota_bytes, device_limit FROM profiles WHERE public_id = ? AND status != 'deleted'",
+                (profile_public_id,),
+            ).fetchone()
+            if not p_row:
+                raise KeyError(f"Profile '{profile_public_id}' not found or deleted")
+
+            # Determine allowed device limit for profile
+            prof_limit = int(p_row["device_limit"]) if ("device_limit" in p_row.keys() and p_row["device_limit"]) else 3
+            if p_row["awg_quota_bytes"]:
+                q_val = int(p_row["awg_quota_bytes"])
+                if q_val >= AWG_TIER_QUOTAS_BYTES[9]:
+                    prof_limit = max(prof_limit, 9)
+                elif q_val >= AWG_TIER_QUOTAS_BYTES[6]:
+                    prof_limit = max(prof_limit, 6)
+
+            if idx > prof_limit:
+                raise ValueError(f"slot_index {idx} exceeds profile device limit ({prof_limit})")
+
+            # Check maximum active slots for this profile
+            cnt_row = conn.execute(
+                "SELECT COUNT(DISTINCT slot_index) AS cnt FROM awg_slots WHERE profile_public_id = ?",
+                (profile_public_id,),
+            ).fetchone()
+            slot_exists_row = conn.execute(
+                "SELECT id FROM awg_slots WHERE profile_public_id = ? AND slot_index = ?",
+                (profile_public_id, idx),
+            ).fetchone()
+            if cnt_row and int(cnt_row["cnt"]) >= prof_limit and not slot_exists_row:
+                raise ValueError(f"Profile has reached maximum allowed slots ({prof_limit})")
+
+            # Check client_ip uniqueness on this server
+            ip_row = conn.execute(
+                "SELECT id FROM awg_slots WHERE server_code = ? AND client_ip = ?",
+                (srv_code, clean_ip),
+            ).fetchone()
+            if ip_row:
+                raise sqlite3.IntegrityError(f"client_ip '{clean_ip}' is already in use on server '{srv_code}'")
+
+            cursor = conn.execute(
+                """
+                INSERT INTO awg_slots(
+                  profile_public_id, slot_index, slot_label, public_key, private_key_enc,
+                  preshared_key, client_ip, enabled, created_at, updated_at, server_code
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    profile_public_id,
+                    idx,
+                    clean_label,
+                    clean_pubkey,
+                    clean_privkey,
+                    preshared_key or None,
+                    clean_ip,
+                    1 if enabled else 0,
+                    now,
+                    now,
+                    srv_code,
+                ),
+            )
+            slot_id = cursor.lastrowid
+            row = conn.execute("SELECT * FROM awg_slots WHERE id = ?", (slot_id,)).fetchone()
+        return self._row_to_dict(row) or {}
+
+    def get_awg_slot(self, slot_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM awg_slots WHERE id = ?", (int(slot_id),)).fetchone()
+        return self._row_to_dict(row)
+
+    def get_awg_slot_by_index(self, profile_public_id: str, slot_index: int, server_code: str | None = None) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            if server_code:
+                row = conn.execute(
+                    "SELECT * FROM awg_slots WHERE profile_public_id = ? AND slot_index = ? AND server_code = ?",
+                    (profile_public_id, int(slot_index), str(server_code).strip().lower()),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM awg_slots WHERE profile_public_id = ? AND slot_index = ? ORDER BY enabled DESC, updated_at DESC LIMIT 1",
+                    (profile_public_id, int(slot_index)),
+                ).fetchone()
+        return self._row_to_dict(row)
+
+    def get_awg_slot_by_public_key(self, public_key: str) -> dict[str, Any] | None:
+        clean_key = (public_key or "").strip()
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM awg_slots WHERE public_key = ?", (clean_key,)).fetchone()
+        return self._row_to_dict(row)
+
+    def list_awg_slots(self, profile_public_id: str, active_only: bool = False) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            if active_only:
+                rows = conn.execute(
+                    "SELECT * FROM awg_slots WHERE profile_public_id = ? AND enabled = 1 ORDER BY slot_index ASC",
+                    (profile_public_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM awg_slots
+                    WHERE id IN (
+                        SELECT id FROM (
+                            SELECT id, slot_index,
+                                   ROW_NUMBER() OVER (PARTITION BY slot_index ORDER BY enabled DESC, updated_at DESC) as rn
+                            FROM awg_slots
+                            WHERE profile_public_id = ?
+                        ) WHERE rn = 1
+                    )
+                    ORDER BY slot_index ASC
+                    """,
+                    (profile_public_id,),
+                ).fetchall()
+        return [self._row_to_dict(r) for r in rows if r]
+
+    def list_all_awg_slot_configs(self, profile_public_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM awg_slots WHERE profile_public_id = ? ORDER BY slot_index ASC, server_code ASC",
+                (profile_public_id,),
+            ).fetchall()
+        return [self._row_to_dict(r) for r in rows if r]
+
+    def switch_awg_slot_active_server(self, profile_public_id: str, slot_index: int, target_server: str) -> dict[str, Any] | None:
+        idx = int(slot_index)
+        target_srv = (target_server or "nl").strip().lower()
+        now = now_ts()
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE awg_slots SET enabled = 0, updated_at = ? WHERE profile_public_id = ? AND slot_index = ? AND server_code != ?",
+                (now, profile_public_id, idx, target_srv),
+            )
+            conn.execute(
+                "UPDATE awg_slots SET enabled = 1, updated_at = ? WHERE profile_public_id = ? AND slot_index = ? AND server_code = ?",
+                (now, profile_public_id, idx, target_srv),
+            )
+            row = conn.execute(
+                "SELECT * FROM awg_slots WHERE profile_public_id = ? AND slot_index = ? AND server_code = ?",
+                (profile_public_id, idx, target_srv),
+            ).fetchone()
+        return self._row_to_dict(row)
+
+    def rename_awg_slot(self, slot_id: int, new_label: str) -> dict[str, Any] | None:
+        clean_label = self.sanitize_device_label(new_label, 16)
+        now = now_ts()
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE awg_slots SET slot_label = ?, updated_at = ? WHERE id = ?",
+                (clean_label, now, int(slot_id)),
+            )
+            row = conn.execute("SELECT * FROM awg_slots WHERE id = ?", (int(slot_id),)).fetchone()
+        return self._row_to_dict(row)
+
+    def rename_awg_slot_by_index(self, profile_public_id: str, slot_index: int, new_label: str) -> dict[str, Any] | None:
+        clean_label = self.sanitize_device_label(new_label, 16)
+        now = now_ts()
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE awg_slots SET slot_label = ?, updated_at = ? WHERE profile_public_id = ? AND slot_index = ?",
+                (clean_label, now, profile_public_id, int(slot_index)),
+            )
+            row = conn.execute(
+                "SELECT * FROM awg_slots WHERE profile_public_id = ? AND slot_index = ? ORDER BY enabled DESC, updated_at DESC LIMIT 1",
+                (profile_public_id, int(slot_index)),
+            ).fetchone()
+        return self._row_to_dict(row)
+
+    def set_awg_slot_enabled(self, slot_id: int, enabled: bool) -> dict[str, Any] | None:
+        now = now_ts()
+        val = 1 if enabled else 0
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE awg_slots SET enabled = ?, updated_at = ? WHERE id = ?",
+                (val, now, int(slot_id)),
+            )
+            row = conn.execute("SELECT * FROM awg_slots WHERE id = ?", (int(slot_id),)).fetchone()
+        return self._row_to_dict(row)
+
+    def set_awg_slot_enabled_by_index(self, profile_public_id: str, slot_index: int, enabled: bool) -> dict[str, Any] | None:
+        now = now_ts()
+        val = 1 if enabled else 0
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE awg_slots SET enabled = ?, updated_at = ? WHERE profile_public_id = ? AND slot_index = ?",
+                (val, now, profile_public_id, int(slot_index)),
+            )
+            row = conn.execute(
+                "SELECT * FROM awg_slots WHERE profile_public_id = ? AND slot_index = ?",
+                (profile_public_id, int(slot_index)),
+            ).fetchone()
+        return self._row_to_dict(row)
+
+    def delete_awg_slot(self, slot_id: int) -> bool:
+        with self.transaction() as conn:
+            cursor = conn.execute("DELETE FROM awg_slots WHERE id = ?", (int(slot_id),))
+            return cursor.rowcount > 0
+
+    def delete_awg_slot_by_index(self, profile_public_id: str, slot_index: int) -> bool:
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM awg_slots WHERE profile_public_id = ? AND slot_index = ?",
+                (profile_public_id, int(slot_index)),
+            )
+            return cursor.rowcount > 0
+
+    def get_used_awg_client_ips(self, server_code: str = "nl") -> set[str]:
+        srv_code = (server_code or "nl").strip().lower()
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT client_ip FROM awg_slots WHERE server_code = ?",
+                (srv_code,),
+            ).fetchall()
+        return {str(r["client_ip"]) for r in rows if r and r["client_ip"]}
+
+    def record_awg_traffic_delta(
+        self,
+        *,
+        node_id: str,
+        profile_public_id: str,
+        slot_id: int | None = None,
+        delta_rx_bytes: int = 0,
+        delta_tx_bytes: int = 0,
+        collected_at: int | None = None,
+    ) -> dict[str, Any]:
+        rx = max(0, int(delta_rx_bytes))
+        tx = max(0, int(delta_tx_bytes))
+        now = collected_at or now_ts()
+        total = rx + tx
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO awg_traffic_ledger(
+                  node_id, slot_id, profile_public_id, delta_rx_bytes, delta_tx_bytes, collected_at
+                )
+                VALUES(?, ?, ?, ?, ?, ?)
+                """,
+                (str(node_id), int(slot_id) if slot_id is not None else None, str(profile_public_id), rx, tx, now),
+            )
+            ledger_id = cursor.lastrowid
+            if total > 0:
+                conn.execute(
+                    "UPDATE profiles SET awg_used_bytes = awg_used_bytes + ? WHERE public_id = ?",
+                    (total, str(profile_public_id)),
+                )
+            row = conn.execute("SELECT * FROM awg_traffic_ledger WHERE id = ?", (ledger_id,)).fetchone()
+        return self._row_to_dict(row) or {}
+
+    def record_awg_traffic_deltas(self, deltas: list[dict[str, Any]]) -> int:
+        if not deltas:
+            return 0
+        now = now_ts()
+        with self.transaction() as conn:
+            profile_increments: dict[str, int] = {}
+            count = 0
+            for item in deltas:
+                node_id = str(item.get("node_id") or "unknown")
+                profile_public_id = str(item["profile_public_id"])
+                slot_id = item.get("slot_id")
+                delta_rx = max(0, int(item.get("delta_rx_bytes", item.get("delta_rx", 0))))
+                delta_tx = max(0, int(item.get("delta_tx_bytes", item.get("delta_tx", 0))))
+                ts = int(item.get("collected_at") or now)
+
+                conn.execute(
+                    """
+                    INSERT INTO awg_traffic_ledger(
+                      node_id, slot_id, profile_public_id, delta_rx_bytes, delta_tx_bytes, collected_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?)
+                    """,
+                    (node_id, int(slot_id) if slot_id is not None else None, profile_public_id, delta_rx, delta_tx, ts),
+                )
+                total = delta_rx + delta_tx
+                profile_increments[profile_public_id] = profile_increments.get(profile_public_id, 0) + total
+                count += 1
+
+            for pid, inc in profile_increments.items():
+                if inc > 0:
+                    conn.execute(
+                        "UPDATE profiles SET awg_used_bytes = awg_used_bytes + ? WHERE public_id = ?",
+                        (inc, pid),
+                    )
+        return count
+
+    def get_awg_profile_quota(self, profile_public_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT public_id, awg_quota_bytes, awg_used_bytes, awg_reset_at, expires_at, status
+                FROM profiles
+                WHERE public_id = ?
+                """,
+                (profile_public_id,),
+            ).fetchone()
+        if not row:
+            return None
+        quota = int(row["awg_quota_bytes"] or 0)
+        used = int(row["awg_used_bytes"] or 0)
+        reset_at = row["awg_reset_at"] or row["expires_at"]
+        remaining = max(0, quota - used) if quota > 0 else 0
+        is_exceeded = (used >= quota) if quota > 0 else False
+        usage_pct = round((used / quota) * 100.0, 2) if quota > 0 else 0.0
+        return {
+            "profile_public_id": str(row["public_id"]),
+            "awg_quota_bytes": quota,
+            "awg_used_bytes": used,
+            "awg_reset_at": int(reset_at) if reset_at else None,
+            "remaining_bytes": remaining,
+            "is_exceeded": is_exceeded,
+            "usage_percent": usage_pct,
+            "status": str(row["status"]),
+        }
+
+    def set_awg_profile_quota(
+        self,
+        profile_public_id: str,
+        quota_bytes: int,
+        reset_at: int | None = None,
+    ) -> dict[str, Any] | None:
+        with self.transaction() as conn:
+            if reset_at is not None:
+                conn.execute(
+                    """
+                    UPDATE profiles
+                    SET awg_quota_bytes = ?, awg_reset_at = ?
+                    WHERE public_id = ?
+                    """,
+                    (int(quota_bytes), int(reset_at), profile_public_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE profiles
+                    SET awg_quota_bytes = ?
+                    WHERE public_id = ?
+                    """,
+                    (int(quota_bytes), profile_public_id),
+                )
+        return self.get_awg_profile_quota(profile_public_id)
+
+    def reset_awg_monthly_quota(
+        self,
+        profile_public_id: str,
+        new_reset_at: int | None = None,
+    ) -> dict[str, Any] | None:
+        with self.transaction() as conn:
+            if new_reset_at is not None:
+                conn.execute(
+                    """
+                    UPDATE profiles
+                    SET awg_used_bytes = 0, awg_reset_at = ?
+                    WHERE public_id = ?
+                    """,
+                    (int(new_reset_at), profile_public_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE profiles
+                    SET awg_used_bytes = 0
+                    WHERE public_id = ?
+                    """,
+                    (profile_public_id,),
+                )
+        return self.get_awg_profile_quota(profile_public_id)
+
+    def get_awg_traffic_ledger(
+        self,
+        profile_public_id: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT l.*, s.slot_label, s.slot_index
+                FROM awg_traffic_ledger l
+                LEFT JOIN awg_slots s ON s.id = l.slot_id
+                WHERE l.profile_public_id = ?
+                ORDER BY l.collected_at DESC, l.id DESC
+                LIMIT ?
+                """,
+                (profile_public_id, max(1, int(limit))),
+            ).fetchall()
+        return [self._row_to_dict(r) for r in rows if r]
+
+    def get_awg_traffic_summary(
+        self,
+        profile_public_id: str,
+        since_ts: int | None = None,
+    ) -> dict[str, Any]:
+        with self._connect() as conn:
+            if since_ts is not None:
+                row = conn.execute(
+                    """
+                    SELECT
+                      COALESCE(SUM(delta_rx_bytes), 0) AS total_rx,
+                      COALESCE(SUM(delta_tx_bytes), 0) AS total_tx
+                    FROM awg_traffic_ledger
+                    WHERE profile_public_id = ? AND collected_at >= ?
+                    """,
+                    (profile_public_id, int(since_ts)),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT
+                      COALESCE(SUM(delta_rx_bytes), 0) AS total_rx,
+                      COALESCE(SUM(delta_tx_bytes), 0) AS total_tx
+                    FROM awg_traffic_ledger
+                    WHERE profile_public_id = ?
+                    """,
+                    (profile_public_id,),
+                ).fetchone()
+        total_rx = int(row["total_rx"] or 0) if row else 0
+        total_tx = int(row["total_tx"] or 0) if row else 0
+        return {
+            "profile_public_id": profile_public_id,
+            "total_rx_bytes": total_rx,
+            "total_tx_bytes": total_tx,
+            "total_bytes": total_rx + total_tx,
+        }
+

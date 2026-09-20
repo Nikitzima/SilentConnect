@@ -127,6 +127,7 @@ class Settings:
     platega_secret_bot: str = ""
     platega_secret_web: str = ""
     platega_enabled: bool = False
+    cluster_sync_secret: str = ""
 
 
 def load_settings(root_dir: Path | None = None, env_file: str | Path | None = None) -> Settings:
@@ -214,5 +215,6 @@ def load_settings(root_dir: Path | None = None, env_file: str | Path | None = No
             or os.environ.get("PLATEGA_SECRET_BOT", "").strip()
             or os.environ.get("PLATEGA_SECRET_WEB", "").strip()
         ),
+        cluster_sync_secret=os.environ.get("CLUSTER_SYNC_SECRET", "").strip(),
     )
 
