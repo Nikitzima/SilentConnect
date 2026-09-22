@@ -71,7 +71,7 @@ def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool 
     endpoint_host = (
         os.environ.get(f"AWG_{srv_code.upper()}_ENDPOINT_HOST")
         or os.environ.get("AWG_ENDPOINT_HOST")
-        or "warp.example.com"
+        or (f"{srv_code}.example.com" if srv_code in ("fi", "pl") else "warp.example.com")
     )
     endpoint_port = (
         os.environ.get(f"AWG_{srv_code.upper()}_ENDPOINT_PORT")
