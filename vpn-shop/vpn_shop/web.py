@@ -71,7 +71,7 @@ def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool 
     endpoint_host = (
         os.environ.get(f"AWG_{srv_code.upper()}_ENDPOINT_HOST")
         or os.environ.get("AWG_ENDPOINT_HOST")
-        or (f"{srv_code}.example.com" if srv_code in ("fi", "pl") else "warp.example.com")
+        or "warp.example.com"
     )
     endpoint_port = (
         os.environ.get(f"AWG_{srv_code.upper()}_ENDPOINT_PORT")
@@ -81,7 +81,7 @@ def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool 
     server_pub = os.environ.get("AWG_SERVER_PUBLIC_KEY") or os.environ.get(f"AWG_{srv_code.upper()}_SERVER_PUBKEY") or "1111111111111111111111111111111111111111111="
     client_dns = "1.1.1.1, 1.0.0.1"
     client_mtu = "1280"
-    allowed_ips = "0.0.0.0/0, ::/0"
+    allowed_ips = "0.0.0.0/0"
 
     iface_params: dict[str, str] = {
         "Jc": "4",
@@ -107,7 +107,7 @@ def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool 
             if allowed_ips_file and os.path.exists(allowed_ips_file):
                 lst = Path(allowed_ips_file).read_text(encoding="utf-8").strip()
                 if lst:
-                    allowed_ips = lst + ", ::/0"
+                    allowed_ips = lst
         conf = awg_manager._server_conf(srv_code)
         if conf:
             parsed_params = awg_manager._interface_params(conf)
@@ -1705,21 +1705,14 @@ class WebCheckout:
             return prof
         return None
 
-    def ensure_awg_slot(self, profile_public_id: str, slot_index: int, default_label: str = "", server_code: str | None = None, enabled: bool = True) -> dict[str, Any]:
+    def ensure_awg_slot(self, profile_public_id: str, slot_index: int, default_label: str = "", server_code: str = "nl", enabled: bool = True) -> dict[str, Any]:
         idx = int(slot_index)
         if idx < 1:
             raise ValueError(f"Slot index must be at least 1 (got {idx})")
-
-        if not server_code:
-            existing_active = self.store.get_awg_slot_by_index(profile_public_id, idx)
-            if existing_active:
-                return existing_active
-            target_srv = "nl"
-        else:
-            target_srv = server_code.lower().strip()
-            slot = self.store.get_awg_slot_by_index(profile_public_id, idx, server_code=target_srv)
-            if slot:
-                return slot
+        target_srv = (server_code or "nl").lower().strip()
+        slot = self.store.get_awg_slot_by_index(profile_public_id, idx, server_code=target_srv)
+        if slot:
+            return slot
 
         prof = self.store.get_profile(profile_public_id)
         if not prof:
@@ -4747,7 +4740,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.BAD_REQUEST, json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
                     return
 
-                conf_text = build_slot_conf(slot, server_code=slot.get("server_code", "nl"), for_qr=True)
+                conf_text = build_slot_conf(slot, server_code=slot.get("server_code", "nl"))
                 qr_bytes = b""
                 content_type = "image/png"
                 try:
