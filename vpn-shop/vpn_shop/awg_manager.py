@@ -49,8 +49,8 @@ SERVERS: dict[str, dict[str, Any]] = {
         "flag": "🇫🇮",
         "mode": "ssh",
         "exec_mode": "ssh",
-        "host": os.environ.get("AWG_FI_HOST", os.environ.get("AWG_REMOTE_SSH_FI", os.environ.get("FI_STANDBY_IP", "fi.example.com"))),
-        "ssh_host": os.environ.get("AWG_FI_HOST", os.environ.get("AWG_REMOTE_SSH_FI", os.environ.get("FI_STANDBY_IP", "fi.example.com"))),
+        "host": os.environ.get("AWG_FI_HOST", os.environ.get("AWG_REMOTE_SSH_FI", os.environ.get("FI_STANDBY_IP", "198.51.100.1"))),
+        "ssh_host": os.environ.get("AWG_FI_HOST", os.environ.get("AWG_REMOTE_SSH_FI", os.environ.get("FI_STANDBY_IP", "198.51.100.1"))),
         "ssh_user": os.environ.get("AWG_FI_SSH_USER", "root"),
         "ssh_port": int(os.environ.get("AWG_FI_SSH_PORT", "22")),
         "container": os.environ.get("AWG_FI_CONTAINER", "amnezia-awg2"),
@@ -102,8 +102,8 @@ def _get_server(server_code: str = "nl") -> dict[str, Any]:
         elif code == "nl":
             srv["mode"] = "ssh"
             srv["exec_mode"] = "ssh"
-            srv["host"] = os.environ.get("AWG_NL_HOST", os.environ.get("NL_MASTER_IP", "warp.example.com"))
-            srv["ssh_host"] = os.environ.get("AWG_NL_HOST", os.environ.get("NL_MASTER_IP", "warp.example.com"))
+            srv["host"] = os.environ.get("AWG_NL_HOST", os.environ.get("NL_MASTER_IP", "192.0.2.1"))
+            srv["ssh_host"] = os.environ.get("AWG_NL_HOST", os.environ.get("NL_MASTER_IP", "192.0.2.1"))
             srv["ssh_user"] = os.environ.get("AWG_NL_SSH_USER", "root")
             srv["ssh_port"] = int(os.environ.get("AWG_NL_SSH_PORT", "22"))
     elif local_server == "pl":
@@ -158,7 +158,7 @@ def _dex(*args: Any, **kwargs: Any) -> str:
         call_args = ["docker", "exec", "-i", srv["container"], "sh", "-c", cmd]
     elif mode == "ssh":
         ssh_user = srv.get("ssh_user", "root")
-        ssh_host = srv.get("host") or srv.get("ssh_host", os.environ.get("FI_STANDBY_IP", "fi.example.com"))
+        ssh_host = srv.get("host") or srv.get("ssh_host", os.environ.get("FI_STANDBY_IP", "198.51.100.1"))
         ssh_port = str(srv.get("ssh_port", 22))
         remote_cmd = f"docker exec -i {srv['container']} sh -c {shlex.quote(cmd)}"
         call_args = [
@@ -504,12 +504,12 @@ def build_conf(sub_id: str, server_code: str = "nl") -> str:
     iface = _interface_params(conf)
     server_pub = _server_public_key(conf, server_code=server_code)
 
-    allowed = "0.0.0.0/0, ::/0"
+    allowed = "0.0.0.0/0"
     try:
         allowed_ips_file = srv.get("allowed_ips_file") or "/root/vpn-shop/awg/allowed-ips.txt"
         lst = Path(allowed_ips_file).read_text(encoding="utf-8").strip()
         if lst:
-            allowed = lst + ", ::/0"
+            allowed = lst
     except OSError:
         pass
 

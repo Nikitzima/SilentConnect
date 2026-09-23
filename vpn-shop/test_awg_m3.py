@@ -310,7 +310,7 @@ RekeyAfterTime = 120
         self.assertIn("Address = 10.8.1.", conf_nl)
         self.assertIn("Jc = 4", conf_nl)
         self.assertIn("HeaderProtectionKey = 123456", conf_nl)
-        self.assertIn("AllowedIPs = 198.51.100.0/24, 203.0.113.0/24, ::/0", conf_nl)
+        self.assertIn("AllowedIPs = 198.51.100.0/24, 203.0.113.0/24", conf_nl)
 
         # Build FI conf
         conf_fi = awg_manager.build_conf("client_conf_test", server_code="fi")
