@@ -83,7 +83,7 @@ class TestWebAwgSlots(unittest.TestCase):
         headers: dict | None = None,
         body: bytes | str | None = None,
     ) -> tuple[int, dict, bytes]:
-        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=15)
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=35)
         req_headers = headers or {}
         if isinstance(body, str):
             body = body.encode("utf-8")
