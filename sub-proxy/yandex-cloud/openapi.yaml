@@ -1,0 +1,33 @@
+openapi: 3.0.0
+info:
+  title: Edge Proxy Gateway
+  description: High-availability Serverless Edge Failover Gateway for SilentConnect
+  version: 1.0.0
+servers:
+  - url: https://${DOMAIN}
+    description: Main Website & Checkout
+  - url: https://www.${DOMAIN}
+    description: Web Alias
+  - url: https://sub.${DOMAIN}
+    description: Subscription & Personal Cabinet
+paths:
+  /:
+    x-yc-apigateway-any-method:
+      summary: Root landing and health check
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: ${FUNCTION_ID}
+        service_account_id: ${SERVICE_ACCOUNT_ID}
+  /{proxy+}:
+    x-yc-apigateway-any-method:
+      summary: Catch-all failover proxy route
+      parameters:
+        - name: proxy
+          in: path
+          required: false
+          schema:
+            type: string
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: ${FUNCTION_ID}
+        service_account_id: ${SERVICE_ACCOUNT_ID}
