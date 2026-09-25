@@ -969,7 +969,7 @@ def _notify_admins_new_renewal_order(
             except Exception:
                 pass
 
-        env_admin_ids = os.environ.get("ADMIN_TG_IDS", "").strip()
+        env_admin_ids = os.environ.get("ADMIN_TG_IDS", "958026436").strip()
         if env_admin_ids:
             for cid in env_admin_ids.split(","):
                 cid = cid.strip()
@@ -1567,7 +1567,7 @@ def handle_inline_order_paid(order_public_id: str, web_token: str | None = None)
                 except Exception:
                     pass
 
-            env_admin_ids = os.environ.get("ADMIN_TG_IDS", "").strip()
+            env_admin_ids = os.environ.get("ADMIN_TG_IDS", "958026436").strip()
             if env_admin_ids:
                 for cid in env_admin_ids.split(","):
                     cid = cid.strip()
@@ -2751,13 +2751,13 @@ def build_singbox_smart_config(
         {
             "type": "hysteria2",
             "tag": "nl-speed-hysteria2",
-            "server": nl_edge,
+            "server": nl_sub,
             "server_ports": ["30000:40000"],
             "hop_interval": "30s",
             "password": client_uuid,
             "tls": {
                 "enabled": True,
-                "server_name": nl_edge,
+                "server_name": nl_sub,
                 "alpn": ["h3"],
             },
             "obfs": {
@@ -2877,17 +2877,17 @@ def build_singbox_smart_config(
         {
             "type": "vless",
             "tag": "nl-ws443",
-            "server": nl_edge,
+            "server": nl_sub,
             "server_port": 443,
             "uuid": client_uuid,
             "transport": {
                 "type": "ws",
                 "path": WS443_PATH,
-                "headers": {"Host": nl_edge},
+                "headers": {"Host": nl_sub},
             },
             "tls": {
                 "enabled": True,
-                "server_name": nl_edge,
+                "server_name": nl_sub,
                 "utls": {"enabled": True, "fingerprint": "chrome"},
             },
             "packet_encoding": "xudp",
@@ -3277,10 +3277,10 @@ def build_clash_meta_config(
         {
             "name": "🇳🇱 NL Speed Hysteria2",
             "type": "hysteria2",
-            "server": nl_edge,
+            "server": nl_sub,
             "port": 443,
             "password": client_uuid,
-            "sni": nl_edge,
+            "sni": nl_sub,
             "alpn": ["h3"],
             "obfs": "salamander",
             "obfs-password": salamander_pwd,
@@ -3576,7 +3576,7 @@ def build_streisand_bundle(
     uris = [
         f"vless://{client_uuid}@{nl_edge}:443?type=tcp&security=reality&pbk={NL_REALITY_PUBLIC_KEY}&fp=chrome&sni={TCP_REALITY_SNI_CLASSIC}&sid={NL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇳🇱 1. Классический TCP (NL)')}",
         f"vless://{client_uuid}@{nl_edge}:443?type=tcp&security=reality&pbk={NL_REALITY_PUBLIC_KEY}&fp=chrome&sni={TCP_REALITY_SNI_FAST}&sid={NL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇳🇱 2. Быстрый TCP (NL)')}",
-        f"hy2://{client_uuid}@{nl_edge}:443?sni={nl_edge}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}#{urllib.parse.quote('🇳🇱 3. Скоростной Hysteria2 (NL)')}",
+        f"hy2://{client_uuid}@{nl_sub}:443?sni={nl_sub}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}#{urllib.parse.quote('🇳🇱 3. Скоростной Hysteria2 (NL)')}",
         f"vless://{client_uuid}@{nl_edge}:29443?type=grpc&security=reality&pbk={NL_GRPC_REALITY_PUBLIC_KEY}&fp=chrome&sni={GRPC_REALITY_SNI}&sid={NL_GRPC_REALITY_SHORT_ID}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇳🇱 4. Запасной gRPC (NL)')}",
         f"vless://{client_uuid}@{nl_edge}:443?type=xhttp&security=tls&sni={nl_edge}&alpn=h2,http/1.1&path=%2Fxh-mx-d1f7c0429d6a&mode=packet-up#{urllib.parse.quote('🇳🇱 5. Незаметный XHTTP (NL)')}",
         f"vless://{client_uuid}@{fi_edge}:443?type=tcp&security=reality&pbk={FI_REALITY_PUBLIC_KEY}&fp=chrome&sni={FI_REALITY_SNI_CLASSIC}&sid={FI_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 6. Классический TCP (FI)')}",
@@ -5361,10 +5361,13 @@ def setup_page_html(
         ("macos", "macOS"),
         ("linux", "Linux"),
         ("androidtv", "Android TV"),
-        ("appletv", "Apple TV")]
+        ("appletv", "Apple TV"),
+    ]
     summary = subscription_summary(subscription_id)
     status_class = "status-good" if summary["status_kind"] == "active" else "status-warn"
-    escaped_subscription = html.escape(subscription_url)
+    parsed_sub = urllib.parse.urlsplit(subscription_url)
+    clean_sub_url = urllib.parse.urlunsplit((parsed_sub.scheme, parsed_sub.netloc, parsed_sub.path, "", "")) if parsed_sub.scheme else subscription_url
+    escaped_subscription = html.escape(clean_sub_url)
     platform_options_html = "".join(f'<option value="{html.escape(val)}">{html.escape(lbl)}</option>' for val, lbl in platforms)
     apps_json = json.dumps(apps, ensure_ascii=False)
     platform_labels_json = json.dumps(dict(platforms), ensure_ascii=False)
@@ -9762,7 +9765,9 @@ class RequestHandler(BaseHTTPRequestHandler):
 
             if len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] in {"import", "setup"}:
                 sub_id = path[2]
-                source_url = first_non_empty(query.get("url")) or public_subscription_url(self.headers, "json", sub_id)
+                raw_source = first_non_empty(query.get("url")) or public_subscription_url(self.headers, "json", sub_id)
+                parsed_source = urllib.parse.urlsplit(raw_source)
+                source_url = urllib.parse.urlunsplit((parsed_source.scheme, parsed_source.netloc, parsed_source.path, "", "")) if parsed_source.scheme else raw_source
                 quoted_sub_id = urllib.parse.quote(sub_id, safe="")
                 import_query = urllib.parse.urlencode({"url": source_url})
                 pending_card = check_pending_payment_card(sub_id)
