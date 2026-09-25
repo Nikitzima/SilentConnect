@@ -5,8 +5,8 @@ export const config = {
 const BASE_DOMAIN = process.env.BASE_DOMAIN || ['silent', 'connect', '.net'].join('');
 
 const UPSTREAM_NODES = [
+  { name: 'NL', origin: process.env.ORIGIN_NL || `https://edge.${BASE_DOMAIN}`, host: process.env.HOST_NL || `edge.${BASE_DOMAIN}` },
   { name: 'PL', origin: process.env.ORIGIN_PL || `https://pl.${BASE_DOMAIN}`, host: process.env.HOST_PL || `pl.${BASE_DOMAIN}` },
-  { name: 'NL', origin: process.env.ORIGIN_NL || `https://nl.${BASE_DOMAIN}`, host: process.env.HOST_NL || `nl.${BASE_DOMAIN}` },
   { name: 'FI', origin: process.env.ORIGIN_FI || `https://fi.${BASE_DOMAIN}`, host: process.env.HOST_FI || `fi.${BASE_DOMAIN}` },
 ];
 
