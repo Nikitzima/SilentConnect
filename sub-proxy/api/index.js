@@ -121,6 +121,8 @@ export default async function handler(request) {
       }
       fwdHeaders.set('Host', node.host);
       fwdHeaders.set('X-Forwarded-For', clientIp);
+      fwdHeaders.set('X-Forwarded-Host', url.host);
+      fwdHeaders.set('X-Forwarded-Proto', 'https');
       fwdHeaders.set('X-Edge-Proxy', 'SilentConnect-Failover');
 
       const upstreamResp = await fetch(targetUrl, {
