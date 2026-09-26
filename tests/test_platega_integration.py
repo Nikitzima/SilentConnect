@@ -146,6 +146,18 @@ class TestPlategaClient(unittest.TestCase):
         # Missing headers
         self.assertFalse(self.client.verify_webhook_signature({}))
 
+        # Test distinct secrets for bot and web with cross-secret rejection
+        isolated_client = PlategaClient(
+            merchant_id_bot=self.merchant_bot,
+            merchant_id_web=self.merchant_web,
+            secret_bot="bot_specific_secret_123",
+            secret_web="web_specific_secret_456",
+        )
+        self.assertTrue(isolated_client.verify_webhook_signature({"X-MerchantId": self.merchant_bot, "X-Secret": "bot_specific_secret_123"}))
+        self.assertTrue(isolated_client.verify_webhook_signature({"X-MerchantId": self.merchant_web, "X-Secret": "web_specific_secret_456"}))
+        self.assertFalse(isolated_client.verify_webhook_signature({"X-MerchantId": self.merchant_bot, "X-Secret": "web_specific_secret_456"}))
+        self.assertFalse(isolated_client.verify_webhook_signature({"X-MerchantId": self.merchant_web, "X-Secret": "bot_specific_secret_123"}))
+
 
 class TestPlategaWebAndBotIntegration(unittest.TestCase):
     def setUp(self):

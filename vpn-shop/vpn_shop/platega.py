@@ -261,12 +261,14 @@ class PlategaClient:
         elif merchant_id_clean == self.merchant_id_web:
             expected_secret = self.secret_web or self.secret
 
-        if expected_secret and secrets.compare_digest(secret_clean, expected_secret):
-            return True
-
-        for s in all_secrets:
-            if secrets.compare_digest(secret_clean, s):
+        if expected_secret:
+            if secrets.compare_digest(secret_clean, expected_secret):
                 return True
+            LOGGER.warning("X-Secret mismatch for merchant %s in Platega webhook", merchant_id_clean)
+            return False
+
+        if self.secret and secrets.compare_digest(secret_clean, self.secret):
+            return True
 
         LOGGER.warning("X-Secret mismatch in Platega webhook")
         return False
