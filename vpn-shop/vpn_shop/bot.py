@@ -40,6 +40,12 @@ REFERRAL_COMMISSION_PERCENT = 10
 REFERRAL_PAYOUT_MIN_RUB = 500
 REFERRAL_MONTHLY_REPORT_DAY = 28
 PUBLIC_ACCESS_START_CODE = "open"
+PUBLIC_MENU_DROP_KEYS: tuple[str, ...] = (
+    "pending_promo",
+    "pending_promo_id",
+    "promo_return",
+    "renewal_profile_public_id",
+)
 
 
 def kb(rows: list[list[Any]]) -> dict[str, Any]:
@@ -869,11 +875,23 @@ class ShopBot:
             ),
         )
 
-    def _send_public_promo_prompt(self, chat_id: int | str, *, prefix: str | None = None, message_id: int | None = None) -> None:
+    def _send_public_promo_prompt(
+        self,
+        chat_id: int | str,
+        *,
+        prefix: str | None = None,
+        message_id: int | None = None,
+        promo_return: str | None = None,
+    ) -> None:
         session = self.store.get_session(chat_id)
         context = self._context_from_session(session)
         context.pop("pending_promo", None)
         context.pop("pending_promo_id", None)
+        if promo_return:
+            context["promo_return"] = promo_return
+        else:
+            context.pop("promo_return", None)
+            context.pop("renewal_profile_public_id", None)
         self.store.set_session(chat_id, "public", "await_promo_code", context)
         message = "Отправьте промокод одним сообщением без лишних символов."
         if prefix:
@@ -3326,7 +3344,17 @@ class ShopBot:
 
         if session and session.get("scope") == "public":
             state = str(session.get("state") or "")
-            if state in ("", "menu"):
+            if state in (
+                "",
+                "menu",
+                "await_promo_code",
+                "await_renewal_subscription_url",
+                "await_terms",
+                "await_family_privacy_ack",
+                "buy_duration",
+                "buy_confirm",
+                "renewal_menu",
+            ):
                 self.show_public_menu(chat_id, hero=True, user=user)
                 return
             self._resume_public_session(chat_id, session, user=user)
@@ -3348,7 +3376,7 @@ class ShopBot:
         chat_id: int,
         message: str | None = None,
         *,
-        drop_keys: tuple[str, ...] = ("pending_promo", "pending_promo_id"),
+        drop_keys: tuple[str, ...] = PUBLIC_MENU_DROP_KEYS,
         hero: bool = False,
         message_id: int | None = None,
         user: dict[str, Any] | None = None,
@@ -4947,7 +4975,12 @@ class ShopBot:
                 context = self._context_from_session(self.store.get_session(chat_id))
                 context["promo_return"] = "renewal"
                 self.store.set_session(chat_id, "public", "await_promo_code", context)
-                self._send_public_promo_prompt(chat_id, prefix="Введите скидочный промокод для продления.", message_id=message_id)
+                self._send_public_promo_prompt(
+                    chat_id,
+                    prefix="Введите скидочный промокод для продления.",
+                    message_id=message_id,
+                    promo_return="renewal",
+                )
                 return
 
             if data.startswith("public:renew_devices:") and chat_id is not None:
