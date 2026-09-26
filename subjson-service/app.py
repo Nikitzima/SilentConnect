@@ -2751,13 +2751,13 @@ def build_singbox_smart_config(
         {
             "type": "hysteria2",
             "tag": "nl-speed-hysteria2",
-            "server": nl_sub,
+            "server": nl_edge,
             "server_ports": ["30000:40000"],
             "hop_interval": "30s",
             "password": client_uuid,
             "tls": {
                 "enabled": True,
-                "server_name": nl_sub,
+                "server_name": nl_edge,
                 "alpn": ["h3"],
             },
             "obfs": {
@@ -3277,10 +3277,10 @@ def build_clash_meta_config(
         {
             "name": "🇳🇱 NL Speed Hysteria2",
             "type": "hysteria2",
-            "server": nl_sub,
+            "server": nl_edge,
             "port": 443,
             "password": client_uuid,
-            "sni": nl_sub,
+            "sni": nl_edge,
             "alpn": ["h3"],
             "obfs": "salamander",
             "obfs-password": salamander_pwd,
@@ -3576,7 +3576,7 @@ def build_streisand_bundle(
     uris = [
         f"vless://{client_uuid}@{nl_edge}:443?type=tcp&security=reality&pbk={NL_REALITY_PUBLIC_KEY}&fp=chrome&sni={TCP_REALITY_SNI_CLASSIC}&sid={NL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇳🇱 1. Классический TCP (NL)')}",
         f"vless://{client_uuid}@{nl_edge}:443?type=tcp&security=reality&pbk={NL_REALITY_PUBLIC_KEY}&fp=chrome&sni={TCP_REALITY_SNI_FAST}&sid={NL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇳🇱 2. Быстрый TCP (NL)')}",
-        f"hy2://{client_uuid}@{nl_sub}:443?sni={nl_sub}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}#{urllib.parse.quote('🇳🇱 3. Скоростной Hysteria2 (NL)')}",
+        f"hy2://{client_uuid}@{nl_edge}:443?sni={nl_edge}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}#{urllib.parse.quote('🇳🇱 3. Скоростной Hysteria2 (NL)')}",
         f"vless://{client_uuid}@{nl_edge}:29443?type=grpc&security=reality&pbk={NL_GRPC_REALITY_PUBLIC_KEY}&fp=chrome&sni={GRPC_REALITY_SNI}&sid={NL_GRPC_REALITY_SHORT_ID}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇳🇱 4. Запасной gRPC (NL)')}",
         f"vless://{client_uuid}@{nl_edge}:443?type=xhttp&security=tls&sni={nl_edge}&alpn=h2,http/1.1&path=%2Fxh-mx-d1f7c0429d6a&mode=packet-up#{urllib.parse.quote('🇳🇱 5. Незаметный XHTTP (NL)')}",
         f"vless://{client_uuid}@{fi_edge}:443?type=tcp&security=reality&pbk={FI_REALITY_PUBLIC_KEY}&fp=chrome&sni={FI_REALITY_SNI_CLASSIC}&sid={FI_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 6. Классический TCP (FI)')}",
