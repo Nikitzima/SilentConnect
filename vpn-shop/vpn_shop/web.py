@@ -2114,7 +2114,7 @@ class WebCheckout:
             </table>
             <div class="cabinet-card-actions" style="margin-top: 12px;">
               <a class="btn cabinet-btn-primary" href="{html.escape(setup_url, quote=True)}" target="_blank" rel="noopener">
-                🚀 Открыть в приложении Happ / Sing-box →
+                Открыть в приложении Happ / Sing-box
               </a>
             </div>
           </div>
@@ -2200,7 +2200,7 @@ class WebCheckout:
 
               <div class="cabinet-card-actions">
                 <a class="btn cabinet-btn-primary" href="{setup_url}" target="_blank" rel="noopener">
-                  🚀 Мастер настройки и подключения →
+                  Мастер настройки и подключения
                 </a>
               </div>
             </div>
@@ -2641,8 +2641,9 @@ class WebCheckout:
     .cabinet-card-actions {{ margin-top: 4px; }}
     .cabinet-btn-primary {{
       display: flex; align-items: center; justify-content: center; gap: 8px;
-      min-height: 46px; font-size: 14.5px; font-weight: 700; width: 100%;
+      min-height: 46px; font-size: 15px; font-weight: 800; width: 100%;
       border-radius: 10px; text-decoration: none; box-sizing: border-box; text-align: center;
+      letter-spacing: 0.1px;
     }}
     .cabinet-bottom-box {{
       display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;
