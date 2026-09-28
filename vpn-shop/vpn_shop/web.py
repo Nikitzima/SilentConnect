@@ -2169,10 +2169,6 @@ class WebCheckout:
             transport_label = "Гибридный (Основной)" if "hybrid" in transport_raw else ("Основной протокол" if transport_raw == "tcp" else "Резервный веб-протокол")
             setup_url = html.escape(str(p.get("setup_url") or "#"), quote=True)
 
-            sub_id = str(p.get("sub_id") or p.get("public_id") or "")
-            raw_p = p.get("raw_profile") or self.store.get_profile(p.get("public_id")) or p
-            awg_widget_html = self.render_awg_slots_widget(raw_p, sub_id)
-
             cards_html.append(f"""
             <div class="cabinet-card">
               <div class="cabinet-card-header">
@@ -2201,8 +2197,6 @@ class WebCheckout:
                   <td style="font-family: monospace; font-size: 12px; color: var(--muted);">{html.escape(pid)}</td>
                 </tr>
               </table>
-
-              {awg_widget_html}
 
               <div class="cabinet-card-actions">
                 <a class="btn cabinet-btn-primary" href="{setup_url}" target="_blank" rel="noopener">
@@ -2254,7 +2248,6 @@ class WebCheckout:
               </a>
             </div>
           </div>
-          {AWG_SLOT_MODAL_AND_JS}
         </section>
         """
         return self.render_page("Личный кабинет", body)
