@@ -7870,8 +7870,7 @@ def setup_page_html(
             <h3>1. Скачивание OpenFlux для Android</h3>
             <p>Скачайте установочный APK-файл OpenFlux для вашего смартфона:</p>
             <div class="buttons" style="display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0;">
-              <a class="button success" href="/downloads/OpenFlux-Android-arm64.apk" download>📥 1. Скачать OpenFlux APK (ARM64, 22 МБ)</a>
-              <a class="button secondary" href="/downloads/OpenFlux-Fork-Universal.apk" download>📥 Universal APK (15 МБ)</a>
+              <a class="button success" href="https://github.com/p1neappleXpress/OpenFluxAndroid/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux APK (GitHub Releases)</a>
             </div>
             <p style="font-size: 12.5px; color: var(--muted); margin-top: 4px;">Установите APK (при необходимости разрешите установку приложений в настройках безопасности Android).</p>
           </div>
@@ -7935,7 +7934,7 @@ def setup_page_html(
             <h3>1. Скачивание модуля для Белых Списков</h3>
             <p>Скачайте готовый комплект OpenFlux для Windows. В архив уже встроены готовые скрипты запуска для обоих серверов (NL и PL), установка не требуется.</p>
             <div class="buttons" style="margin: 12px 0;">
-              <a class="button success" href="/downloads/openflux-silentconnect-bypass.zip" download>📥 Скачать комплект для Windows (ZIP, 49 МБ)</a>
+              <a class="button success" href="https://github.com/p1neappleXpress/OpenFlux/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux для Windows (GitHub Releases)</a>
             </div>
           </div>
           <div class="step" data-num="2">
@@ -7963,7 +7962,7 @@ def setup_page_html(
             <h3>1. Скачивание бинарника OpenFlux Linux</h3>
             <p>Скачайте исполняемый файл для x86_64 архитектуры:</p>
             <div class="buttons" style="margin: 12px 0;">
-              <a class="button success" href="/downloads/universal-bypass-tool-linux-amd64" download>📥 Скачать бинарник Linux (amd64, 18 МБ)</a>
+              <a class="button success" href="https://github.com/p1neappleXpress/OpenFlux/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux для Linux (GitHub Releases)</a>
             </div>
           </div>
           <div class="step" data-num="2">
