@@ -417,16 +417,29 @@ class TestWebAwgSlots(unittest.TestCase):
             expires_at=1800000000,
             device_limit=3,
         )
-        # Render cabinet with both profiles
+        # Render cabinet with both profiles - must be clean selection view without AWG widget clutter
         profiles_list = [
             {"public_id": self.profile["public_id"], "sub_id": self.profile["public_id"], "raw_profile": self.profile},
             {"public_id": profile2["public_id"], "sub_id": profile2["public_id"], "raw_profile": profile2},
         ]
         cabinet_bytes = self.checkout.render_cabinet("test@example.com", profiles_list)
         cabinet_html = cabinet_bytes.decode("utf-8")
-        # Ensure DOM IDs are uniquely scoped and both sub_ids are present
-        self.assertIn(f"awg-slot-{self.profile['public_id']}-1", cabinet_html)
-        self.assertIn(f"awg-slot-{profile2['public_id']}-1", cabinet_html)
+        
+        # Verify clean cabinet card structure
+        self.assertIn("Подписка #1", cabinet_html)
+        self.assertIn("Подписка #2", cabinet_html)
+        self.assertIn(self.profile["public_id"], cabinet_html)
+        self.assertIn(profile2["public_id"], cabinet_html)
+        self.assertNotIn('<div class="awg-slots-hub">', cabinet_html)
+        self.assertNotIn('<div class="awg-quota-widget">', cabinet_html)
+        self.assertNotIn('class="awg-slot-card"', cabinet_html)
+        self.assertNotIn('class="awg-modal-overlay"', cabinet_html)
+
+        # Ensure DOM IDs in AWG widgets are uniquely scoped when rendered individually
+        widget1 = self.checkout.render_awg_slots_widget(self.profile, self.profile["public_id"])
+        widget2 = self.checkout.render_awg_slots_widget(profile2, profile2["public_id"])
+        self.assertIn(f"awg-slot-{self.profile['public_id']}-1", widget1)
+        self.assertIn(f"awg-slot-{profile2['public_id']}-1", widget2)
         self.assertNotEqual(
             f"awg-slot-{self.profile['public_id']}-1",
             f"awg-slot-{profile2['public_id']}-1",
