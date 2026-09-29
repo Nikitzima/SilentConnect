@@ -7943,38 +7943,39 @@ def setup_page_html(
     };
 
     window.downloadWlBat = function() {
-      const data = _openfluxData[currentWlCountry] || _openfluxData["nl"];
+      const data = _openfluxData[currentWlCountry] || _openfluxData['nl'];
+      const u = (data && data.primary_url) ? data.primary_url : '';
       const lines = [
-        "@echo off",
-        "chcp 65001 >nul",
-        "title SilentConnect OpenFlux (" + data.name + ")",
-        "echo ========================================================",
-        "echo   SilentConnect - Rejim Belyh Spiskov (OpenFlux)",
-        "echo   Server: " + data.name,
-        "echo ========================================================",
-        "echo.",
-        "echo Zapusk tunnelem cherez Yandex Volga...",
-        "echo Dlya ostanovki zakroyte eto okno ili nazhmite Ctrl+C.",
-        "echo.",
-        "set EXE=",
-        "if exist \"%~dp0openflux-windows-amd64.exe\" set EXE=\"%~dp0openflux-windows-amd64.exe\"",
-        "if exist \"%~dp0openflux.exe\" set EXE=\"%~dp0openflux.exe\"",
-        "if \"%EXE%\"==\"\" (",
-        "    echo [VNIMANIE] Fayl openflux-windows-amd64.exe ne nayden v etoy papke!",
-        "    echo Pozhaluysta, polozhite etot bat-fayl v papku so skachannym openflux-windows-amd64.exe",
-        "    echo (obychno eto papka Zagruzki).",
-        "    echo.",
-        "    pause",
-        "    exit /b 1",
-        ")",
-        "%EXE% --role=client --transport=vyandex --url=\"" + data.primary_url + "\"",
-        "pause"
+        '@echo off',
+        'chcp 65001 >nul',
+        'title SilentConnect OpenFlux (' + data.name + ')',
+        'echo ========================================================',
+        'echo   SilentConnect - Rejim Belyh Spiskov (OpenFlux)',
+        'echo   Server: ' + data.name,
+        'echo ========================================================',
+        'echo.',
+        'echo Zapusk tunnelem cherez Yandex Volga...',
+        'echo Dlya ostanovki zakroyte eto okno ili nazhmite Ctrl+C.',
+        'echo.',
+        'set EXE=',
+        'if exist "%~dp0openflux-windows-amd64.exe" set EXE="%~dp0openflux-windows-amd64.exe"',
+        'if exist "%~dp0openflux.exe" set EXE="%~dp0openflux.exe"',
+        'if not defined EXE (',
+        '    echo [VNIMANIE] Fayl openflux-windows-amd64.exe ne nayden v etoy papke!',
+        '    echo Pozhaluysta, polozhite etot bat-fayl v papku so skachannym openflux-windows-amd64.exe',
+        '    echo (obychno eto papka Zagruzki).',
+        '    echo.',
+        '    pause',
+        '    exit /b 1',
+        ')',
+        '%EXE% --role=client --transport=vyandex --url="' + u + '"',
+        'pause'
       ];
       const batContent = lines.join(String.fromCharCode(13, 10));
-      const blob = new Blob([batContent], { type: "application/x-bat" });
-      const a = document.createElement("a");
+      const blob = new Blob([batContent], { type: 'application/x-bat' });
+      const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = "start-openflux-" + currentWlCountry + ".bat";
+      a.download = 'start-openflux-' + currentWlCountry + '.bat';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
