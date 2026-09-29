@@ -77,7 +77,8 @@ class TestOpenFluxV1Generator(unittest.TestCase):
 
         # Verify Hero Card & UI components are present
         self.assertIn("wl-hero-card", html_str)
-        self.assertIn("wl-country-select", html_str)
+        self.assertIn("wl-country-tabs", html_str)
+        self.assertIn("wl-tab-nl", html_str)
         self.assertIn("wl-hero-cta", html_str)
         self.assertIn("wl-qr-modal", html_str)
         self.assertIn("openflux://v1/", html_str)

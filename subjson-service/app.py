@@ -5651,6 +5651,39 @@ def setup_page_html(
       border-color: rgba(16, 185, 129, 0.7) !important;
       box-shadow: 0 4px 20px rgba(16, 185, 129, 0.22) !important;
     }
+    /* White-List Country Segmented Tabs */
+    .wl-country-tabs {
+      display: inline-flex;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      padding: 3px;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    .wl-country-tab {
+      background: transparent;
+      border: 1px solid transparent;
+      color: #94a3b8;
+      padding: 6px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      border-radius: 7px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .wl-country-tab:hover {
+      color: #f8fafc;
+      background: rgba(255, 255, 255, 0.06);
+    }
+    .wl-country-tab.active {
+      background: rgba(234, 179, 8, 0.2);
+      color: #fde047;
+      border-color: rgba(234, 179, 8, 0.4);
+    }
     .mode-pill-top {
       display: flex;
       align-items: center;
@@ -6809,18 +6842,27 @@ def setup_page_html(
               </div>
             </div>
             <div style="display: flex; align-items: center; gap: 8px;">
-              <label for="wl-country-select" style="font-size: 13px; color: var(--muted); font-weight: 500;">Сервер:</label>
-              <select id="wl-country-select" onchange="onWlCountryChange(this.value)" style="background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(234, 179, 8, 0.4); border-radius: 8px; color: #fff; padding: 6px 12px; font-size: 13.5px; font-weight: 600; cursor: pointer; outline: none;">
-                <option value="nl" selected>🇳🇱 Нидерланды</option>
-                <option value="pl">🇵🇱 Польша</option>
-                <option value="fi">🇫🇮 Финляндия</option>
-              </select>
+              <span style="font-size: 13px; color: var(--muted); font-weight: 500;">Сервер:</span>
+              <div class="wl-country-tabs" role="tablist" aria-label="Выбор страны OpenFlux">
+                <button type="button" class="wl-country-tab active" id="wl-tab-nl" onclick="onWlCountryChange('nl')">
+                  <svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="5.33" fill="#AE1C28"/><rect y="5.33" width="24" height="5.33" fill="#FFFFFF"/><rect y="10.66" width="24" height="5.34" fill="#21468B"/></svg>
+                  <span>Нидерланды</span>
+                </button>
+                <button type="button" class="wl-country-tab" id="wl-tab-pl" onclick="onWlCountryChange('pl')">
+                  <svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="8" fill="#FFFFFF"/><rect y="8" width="24" height="8" fill="#DC143C"/></svg>
+                  <span>Польша</span>
+                </button>
+                <button type="button" class="wl-country-tab" id="wl-tab-fi" onclick="onWlCountryChange('fi')">
+                  <svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="16" fill="#FFFFFF"/><rect x="6.5" width="3.5" height="16" fill="#002F6C"/><rect y="6.25" width="24" height="3.5" fill="#002F6C"/></svg>
+                  <span>Финляндия</span>
+                </button>
+              </div>
             </div>
           </div>
 
           <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
             <a id="wl-hero-cta" class="button success" href="#" style="min-height: 44px; padding: 10px 18px; font-size: 14.5px; font-weight: 700; display: inline-flex; align-items: center; gap: 8px; text-decoration: none;">
-              <span>⚡</span> <span id="wl-cta-text">Добавить подключение 🇳🇱</span>
+              <span>⚡</span> <span id="wl-cta-flag"><svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="5.33" fill="#AE1C28"/><rect y="5.33" width="24" height="5.33" fill="#FFFFFF"/><rect y="10.66" width="24" height="5.34" fill="#21468B"/></svg></span> <span id="wl-cta-text">Подключить узел · Нидерланды</span>
             </a>
             <button type="button" class="button secondary" id="wl-qr-trigger" onclick="openWlQrModal()" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 6px;">
               <span>📱</span> <span>Показать QR-код</span>
@@ -7900,6 +7942,12 @@ def setup_page_html(
       }, 1600);
     };
 
+    const FLAG_SVGS = {
+      nl: '<svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="5.33" fill="#AE1C28"/><rect y="5.33" width="24" height="5.33" fill="#FFFFFF"/><rect y="10.66" width="24" height="5.34" fill="#21468B"/></svg>',
+      pl: '<svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="8" fill="#FFFFFF"/><rect y="8" width="24" height="8" fill="#DC143C"/></svg>',
+      fi: '<svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="16" fill="#FFFFFF"/><rect x="6.5" width="3.5" height="16" fill="#002F6C"/><rect y="6.25" width="24" height="3.5" fill="#002F6C"/></svg>'
+    };
+
     const _openfluxData = __OPENFLUX_DATA_JSON__;
     let currentWlCountry = "nl";
 
@@ -7912,13 +7960,28 @@ def setup_page_html(
     function updateWlHeroCard() {
       const data = _openfluxData[currentWlCountry] || _openfluxData["nl"];
       const cta = document.getElementById("wl-hero-cta");
+      const ctaFlag = document.getElementById("wl-cta-flag");
       const ctaText = document.getElementById("wl-cta-text");
+      const svg = FLAG_SVGS[currentWlCountry] || FLAG_SVGS["nl"];
       if (cta && data) {
         cta.href = data.link;
       }
-      if (ctaText && data) {
-        ctaText.textContent = "Добавить подключение " + data.flag;
+      if (ctaFlag) {
+        ctaFlag.innerHTML = svg;
       }
+      if (ctaText && data) {
+        ctaText.textContent = "Подключить узел · " + data.name;
+      }
+      ["nl", "pl", "fi"].forEach(function(c) {
+        const tab = document.getElementById("wl-tab-" + c);
+        if (tab) {
+          if (c === currentWlCountry) {
+            tab.classList.add("active");
+          } else {
+            tab.classList.remove("active");
+          }
+        }
+      });
     }
 
     window.openWlQrModal = function() {
@@ -7926,8 +7989,9 @@ def setup_page_html(
       const img = document.getElementById("wl-qr-image");
       const title = document.getElementById("wl-qr-modal-title");
       const data = _openfluxData[currentWlCountry] || _openfluxData["nl"];
+      const svg = FLAG_SVGS[currentWlCountry] || FLAG_SVGS["nl"];
       if (!modal || !img || !data) return;
-      title.innerHTML = '<span>📱</span> <span>OpenFlux · ' + data.flag + ' ' + data.name + '</span>';
+      title.innerHTML = '<span>📱</span> <span>OpenFlux · ' + svg + ' ' + data.name + '</span>';
       img.src = data.qr_url + '?t=' + Date.now();
       modal.style.display = 'flex';
     };
@@ -7948,6 +8012,7 @@ def setup_page_html(
       if (!container) return;
 
       const data = _openfluxData[currentWlCountry] || _openfluxData["nl"];
+      const flagSvg = FLAG_SVGS[currentWlCountry] || FLAG_SVGS["nl"];
       const isSubActive = __IS_SUB_ACTIVE__;
 
       const inactiveWarningHtml = `
@@ -7977,7 +8042,7 @@ def setup_page_html(
             <h3>2. Добавление подключения</h3>
             <p>Нажмите кнопку для быстрого импорта в OpenFlux или покажите QR-код для сканирования с камеры:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <a class="button success" href="${data.link}">⚡ 1. Добавить ${data.flag} ${data.name}</a>
+              <a class="button success" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>⚡</span> ${flagSvg} <span>Подключить ${data.name}</span></a>
               <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
               <button type="button" class="button secondary" onclick="copyWlLink(this)">📋 Скопировать ссылку</button>
             </div>
@@ -8009,7 +8074,7 @@ def setup_page_html(
             <h3>2. Добавление подключения</h3>
             <p>Нажмите кнопку для быстрого импорта или отсканируйте QR-код:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <a class="button success" href="${data.link}">⚡ 1. Добавить ${data.flag} ${data.name}</a>
+              <a class="button success" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>⚡</span> ${flagSvg} <span>Подключить ${data.name}</span></a>
               <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
               <button type="button" class="button secondary" onclick="copyWlLink(this)">📋 Скопировать ссылку</button>
             </div>
@@ -8039,7 +8104,7 @@ def setup_page_html(
             <h3>2. Добавление подключения</h3>
             <p>Нажмите кнопку для быстрого добавления узла (браузер передаст ссылку приложению) или скопируйте ссылку:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <a class="button success" href="${data.link}">⚡ 1. Добавить ${data.flag} ${data.name}</a>
+              <a class="button success" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>⚡</span> ${flagSvg} <span>Подключить ${data.name}</span></a>
               <button type="button" class="button secondary" onclick="copyWlLink(this)">📋 Скопировать ссылку</button>
             </div>
             <p style="font-size: 12.5px; color: var(--muted); margin-top: 6px;">💡 Ссылка формата <code>openflux://v1/...</code> открывается напрямую в OpenFlux Desktop и сохраняет параметры подключения.</p>
@@ -8069,7 +8134,7 @@ def setup_page_html(
             <h3>2. Добавление подключения</h3>
             <p>Нажмите кнопку для быстрого импорта в OpenFlux или скопируйте ссылку:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <a class="button success" href="${data.link}">⚡ 1. Добавить ${data.flag} ${data.name}</a>
+              <a class="button success" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>⚡</span> ${flagSvg} <span>Подключить ${data.name}</span></a>
               <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
               <button type="button" class="button secondary" onclick="copyWlLink(this)">📋 Скопировать ссылку</button>
             </div>
@@ -8098,7 +8163,7 @@ def setup_page_html(
             <h3>2. Копирование ссылки или команды запуска</h3>
             <p>Скопируйте ссылку <code>openflux://v1/...</code> для OpenFlux Desktop или команду консольного запуска CLI:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <button type="button" class="button success" onclick="copyWlLink(this)">📋 Скопировать ссылку ${data.flag}</button>
+              <button type="button" class="button success" onclick="copyWlLink(this)">📋 Скопировать ссылку (${data.name})</button>
               <button type="button" class="button secondary" onclick="copyTextVal(this, 'openflux -client -transport vyandex -url &quot;' + ('${data.primary_url}') + '&quot;')">📋 Скопировать команду CLI</button>
             </div>
             <pre style="background: rgba(0,0,0,0.4); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; font-size: 12.5px; color: #38bdf8; overflow-x: auto; margin: 8px 0;">chmod +x openflux-linux-amd64
