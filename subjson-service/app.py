@@ -8081,7 +8081,7 @@ def setup_page_html(
               <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
               <button type="button" class="button secondary" onclick="copyWlLink(this)">📋 Скопировать ссылку</button>
             </div>
-            <p style="font-size: 12.5px; color: var(--muted); margin-top: 6px;">💡 Если приложение уже установлено, нажатие кнопки автоматически откроет OpenFlux и сохранит узел.</p>
+            <p style="font-size: 12.5px; color: var(--muted); margin-top: 6px;">💡 <strong>Важно:</strong> сначала установите OpenFlux в Шаге 1. Если при нажатии кнопки Safari сообщает <em>«адрес недействителен»</em>, нажмите <strong>«📋 Скопировать ссылку»</strong>, перейдите в установленный OpenFlux и добавьте узел через кнопку <strong>«+»</strong> (или покажите QR-код).</p>
           </div>
           <div class="step" data-num="3">
             <h3>3. Активация System VPN</h3>
@@ -8128,13 +8128,14 @@ def setup_page_html(
       } else if (currentWlPlatform === "windows") {
         container.innerHTML = `
           <div class="step" data-num="1">
-            <h3>1. Скачивание OpenFlux для Windows</h3>
-            <p>Скачайте официальный исполняемый файл <code>openflux-windows-amd64.exe</code> с GitHub Releases и скрипт автозапуска:</p>
+            <h3>1. Установка OpenFlux для Windows</h3>
+            <p>Выберите подходящую версию OpenFlux для Windows:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <a class="button success" href="https://github.com/p1neappleXpress/OpenFlux/releases/latest" target="_blank" rel="noopener">📥 1. Скачать openflux-windows-amd64.exe (GitHub)</a>
-              <button type="button" class="button secondary" onclick="downloadWlBat()">⚡ 2. Скачать скрипт запуска (.bat)</button>
+              <a class="button success" href="https://github.com/meepo161/OpenFluxClient/releases/latest" target="_blank" rel="noopener">🖼️ Скачать OpenFlux GUI (Графический .zip / .exe)</a>
+              <a class="button secondary" href="https://github.com/p1neappleXpress/OpenFlux/releases/latest" target="_blank" rel="noopener">📥 Core CLI (p1neappleXpress)</a>
+              <button type="button" class="button secondary" onclick="downloadWlBat()">⚡ Скрипт запуска .bat</button>
             </div>
-            <p style="font-size: 12.5px; color: var(--muted); margin-top: 4px;">💡 Официальное ядро OpenFlux для Windows поставляется автором как системный CLI-исполняемый файл (консоль). Отдельный графический установщик находится в разработке.</p>
+            <p style="font-size: 12.5px; color: var(--muted); margin-top: 4px;">💡 Для обычного использования с окном и кнопками рекомендуется <strong>OpenFlux GUI</strong> от meepo161. Для минималистов доступен легковесный CLI-бинарник с готовым .bat скриптом.</p>
           </div>
           ${!isSubActive ? inactiveWarningHtml : `
           <div class="step" data-num="2">
