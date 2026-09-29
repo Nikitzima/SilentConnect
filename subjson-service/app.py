@@ -7942,6 +7942,41 @@ def setup_page_html(
       }, 1600);
     };
 
+    window.downloadWlBat = function() {
+      const data = _openfluxData[currentWlCountry] || _openfluxData["nl"];
+      const batContent = "@echo off\r\n" +
+        "chcp 65001 >nul\r\n" +
+        "title SilentConnect OpenFlux (" + data.name + ")\r\n" +
+        "echo ========================================================\r\n" +
+        "echo   SilentConnect - Rejim Belyh Spiskov (OpenFlux)\r\n" +
+        "echo   Server: " + data.name + "\r\n" +
+        "echo ========================================================\r\n" +
+        "echo.\r\n" +
+        "echo Zapusk tunnelem cherez Yandex Volga...\r\n" +
+        "echo Dlya ostanovki zakroyte eto okno ili nazhmite Ctrl+C.\r\n" +
+        "echo.\r\n" +
+        "set EXE=\r\n" +
+        "if exist \"%~dp0openflux-windows-amd64.exe\" set EXE=\"%~dp0openflux-windows-amd64.exe\"\r\n" +
+        "if exist \"%~dp0openflux.exe\" set EXE=\"%~dp0openflux.exe\"\r\n" +
+        "if \"%EXE%\"==\"\" (\r\n" +
+        "    echo [VNIMANIE] Fayl openflux-windows-amd64.exe ne nayden v etoy papke!\r\n" +
+        "    echo Pozhaluysta, polozhite etot bat-fayl v papku so skachannym openflux-windows-amd64.exe\r\n" +
+        "    echo (obychno eto papka Zagruzki).\r\n" +
+        "    echo.\r\n" +
+        "    pause\r\n" +
+        "    exit /b 1\r\n" +
+        ")\r\n" +
+        "%EXE% --role=client --transport=vyandex --url=\"" + data.primary_url + "\"\r\n" +
+        "pause\r\n";
+      const blob = new Blob([batContent], { type: "application/x-bat" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "start-openflux-" + currentWlCountry + ".bat";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    };
+
     const FLAG_SVGS = {
       nl: '<svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="5.33" fill="#AE1C28"/><rect y="5.33" width="24" height="5.33" fill="#FFFFFF"/><rect y="10.66" width="24" height="5.34" fill="#21468B"/></svg>',
       pl: '<svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="8" fill="#FFFFFF"/><rect y="8" width="24" height="8" fill="#DC143C"/></svg>',
@@ -8093,31 +8128,41 @@ def setup_page_html(
       } else if (currentWlPlatform === "windows") {
         container.innerHTML = `
           <div class="step" data-num="1">
-            <h3>1. Установка OpenFlux Desktop для Windows</h3>
-            <p>Скачайте официальный дистрибутив OpenFlux Desktop с GitHub Releases:</p>
-            <div class="buttons" style="margin: 12px 0;">
-              <a class="button success" href="https://github.com/p1neappleXpress/OpenFlux/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux Desktop (GitHub)</a>
+            <h3>1. Скачивание OpenFlux для Windows</h3>
+            <p>Скачайте официальный исполняемый файл <code>openflux-windows-amd64.exe</code> с GitHub Releases и скрипт автозапуска:</p>
+            <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+              <a class="button success" href="https://github.com/p1neappleXpress/OpenFlux/releases/latest" target="_blank" rel="noopener">📥 1. Скачать openflux-windows-amd64.exe (GitHub)</a>
+              <button type="button" class="button secondary" onclick="downloadWlBat()">⚡ 2. Скачать скрипт запуска (.bat)</button>
             </div>
+            <p style="font-size: 12.5px; color: var(--muted); margin-top: 4px;">💡 Официальное ядро OpenFlux для Windows поставляется автором как системный CLI-исполняемый файл (консоль). Отдельный графический установщик находится в разработке.</p>
           </div>
           ${!isSubActive ? inactiveWarningHtml : `
           <div class="step" data-num="2">
-            <h3>2. Добавление подключения</h3>
-            <p>Нажмите кнопку для быстрого добавления узла (браузер передаст ссылку приложению) или скопируйте ссылку:</p>
+            <h3>2. Запуск подключения</h3>
+            <p>Положите скачанный <code>start-openflux-${currentWlCountry}.bat</code> в ту же папку, куда скачали <code>openflux-windows-amd64.exe</code> (например, в «Загрузки»), и запустите его двойным кликом:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <a class="button success" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>⚡</span> ${flagSvg} <span>Подключить ${data.name}</span></a>
+              <button type="button" class="button success" onclick="downloadWlBat()" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>⚡</span> ${flagSvg} <span>Скачать .bat запуск (${data.name})</span></button>
+              <button type="button" class="button secondary" onclick="copyTextVal(this, '.\\\\openflux-windows-amd64.exe --role=client --transport=vyandex --url=&quot;' + ('${data.primary_url}') + '&quot;')">📋 Скопировать команду CLI</button>
               <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
               <button type="button" class="button secondary" onclick="copyWlLink(this)">📋 Скопировать ссылку</button>
             </div>
-            <p style="font-size: 12.5px; color: var(--muted); margin-top: 6px;">💡 Ссылка формата <code>openflux://v1/...</code> открывается напрямую в OpenFlux Desktop и сохраняет параметры подключения.</p>
+
+            <details style="margin-top: 12px; background: rgba(0,0,0,0.3); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px;">
+              <summary style="cursor: pointer; font-size: 13px; font-weight: 500; color: #94a3b8; user-select: none;">💻 Ручной запуск через PowerShell / CMD</summary>
+              <div style="margin-top: 10px;">
+                <p style="font-size: 12.5px; color: #cbd5e1; margin-bottom: 8px;">Команда для запуска из терминала:</p>
+                <pre style="background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 10px 12px; font-size: 12px; color: #38bdf8; overflow-x: auto; margin: 0;">.\\openflux-windows-amd64.exe --role=client --transport=vyandex --url="${data.primary_url}"</pre>
+              </div>
+            </details>
           </div>
           <div class="step" data-num="3">
             <h3>3. Активация соединения</h3>
-            <p>В приложении OpenFlux Desktop нажмите кнопку <strong>«Connect»</strong> для запуска защищенного системного туннеля.</p>
+            <p>После запуска в окне появится лог соединения. OpenFlux поднимет локальный туннель (SOCKS5 на <code>127.0.0.1:1080</code>) для защищённой непрерывной связи в режиме Белых Списков.</p>
           </div>
           `}
           <div class="step done" data-num="${isSubActive ? 4 : 3}">
             <h3>${isSubActive ? 4 : 3}. Соединение активно</h3>
-            <p>Весь сетевой трафик Windows защищённо направляется через доверенные узлы в режиме Белых Списков!</p>
+            <p>Туннель Белых Списков успешно подключен на Windows!</p>
           </div>
         `;
       } else if (currentWlPlatform === "macos") {
