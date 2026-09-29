@@ -8105,6 +8105,7 @@ def setup_page_html(
             <p>Нажмите кнопку для быстрого добавления узла (браузер передаст ссылку приложению) или скопируйте ссылку:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
               <a class="button success" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>⚡</span> ${flagSvg} <span>Подключить ${data.name}</span></a>
+              <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
               <button type="button" class="button secondary" onclick="copyWlLink(this)">📋 Скопировать ссылку</button>
             </div>
             <p style="font-size: 12.5px; color: var(--muted); margin-top: 6px;">💡 Ссылка формата <code>openflux://v1/...</code> открывается напрямую в OpenFlux Desktop и сохраняет параметры подключения.</p>
@@ -8152,26 +8153,39 @@ def setup_page_html(
       } else if (currentWlPlatform === "linux") {
         container.innerHTML = `
           <div class="step" data-num="1">
-            <h3>1. Скачивание OpenFlux для Linux</h3>
-            <p>Скачайте официальный исполняемый файл OpenFlux для Linux (x86_64 / arm64) с GitHub Releases:</p>
-            <div class="buttons" style="margin: 12px 0;">
-              <a class="button success" href="https://github.com/p1neappleXpress/OpenFlux/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux для Linux (GitHub)</a>
+            <h3>1. Установка OpenFlux Desktop для Linux</h3>
+            <p>Скачайте официальный дистрибутив OpenFlux Desktop (AppImage / DEB / RPM / CLI) с GitHub Releases:</p>
+            <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+              <a class="button success" href="https://github.com/p1neappleXpress/OpenFlux/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux Desktop (.AppImage / .deb)</a>
             </div>
+            <p style="font-size: 12.5px; color: var(--muted); margin-top: 4px;">Поддерживает дистрибутивы Ubuntu/Debian, Fedora, Arch, Manjaro или любые другие через универсальный AppImage.</p>
           </div>
           ${!isSubActive ? inactiveWarningHtml : `
           <div class="step" data-num="2">
-            <h3>2. Копирование ссылки или команды запуска</h3>
-            <p>Скопируйте ссылку <code>openflux://v1/...</code> для OpenFlux Desktop или команду консольного запуска CLI:</p>
+            <h3>2. Добавление подключения</h3>
+            <p>Нажмите кнопку для быстрого добавления узла (браузер передаст ссылку приложению) или скопируйте ссылку:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <button type="button" class="button success" onclick="copyWlLink(this)">📋 Скопировать ссылку (${data.name})</button>
-              <button type="button" class="button secondary" onclick="copyTextVal(this, 'openflux -client -transport vyandex -url &quot;' + ('${data.primary_url}') + '&quot;')">📋 Скопировать команду CLI</button>
+              <a class="button success" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>⚡</span> ${flagSvg} <span>Подключить ${data.name}</span></a>
+              <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
+              <button type="button" class="button secondary" onclick="copyWlLink(this)">📋 Скопировать ссылку</button>
             </div>
-            <pre style="background: rgba(0,0,0,0.4); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; font-size: 12.5px; color: #38bdf8; overflow-x: auto; margin: 8px 0;">chmod +x openflux-linux-amd64
+            <p style="font-size: 12.5px; color: var(--muted); margin-top: 6px;">💡 Ссылка формата <code>openflux://v1/...</code> открывается напрямую в OpenFlux Desktop и сохраняет параметры подключения.</p>
+
+            <details style="margin-top: 14px; background: rgba(0,0,0,0.3); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px;">
+              <summary style="cursor: pointer; font-size: 13px; font-weight: 500; color: #94a3b8; user-select: none;">💻 Для серверов и терминала (CLI без графики)</summary>
+              <div style="margin-top: 10px;">
+                <p style="font-size: 12.5px; color: #cbd5e1; margin-bottom: 8px;">Для безголовых серверов или скриптовой автоматизации запустите бинарник <code>openflux</code>:</p>
+                <div style="margin-bottom: 8px;">
+                  <button type="button" class="button secondary" style="font-size: 12px; padding: 6px 12px;" onclick="copyTextVal(this, 'openflux -client -transport vyandex -url &quot;' + ('${data.primary_url}') + '&quot;')">📋 Скопировать команду CLI</button>
+                </div>
+                <pre style="background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 10px 12px; font-size: 12px; color: #38bdf8; overflow-x: auto; margin: 0;">chmod +x openflux-linux-amd64
 ./openflux-linux-amd64 -client -transport vyandex -url "${data.primary_url}"</pre>
+              </div>
+            </details>
           </div>
           <div class="step" data-num="3">
             <h3>3. Активация соединения</h3>
-            <p>После запуска шлюз принимает трафик и направляет через защищенный канал Белых Списков.</p>
+            <p>В приложении OpenFlux Desktop нажмите кнопку <strong>«Connect»</strong> (или оставьте фоновый процесс CLI активным).</p>
           </div>
           `}
           <div class="step done" data-num="${isSubActive ? 4 : 3}">
