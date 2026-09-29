@@ -336,7 +336,7 @@ class SingboxChallengerM1Test(unittest.TestCase):
         ob = next(o for o in cfg["outbounds"] if o.get("tag") == "fi-backup-grpc")
         self.assertEqual(ob.get("type"), "vless")
         self.assertEqual(ob.get("server"), "fi.example.com")
-        self.assertEqual(ob.get("server_port"), 443)
+        self.assertEqual(ob.get("server_port"), 29443)
         self.assertEqual(ob["transport"].get("service_name"), "grpc-maxru")
         self.assertEqual(ob["tls"].get("server_name"), subjson_app.FI_GRPC_REALITY_SNI)
         self.assertTrue(UUID_REGEX.match(ob.get("uuid", "")))
