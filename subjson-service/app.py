@@ -8126,7 +8126,8 @@ def setup_page_html(
             <h3>1. Установка OpenFlux для macOS</h3>
             <p>Установите OpenFlux через TestFlight или скачайте сборку для macOS (Apple Silicon / Intel):</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <a class="button success" href="https://testflight.apple.com/join/BwnAcdus" target="_blank" rel="noopener">🍏 TestFlight для Mac</a>
+              <a class="button success" href="https://testflight.apple.com/join/BwnAcdus" target="_blank" rel="noopener">🍏 1. Присоединиться в TestFlight</a>
+              <a class="button secondary" href="https://apps.apple.com/app/testflight/id899247664" target="_blank" rel="noopener">📥 TestFlight в Mac App Store</a>
               <a class="button secondary" href="https://github.com/p1neappleXpress/OpenFlux/releases/latest" target="_blank" rel="noopener">📥 Релизы OpenFlux Desktop (GitHub)</a>
             </div>
           </div>
@@ -8139,6 +8140,7 @@ def setup_page_html(
               <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
               <button type="button" class="button secondary" onclick="copyWlLink(this)">📋 Скопировать ссылку</button>
             </div>
+            <p style="font-size: 12.5px; color: var(--muted); margin-top: 6px;">💡 Если приложение уже установлено, нажатие кнопки автоматически откроет OpenFlux и сохранит узел.</p>
           </div>
           <div class="step" data-num="3">
             <h3>3. Активация соединения</h3>
