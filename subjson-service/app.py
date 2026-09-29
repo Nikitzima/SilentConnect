@@ -268,8 +268,8 @@ NL_GRPC_REALITY_SHORT_ID = os.environ.get("NL_GRPC_REALITY_SHORT_ID", "9a2f7c6d1
 
 FI_REALITY_PUBLIC_KEY = os.environ.get("FI_REALITY_PUBLIC_KEY", "2JCWlJ5M8OxWsp8YLWZqtlkyJGMbdRSwVishk8mIuEo").strip()
 FI_REALITY_SHORT_ID = os.environ.get("FI_REALITY_SHORT_ID", "9a2f7c6d1e4b8a30").strip()
-FI_GRPC_REALITY_PUBLIC_KEY = os.environ.get("FI_GRPC_REALITY_PUBLIC_KEY", "qb3chneGBO60_kv-McyCvUrXM93aN851duFH2bVIMQU").strip()
-FI_GRPC_REALITY_SHORT_ID = os.environ.get("FI_GRPC_REALITY_SHORT_ID", "9a2f7c6d1e4b8a30").strip()
+FI_GRPC_REALITY_PUBLIC_KEY = os.environ.get("FI_GRPC_REALITY_PUBLIC_KEY", FI_REALITY_PUBLIC_KEY).strip()
+FI_GRPC_REALITY_SHORT_ID = os.environ.get("FI_GRPC_REALITY_SHORT_ID", FI_REALITY_SHORT_ID).strip()
 
 PL_STANDBY_HOST = os.environ.get("PL_STANDBY_HOST", "").strip()
 PL_REALITY_PUBLIC_KEY = os.environ.get("PL_REALITY_PUBLIC_KEY", "hgj4G9HOJ_6OVYTkeha0vVdEcyuLVzR4Op2BV7CeIW8").strip()
@@ -289,12 +289,12 @@ GRPC_REALITY_SNI = os.environ.get("GRPC_REALITY_SNI", "vk.com").strip()
 GRPC_SERVICE_NAME = os.environ.get("GRPC_SERVICE_NAME", "grpc-maxru").strip()
 
 FI_REALITY_SNI_CLASSIC = os.environ.get("FI_REALITY_SNI_CLASSIC", "sber.ru").strip()
-FI_REALITY_SNI_FAST = os.environ.get("FI_REALITY_SNI_FAST", "sber.ru").strip()
-FI_GRPC_REALITY_SNI = os.environ.get("FI_GRPC_REALITY_SNI", "sbercloud.ru").strip()
-FI_XHTTP_REALITY_PUBLIC_KEY = os.environ.get("FI_XHTTP_REALITY_PUBLIC_KEY", "ASvvjJ4dOcHst5FWDJ9D562UQ0nN1pAw0l13Z58RNQA").strip()
-FI_XHTTP_REALITY_SHORT_ID = os.environ.get("FI_XHTTP_REALITY_SHORT_ID", "a1b2c3d4e5f60718").strip()
-FI_XHTTP_REALITY_SNI = os.environ.get("FI_XHTTP_REALITY_SNI", "sberauto.com").strip()
-FI_XHTTP_REALITY_PORT = int(os.environ.get("FI_XHTTP_REALITY_PORT", "443"))
+FI_REALITY_SNI_FAST = os.environ.get("FI_REALITY_SNI_FAST", "speed.cloudflare.com").strip()
+FI_GRPC_REALITY_SNI = os.environ.get("FI_GRPC_REALITY_SNI", "sber.ru").strip()
+FI_XHTTP_REALITY_PUBLIC_KEY = os.environ.get("FI_XHTTP_REALITY_PUBLIC_KEY", FI_REALITY_PUBLIC_KEY).strip()
+FI_XHTTP_REALITY_SHORT_ID = os.environ.get("FI_XHTTP_REALITY_SHORT_ID", FI_REALITY_SHORT_ID).strip()
+FI_XHTTP_REALITY_SNI = os.environ.get("FI_XHTTP_REALITY_SNI", "sber.ru").strip()
+FI_XHTTP_REALITY_PORT = int(os.environ.get("FI_XHTTP_REALITY_PORT", "8443"))
 HYSTERIA_PORT = int(os.environ.get("HYSTERIA_PORT", "443"))
 
 HAPP_DOWNLOAD_URL = "https://www.happ.su/main"
@@ -2853,7 +2853,7 @@ def build_singbox_smart_config(
             "type": "vless",
             "tag": "fi-backup-grpc",
             "server": fi_edge,
-            "server_port": 443,
+            "server_port": 29443,
             "uuid": client_uuid,
             "transport": {
                 "type": "grpc",
@@ -3353,7 +3353,7 @@ def build_clash_meta_config(
             "name": "🇫🇮 FI Backup Reality gRPC",
             "type": "vless",
             "server": fi_edge,
-            "port": 443,
+            "port": 29443,
             "uuid": client_uuid,
             "network": "grpc",
             "tls": True,
@@ -3582,8 +3582,8 @@ def build_streisand_bundle(
         f"vless://{client_uuid}@{fi_edge}:443?type=tcp&security=reality&pbk={FI_REALITY_PUBLIC_KEY}&fp=chrome&sni={FI_REALITY_SNI_CLASSIC}&sid={FI_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 6. Классический TCP (FI)')}",
         f"vless://{client_uuid}@{fi_edge}:443?type=tcp&security=reality&pbk={FI_REALITY_PUBLIC_KEY}&fp=chrome&sni={FI_REALITY_SNI_FAST}&sid={FI_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 7. Быстрый TCP (FI)')}",
         f"hy2://{client_uuid}@{fi_edge}:443?sni={fi_edge}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}#{urllib.parse.quote('🇫🇮 8. Скоростной Hysteria2 (FI)')}",
-        f"vless://{client_uuid}@{fi_edge}:443?type=grpc&security=reality&pbk={FI_GRPC_REALITY_PUBLIC_KEY}&fp=chrome&sni={FI_GRPC_REALITY_SNI}&sid={FI_GRPC_REALITY_SHORT_ID}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇫🇮 9. Запасной gRPC (FI)')}",
-        f"vless://{client_uuid}@{fi_edge}:{FI_XHTTP_REALITY_PORT}?type=xhttp&security=reality&pbk={fi_xhttp_pk}&fp=chrome&sni={FI_XHTTP_REALITY_SNI}&sid={fi_xhttp_sid}&path=%2Fxh-mx-d1f7c0429d6a&mode=packet-up#{urllib.parse.quote('🇫🇮 10. Незаметный XHTTP Reality (FI)')}",
+        f"vless://{client_uuid}@{fi_edge}:29443?type=grpc&security=reality&pbk={FI_GRPC_REALITY_PUBLIC_KEY}&fp=chrome&sni={FI_GRPC_REALITY_SNI}&sid={FI_GRPC_REALITY_SHORT_ID}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇫🇮 9. Запасной gRPC (FI)')}",
+        f"vless://{client_uuid}@{fi_edge}:{FI_XHTTP_REALITY_PORT}?type=xhttp&security=reality&pbk={fi_xhttp_pk}&fp=chrome&sni={FI_XHTTP_REALITY_SNI}&sid={fi_xhttp_sid}&path=%2Fxh-7m2q9r4k1v8p3s6&mode=packet-up#{urllib.parse.quote('🇫🇮 10. Незаметный XHTTP Reality (FI)')}",
     ]
     pl_edge = os.environ.get("PL_STANDBY_HOST", PL_STANDBY_HOST).strip()
     if pl_edge:
@@ -4032,7 +4032,7 @@ def build_four_profiles(
     fi_grpc = copy.deepcopy(grpc_cfg)
     fi_grpc["remarks"] = f"🇫🇮 🔐 Запасной ({email})"
     fi_grpc["outbounds"][0]["settings"]["address"] = fi_edge
-    fi_grpc["outbounds"][0]["settings"]["port"] = 443
+    fi_grpc["outbounds"][0]["settings"]["port"] = 29443
     fi_grpc["outbounds"][0]["streamSettings"]["realitySettings"]["serverName"] = FI_GRPC_REALITY_SNI
     fi_grpc["outbounds"][0]["streamSettings"]["realitySettings"]["publicKey"] = FI_GRPC_REALITY_PUBLIC_KEY
     fi_grpc["outbounds"][0]["streamSettings"]["realitySettings"]["shortId"] = FI_GRPC_REALITY_SHORT_ID
@@ -4040,7 +4040,7 @@ def build_four_profiles(
     if fi_grpc["meta"]:
         fi_grpc["meta"]["serverDescription"] = "Запасной · VLESS-gRPC-Reality (FI)"
 
-    # --- Profile 10: FI VLESS XHTTP Reality (Port 39443, Hetzner TSPU Bypass) ---
+    # --- Profile 10: FI VLESS XHTTP Reality ---
     fi_xhttp_pbk = FI_XHTTP_REALITY_PUBLIC_KEY
     fi_xhttp_sid = FI_XHTTP_REALITY_SHORT_ID
 
@@ -4062,7 +4062,7 @@ def build_four_profiles(
         "spiderX": "/"
     }
     fi_xhttp["outbounds"][0]["streamSettings"]["xhttpSettings"] = {
-        "path": "/xh-mx-d1f7c0429d6a",
+        "path": "/xh-7m2q9r4k1v8p3s6",
         "mode": "packet-up"
     }
     fi_xhttp["meta"] = build_happ_config_meta(subscription_id)
