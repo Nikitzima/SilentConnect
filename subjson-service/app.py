@@ -35,6 +35,7 @@ import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+import zlib
 
 # Centralized pricing logic
 _vpn_shop_path = str(Path(__file__).resolve().parent.parent / "vpn-shop")
@@ -557,6 +558,80 @@ def find_profile_for_sub(wc, subscription_id: str) -> dict[str, Any] | None:
     except Exception:
         pass
     return None
+
+
+OPENFLUX_CLUSTER_KEY = os.environ.get("OPENFLUX_CLUSTER_KEY", "sc_oflux_2026_e8d47b19a3c25f01e74a")
+
+DEFAULT_OPENFLUX_POOLS: dict[str, list[str]] = {
+    "nl": [
+        "https://disk.yandex.ru/i/_-g0vNUuu69ffw"
+    ],
+    "pl": [
+        "https://disk.yandex.ru/i/hb1xodFfECGL8w"
+    ],
+    "fi": [
+        "https://yadi.sk/d/I0ULWUKv_9YzpA"
+    ]
+}
+
+
+def load_openflux_pool(country: str) -> list[str]:
+    c = (country or "nl").lower().strip()
+    pool_file = Path(f"/etc/openflux-node/pool_{c}.json")
+    if pool_file.is_file():
+        try:
+            with open(pool_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                urls = [s["url"] for s in data.get("shards", []) if s.get("active", True) and s.get("url")]
+                if urls:
+                    return urls
+        except Exception as exc:
+            LOGGER.warning("Could not read openflux pool %s: %s", pool_file, exc)
+    return DEFAULT_OPENFLUX_POOLS.get(c, DEFAULT_OPENFLUX_POOLS["nl"])
+
+
+def build_openflux_v1_link(country: str, sub_id: str, label: str = "") -> tuple[str, str, str]:
+    """
+    Returns (openflux_v1_url, primary_shard_url, backup_shard_url).
+    Encodes via official OpenFlux v0.2.0 standard: raw DEFLATE + Base64url (no padding).
+    """
+    c = (country or "nl").lower().strip()
+    country_labels = {
+        "nl": ("Нидерланды", "🇳🇱"),
+        "pl": ("Польша", "🇵🇱"),
+        "fi": ("Финляндия", "🇫🇮"),
+    }
+    c_name, flag = country_labels.get(c, ("Нидерланды", "🇳🇱"))
+    shards = load_openflux_pool(c)
+
+    clean_sub = str(sub_id or "default").strip()
+    hash_val = int(hashlib.sha256(f"{clean_sub}:{c}".encode("utf-8")).hexdigest(), 16)
+    prim_idx = hash_val % len(shards)
+    primary_url = shards[prim_idx]
+
+    backup_url = None
+    if len(shards) > 1:
+        back_idx = (prim_idx + 1) % len(shards)
+        backup_url = shards[back_idx]
+
+    node_label = label or f"SilentConnect {flag} {c_name}"
+    payload = {
+        "name": node_label,
+        "secret": OPENFLUX_CLUSTER_KEY,
+        "context": primary_url,
+        "transports": [
+            {"type": "vyandex", "url": primary_url, "priority": 100}
+        ]
+    }
+    if backup_url and backup_url != primary_url:
+        payload["transports"].append({"type": "vyandex", "url": backup_url, "priority": 80})
+
+    json_bytes = json.dumps(payload, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    compressor = zlib.compressobj(level=9, wbits=-zlib.MAX_WBITS)
+    deflated = compressor.compress(json_bytes) + compressor.flush()
+    b64 = base64.urlsafe_b64encode(deflated).decode("ascii").rstrip("=")
+    link = f"openflux://v1/{b64}"
+    return link, primary_url, (backup_url or primary_url)
 
 
 def render_subjson_awg_container(subscription_id: str, support_url: str) -> str:
@@ -5386,6 +5461,38 @@ def setup_page_html(
     volga_fi_url = f"https://{volga_gw_domain}/volga/fi/{urllib.parse.quote(subscription_id, safe='')}"
     is_sub_active = (summary.get("found") is True) and (summary.get("status_kind") == "active")
 
+    oflux_nl_link, oflux_nl_prim, oflux_nl_back = build_openflux_v1_link("nl", subscription_id)
+    oflux_pl_link, oflux_pl_prim, oflux_pl_back = build_openflux_v1_link("pl", subscription_id)
+    oflux_fi_link, oflux_fi_prim, oflux_fi_back = build_openflux_v1_link("fi", subscription_id)
+
+    openflux_data = {
+        "nl": {
+            "country": "nl",
+            "name": "Нидерланды",
+            "flag": "🇳🇱",
+            "link": oflux_nl_link,
+            "qr_url": f"/sub/openflux/{subscription_id}/nl/qr",
+            "primary_url": oflux_nl_prim,
+        },
+        "pl": {
+            "country": "pl",
+            "name": "Польша",
+            "flag": "🇵🇱",
+            "link": oflux_pl_link,
+            "qr_url": f"/sub/openflux/{subscription_id}/pl/qr",
+            "primary_url": oflux_pl_prim,
+        },
+        "fi": {
+            "country": "fi",
+            "name": "Финляндия",
+            "flag": "🇫🇮",
+            "link": oflux_fi_link,
+            "qr_url": f"/sub/openflux/{subscription_id}/fi/qr",
+            "primary_url": oflux_fi_prim,
+        }
+    }
+    openflux_data_json = json.dumps(openflux_data, ensure_ascii=False)
+
     template = """<!doctype html>
 <html lang="ru">
 <head>
@@ -6691,6 +6798,42 @@ def setup_page_html(
           </div>
         </div>
 
+        <!-- Карточка быстрого подключения к OpenFlux -->
+        <div class="wl-hero-card" style="background: linear-gradient(135deg, rgba(234, 179, 8, 0.08) 0%, rgba(20, 35, 28, 0.6) 100%); border: 1px solid rgba(234, 179, 8, 0.28); border-radius: 16px; padding: 18px 20px; margin-bottom: 24px; box-shadow: 0 12px 32px rgba(0,0,0,0.3);">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 14px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 20px;">⚡</span>
+              <div>
+                <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #fff;">Быстрое добавление узла в OpenFlux</h3>
+                <span style="font-size: 12.5px; color: var(--muted);">Выберите сервер и нажмите для мгновенного импорта или покажите QR-код</span>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <label for="wl-country-select" style="font-size: 13px; color: var(--muted); font-weight: 500;">Сервер:</label>
+              <select id="wl-country-select" onchange="onWlCountryChange(this.value)" style="background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(234, 179, 8, 0.4); border-radius: 8px; color: #fff; padding: 6px 12px; font-size: 13.5px; font-weight: 600; cursor: pointer; outline: none;">
+                <option value="nl" selected>🇳🇱 Нидерланды</option>
+                <option value="pl">🇵🇱 Польша</option>
+                <option value="fi">🇫🇮 Финляндия</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+            <a id="wl-hero-cta" class="button success" href="#" style="min-height: 44px; padding: 10px 18px; font-size: 14.5px; font-weight: 700; display: inline-flex; align-items: center; gap: 8px; text-decoration: none;">
+              <span>⚡</span> <span id="wl-cta-text">Добавить подключение 🇳🇱</span>
+            </a>
+            <button type="button" class="button secondary" id="wl-qr-trigger" onclick="openWlQrModal()" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 6px;">
+              <span>📱</span> <span>Показать QR-код</span>
+            </button>
+            <button type="button" class="button secondary" id="wl-copy-trigger" onclick="copyWlLink(this)" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 6px;">
+              <span>📋</span> <span>Скопировать ссылку</span>
+            </button>
+          </div>
+          <div id="wl-action-hint" style="margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.4;">
+            💡 Ссылка формата <code>openflux://v1/...</code> поддерживается на всех платформах: Android, iOS, Windows, macOS, Linux.
+          </div>
+        </div>
+
         <div class="platform-selector-card">
           <div class="platform-bar-header">
             <div class="platform-bar-title">
@@ -6762,6 +6905,30 @@ def setup_page_html(
         <div class="awg-modal-footer">
           <a id="awg-modal-dl" class="awg-action-btn config" href="#" download style="flex: 1; text-align: center; justify-content: center;">📥 Скачать .conf</a>
           <button type="button" class="awg-action-btn qr" onclick="closeAwgQrModal()" style="flex: 0 0 auto;">Закрыть</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- OpenFlux QR Code Modal (Glassmorphism) -->
+  <div id="wl-qr-modal" class="awg-modal-overlay" style="display: none;" onclick="if (event.target === this) closeWlQrModal();">
+    <div class="awg-modal-box">
+      <div class="awg-modal-header">
+        <div id="wl-qr-modal-title" style="font-weight: 700; font-size: 15px; color: #fff; display: flex; align-items: center; gap: 8px;">
+          <span>📱</span> <span>OpenFlux · QR-код</span>
+        </div>
+        <button type="button" class="awg-modal-close" onclick="closeWlQrModal()" aria-label="Закрыть">&times;</button>
+      </div>
+      <div class="awg-modal-body">
+        <div class="awg-qr-wrapper">
+          <img id="wl-qr-image" src="" alt="OpenFlux QR Code" class="awg-qr-img" />
+        </div>
+        <p style="font-size: 13px; color: var(--muted); text-align: center; margin: 12px 0 0 0; line-height: 1.4;">
+          Наведите камеру в приложении <b>OpenFlux</b> для мгновенного добавления подключения.
+        </p>
+        <div class="awg-modal-footer">
+          <button type="button" class="awg-action-btn copy" onclick="copyWlLink(this)" style="flex: 1; text-align: center; justify-content: center;">📋 Скопировать ссылку</button>
+          <button type="button" class="awg-action-btn qr" onclick="closeWlQrModal()" style="flex: 0 0 auto;">Закрыть</button>
         </div>
       </div>
     </div>
@@ -7733,51 +7900,54 @@ def setup_page_html(
       }, 1600);
     };
 
-    window.connectOpenFlux = async function(serverName, url, btn) {
-      if (btn) {
-        const orig = btn.innerHTML;
-        btn.innerHTML = 'Скопировано! ✓';
-        btn.style.filter = 'brightness(1.2)';
-        setTimeout(() => {
-          btn.innerHTML = orig;
-          btn.style.filter = '';
-        }, 2200);
+    const _openfluxData = __OPENFLUX_DATA_JSON__;
+    let currentWlCountry = "nl";
+
+    window.onWlCountryChange = function(country) {
+      currentWlCountry = (country || "nl").toLowerCase();
+      updateWlHeroCard();
+      renderWlSteps();
+    };
+
+    function updateWlHeroCard() {
+      const data = _openfluxData[currentWlCountry] || _openfluxData["nl"];
+      const cta = document.getElementById("wl-hero-cta");
+      const ctaText = document.getElementById("wl-cta-text");
+      if (cta && data) {
+        cta.href = data.link;
       }
-      try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText(url);
-        } else {
-          throw new Error("fallback");
-        }
-      } catch (e) {
-        const ta = document.createElement("textarea");
-        ta.value = url;
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        try { document.execCommand("copy"); } catch (err) {}
-        document.body.removeChild(ta);
+      if (ctaText && data) {
+        ctaText.textContent = "Добавить подключение " + data.flag;
       }
-      try {
-        window.location.href = 'openflux://add?url=' + encodeURIComponent(url);
-      } catch (e) {}
-      const statusBox = document.getElementById("openflux-launch-status");
-      if (statusBox) {
-        statusBox.style.display = "block";
-        statusBox.innerHTML = '✅ Ссылка для <strong>' + serverName + '</strong> скопирована в буфер! Откройте OpenFlux, вставьте ссылку в поле URL и нажмите «Подключиться».';
-        statusBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }
+    }
+
+    window.openWlQrModal = function() {
+      const modal = document.getElementById("wl-qr-modal");
+      const img = document.getElementById("wl-qr-image");
+      const title = document.getElementById("wl-qr-modal-title");
+      const data = _openfluxData[currentWlCountry] || _openfluxData["nl"];
+      if (!modal || !img || !data) return;
+      title.innerHTML = '<span>📱</span> <span>OpenFlux · ' + data.flag + ' ' + data.name + '</span>';
+      img.src = data.qr_url + '?t=' + Date.now();
+      modal.style.display = 'flex';
+    };
+
+    window.closeWlQrModal = function() {
+      const modal = document.getElementById("wl-qr-modal");
+      if (modal) modal.style.display = 'none';
+    };
+
+    window.copyWlLink = async function(btn) {
+      const data = _openfluxData[currentWlCountry] || _openfluxData["nl"];
+      if (!data) return;
+      await copyTextVal(btn, data.link);
     };
 
     function renderWlSteps() {
       const container = document.getElementById("wl-steps-container");
       if (!container) return;
 
-      const volgaNlUrl = "__VOLGA_NL_URL__";
-      const volgaPlUrl = "__VOLGA_PL_URL__";
-      const volgaFiUrl = "__VOLGA_FI_URL__";
+      const data = _openfluxData[currentWlCountry] || _openfluxData["nl"];
       const isSubActive = __IS_SUB_ACTIVE__;
 
       const inactiveWarningHtml = `
@@ -7795,233 +7965,153 @@ def setup_page_html(
       if (currentWlPlatform === "ios") {
         container.innerHTML = `
           <div class="step" data-num="1">
-            <h3>1. Установка TestFlight</h3>
-            <p>Официальная среда предварительного тестирования приложений Apple. Если TestFlight уже установлен на вашем iPhone — сразу переходите ко 2 шагу.</p>
-            <div class="buttons" style="margin: 12px 0;">
-              <a class="button secondary" href="https://apps.apple.com/app/testflight/id899247664" target="_blank" rel="noopener">📥 1. Установить TestFlight (App Store)</a>
-            </div>
-          </div>
-          <div class="step" data-num="2">
-            <h3>2. Приглашение в OpenFlux (TestFlight)</h3>
-            <p>Присоединитесь к программе тестирования клиентского модуля связи. Нажмите кнопку ниже ➔ в открывшемся TestFlight нажмите <strong>«Принять»</strong> и затем <strong>«Установить»</strong> приложение OpenFlux.</p>
-            <div class="buttons" style="margin: 12px 0;">
-              <a class="button success" href="https://testflight.apple.com/join/BwnAcdus" target="_blank" rel="noopener">🍏 2. Присоединиться к OpenFlux (TestFlight)</a>
+            <h3>1. Установка OpenFlux через TestFlight</h3>
+            <p>Нажмите кнопку ниже, чтобы присоединиться к официальному бета-тестированию OpenFlux для iOS в Apple TestFlight:</p>
+            <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+              <a class="button success" href="https://testflight.apple.com/join/BwnAcdus" target="_blank" rel="noopener">🍏 1. Присоединиться в TestFlight</a>
+              <a class="button secondary" href="https://apps.apple.com/app/testflight/id899247664" target="_blank" rel="noopener">📥 TestFlight в App Store</a>
             </div>
           </div>
           ${!isSubActive ? inactiveWarningHtml : `
-          <div class="step" data-num="3">
-            <h3>3. Выбор сервера и копирование адреса</h3>
-            <p>Скопируйте адрес любого из серверов (все три работают независимо):</p>
-            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 10px 0;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <span style="font-weight: 600; font-size: 13px; color: #38bdf8;">🇳🇱 Сервер 1: Нидерланды (NL)</span>
-                <button class="button secondary" type="button" style="padding: 4px 10px; font-size: 12px; min-height: 32px;" onclick="copyTextVal(this, '${volgaNlUrl}')">Скопировать адрес</button>
-              </div>
-              <code style="display: block; font-size: 12px; color: #94a3b8; word-break: break-all; background: rgba(0,0,0,0.3); padding: 6px 8px; border-radius: 6px;">${volgaNlUrl}</code>
+          <div class="step" data-num="2">
+            <h3>2. Добавление подключения</h3>
+            <p>Нажмите кнопку для быстрого импорта в OpenFlux или покажите QR-код для сканирования с камеры:</p>
+            <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+              <a class="button success" href="${data.link}">⚡ 1. Добавить ${data.flag} ${data.name}</a>
+              <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
+              <button type="button" class="button secondary" onclick="copyWlLink(this)">📋 Скопировать ссылку</button>
             </div>
-            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 10px 0;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <span style="font-weight: 600; font-size: 13px; color: #38bdf8;">🇵🇱 Сервер 2: Польша (PL)</span>
-                <button class="button secondary" type="button" style="padding: 4px 10px; font-size: 12px; min-height: 32px;" onclick="copyTextVal(this, '${volgaPlUrl}')">Скопировать адрес</button>
-              </div>
-              <code style="display: block; font-size: 12px; color: #94a3b8; word-break: break-all; background: rgba(0,0,0,0.3); padding: 6px 8px; border-radius: 6px;">${volgaPlUrl}</code>
-            </div>
-            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 10px 0;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <span style="font-weight: 600; font-size: 13px; color: #38bdf8;">🇫🇮 Сервер 3: Финляндия (FI)</span>
-                <button class="button secondary" type="button" style="padding: 4px 10px; font-size: 12px; min-height: 32px;" onclick="copyTextVal(this, '${volgaFiUrl}')">Скопировать адрес</button>
-              </div>
-              <code style="display: block; font-size: 12px; color: #94a3b8; word-break: break-all; background: rgba(0,0,0,0.3); padding: 6px 8px; border-radius: 6px;">${volgaFiUrl}</code>
-            </div>
+            <p style="font-size: 12.5px; color: var(--muted); margin-top: 6px;">💡 Если приложение уже установлено, нажатие кнопки автоматически откроет OpenFlux и сохранит узел.</p>
           </div>
-          <div class="step" data-num="4">
-            <h3>4. Настройка в приложении OpenFlux на iPhone</h3>
-            <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin: 10px 0; line-height: 1.6; font-size: 13px; color: #e2e8f0;">
-              <div style="margin-bottom: 10px;">
-                <strong style="color: #38bdf8;">1.</strong> В верхнем переключателе <strong>Transport</strong> оставьте выбранным <strong>Yandex</strong> (вкладку MAX не трогаем).
-              </div>
-              <div style="margin-bottom: 10px;">
-                <strong style="color: #38bdf8;">2.</strong> В поле <strong>Yandex Docs URL</strong> вставьте скопированный выше адрес сервера.
-              </div>
-              <div style="margin-bottom: 10px;">
-                <strong style="color: #38bdf8;">3.</strong> Поле <em>Local SOCKS5 port</em> (10808) оставьте без изменений.
-              </div>
-              <div style="margin-bottom: 10px; padding: 10px 12px; background: rgba(245, 158, 11, 0.12); border-left: 3px solid #f59e0b; border-radius: 6px;">
-                <strong style="color: #f59e0b;">⚠️ Важно:</strong> Не нажимайте кнопку <em>Start</em> в середине экрана — она запускает только локальный прокси без системного VPN.
-              </div>
-              <div style="margin-bottom: 10px;">
-                <strong style="color: #38bdf8;">4.</strong> Прокрутите экран чуть ниже до раздела <strong>«System VPN (all traffic)»</strong> и нажмите синюю кнопку <strong>«Start VPN»</strong> ⚡.
-              </div>
-              <div>
-                <strong style="color: #38bdf8;">5.</strong> При первом запуске появится системный запрос iOS: <em>«"OpenFlux" хочет добавить конфигурацию VPN»</em> ➔ нажмите <strong>«Разрешить»</strong> и подтвердите (Face ID / код-пароль).
-              </div>
-            </div>
+          <div class="step" data-num="3">
+            <h3>3. Активация System VPN</h3>
+            <p>В приложении OpenFlux нажмите синюю кнопку <strong>«Start VPN»</strong> ⚡. При первом запуске подтвердите добавление VPN-конфигурации в диалоговом окне iOS (Face ID / код-пароль).</p>
           </div>
           `}
-          <div class="step done" data-num="5">
-            <h3>5. Соединение активно</h3>
-            <p>Вверху экрана статус сменится на <strong>Connected</strong> (зеленый индикатор), а в строке состояния iPhone появится значок <strong>[VPN]</strong>.<br>
-            <span style="font-size: 12px; color: var(--muted); display: block; margin-top: 6px;">💡 Окно с техническим логом (Log) внизу — это служебные записи работы туннеля, пугаться их не нужно. Сверните OpenFlux — интернет работает для всех приложений телефона!</span></p>
+          <div class="step done" data-num="${isSubActive ? 4 : 3}">
+            <h3>${isSubActive ? 4 : 3}. Соединение активно</h3>
+            <p>Статус в OpenFlux сменится на <strong>Connected</strong> (зеленый индикатор), а в строке состояния iPhone появится значок <strong>[VPN]</strong>.<br>
+            <span style="font-size: 12px; color: var(--muted); display: block; margin-top: 6px;">💡 Сверните OpenFlux — теперь весь трафик iPhone защищенно направляется через доверенный канал Белых Списков!</span></p>
           </div>
         `;
       } else if (currentWlPlatform === "android") {
         container.innerHTML = `
           <div class="step" data-num="1">
-            <h3>1. Скачивание OpenFlux для Android</h3>
-            <p>Скачайте установочный APK-файл OpenFlux для вашего смартфона:</p>
-            <div class="buttons" style="display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0;">
-              <a class="button success" href="https://github.com/p1neappleXpress/OpenFluxAndroid/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux APK (GitHub Releases)</a>
+            <h3>1. Установка OpenFlux для Android</h3>
+            <p>Скачайте официальный APK-файл OpenFlux с GitHub Releases:</p>
+            <div class="buttons" style="margin: 12px 0;">
+              <a class="button success" href="https://github.com/p1neappleXpress/OpenFluxAndroid/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux APK (GitHub)</a>
             </div>
-            <p style="font-size: 12.5px; color: var(--muted); margin-top: 4px;">Установите APK (при необходимости разрешите установку приложений в настройках безопасности Android).</p>
+            <p style="font-size: 12.5px; color: var(--muted); margin-top: 4px;">Установите APK (при необходимости разрешите установку из браузера в настройках безопасности Android).</p>
           </div>
           ${!isSubActive ? inactiveWarningHtml : `
           <div class="step" data-num="2">
-            <h3>2. Выбор сервера и копирование адреса</h3>
-            <p>Скопируйте адрес любого из серверов (все три работают независимо):</p>
-            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 10px 0;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <span style="font-weight: 600; font-size: 13px; color: #38bdf8;">🇳🇱 Сервер 1: Нидерланды (NL)</span>
-                <button class="button secondary" type="button" style="padding: 4px 10px; font-size: 12px; min-height: 32px;" onclick="copyTextVal(this, '${volgaNlUrl}')">Скопировать адрес</button>
-              </div>
-              <code style="display: block; font-size: 12px; color: #94a3b8; word-break: break-all; background: rgba(0,0,0,0.3); padding: 6px 8px; border-radius: 6px;">${volgaNlUrl}</code>
-            </div>
-            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 10px 0;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <span style="font-weight: 600; font-size: 13px; color: #38bdf8;">🇵🇱 Сервер 2: Польша (PL)</span>
-                <button class="button secondary" type="button" style="padding: 4px 10px; font-size: 12px; min-height: 32px;" onclick="copyTextVal(this, '${volgaPlUrl}')">Скопировать адрес</button>
-              </div>
-              <code style="display: block; font-size: 12px; color: #94a3b8; word-break: break-all; background: rgba(0,0,0,0.3); padding: 6px 8px; border-radius: 6px;">${volgaPlUrl}</code>
-            </div>
-            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 10px 0;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <span style="font-weight: 600; font-size: 13px; color: #38bdf8;">🇫🇮 Сервер 3: Финляндия (FI)</span>
-                <button class="button secondary" type="button" style="padding: 4px 10px; font-size: 12px; min-height: 32px;" onclick="copyTextVal(this, '${volgaFiUrl}')">Скопировать адрес</button>
-              </div>
-              <code style="display: block; font-size: 12px; color: #94a3b8; word-break: break-all; background: rgba(0,0,0,0.3); padding: 6px 8px; border-radius: 6px;">${volgaFiUrl}</code>
+            <h3>2. Добавление подключения</h3>
+            <p>Нажмите кнопку для быстрого импорта или отсканируйте QR-код:</p>
+            <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+              <a class="button success" href="${data.link}">⚡ 1. Добавить ${data.flag} ${data.name}</a>
+              <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
+              <button type="button" class="button secondary" onclick="copyWlLink(this)">📋 Скопировать ссылку</button>
             </div>
           </div>
           <div class="step" data-num="3">
-            <h3>3. Настройка в приложении OpenFlux на Android</h3>
-            <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin: 10px 0; line-height: 1.6; font-size: 13px; color: #e2e8f0;">
-              <div style="margin-bottom: 10px;">
-                <strong style="color: #38bdf8;">1.</strong> Откройте OpenFlux. В верхнем выпадающем меню <strong>«Select Transport»</strong> выберите:
-                <div style="margin: 6px 0; padding: 8px 12px; background: rgba(56, 189, 248, 0.1); border-left: 3px solid #38bdf8; border-radius: 4px; font-weight: 600; color: #38bdf8;">
-                  📄 Yandex.Docs (Volga)
-                </div>
-                <span style="font-size: 12px; color: var(--muted); display: block;">⚠️ Важно выбрать пункт именно со словом <strong>Volga</strong> в скобках.</span>
-              </div>
-              <div style="margin-bottom: 10px;">
-                <strong style="color: #38bdf8;">2.</strong> В поле <strong>«Document URL»</strong> вставьте скопированную ссылку на сервер.
-              </div>
-              <div style="margin-bottom: 10px;">
-                <strong style="color: #38bdf8;">3.</strong> Нажмите большую центральную кнопку <strong>«Tap to connect»</strong>.
-              </div>
-              <div>
-                <strong style="color: #38bdf8;">4.</strong> Появится системный запрос Android: <em>«Запрос на подключение: OpenFlux хочет настроить VPN-подключение...»</em> ➔ нажмите <strong>«ОК»</strong> или <strong>«Разрешить»</strong>.
-              </div>
-            </div>
+            <h3>3. Активация соединения</h3>
+            <p>Нажмите большую центральную кнопку <strong>«Tap to connect»</strong> и разрешите системный запрос Android на подключение VPN.</p>
           </div>
           `}
-          <div class="step done" data-num="4">
-            <h3>4. Соединение активно</h3>
-            <p>Статус изменится на <strong>Connected</strong> (зеленый кружок), кнопка станет красной <em>Disconnect</em>, а в шторке уведомлений смартфона появится значок ключа VPN.<br>
-            <span style="font-size: 12px; color: var(--muted); display: block; margin-top: 6px;">💡 Сверните OpenFlux — теперь весь трафик вашего смартфона защищенно работает через доверенный канал Белых Списков на максимальной скорости!</span></p>
+          <div class="step done" data-num="${isSubActive ? 4 : 3}">
+            <h3>${isSubActive ? 4 : 3}. Соединение активно</h3>
+            <p>Статус изменится на <strong>Connected</strong> (зеленый кружок), а в шторке уведомлений Android появится значок ключа VPN.<br>
+            <span style="font-size: 12px; color: var(--muted); display: block; margin-top: 6px;">💡 Сверните OpenFlux — канал Белых Списков активен для всех приложений смартфона!</span></p>
           </div>
         `;
       } else if (currentWlPlatform === "windows") {
         container.innerHTML = `
           <div class="step" data-num="1">
-            <h3>1. Скачивание модуля для Белых Списков</h3>
-            <p>Скачайте готовый комплект OpenFlux для Windows. В архив уже встроены готовые скрипты запуска для обоих серверов (NL и PL), установка не требуется.</p>
+            <h3>1. Установка OpenFlux Desktop для Windows</h3>
+            <p>Скачайте официальный дистрибутив OpenFlux Desktop с GitHub Releases:</p>
             <div class="buttons" style="margin: 12px 0;">
-              <a class="button success" href="https://github.com/p1neappleXpress/OpenFlux/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux для Windows (GitHub Releases)</a>
+              <a class="button success" href="https://github.com/p1neappleXpress/OpenFlux/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux Desktop (GitHub)</a>
             </div>
           </div>
+          ${!isSubActive ? inactiveWarningHtml : `
           <div class="step" data-num="2">
-            <h3>2. Запуск локального шлюза</h3>
-            <p>Распакуйте архив в любую удобную папку и запустите файл <strong>«Запустить-Оба-Сервера.bat»</strong> (или <strong>«Запустить-В-Фоне-Оба.vbs»</strong> для работы без черного окна консоли).<br>В окне отобразится статус <code>[VOLGA] WS connected</code> — шлюз готов и принимает трафик на локальных портах <code>127.0.0.1:1080</code> (NL), <code>127.0.0.1:1081</code> (PL) и <code>127.0.0.1:1082</code> (FI).</p>
+            <h3>2. Добавление подключения</h3>
+            <p>Нажмите кнопку для быстрого добавления узла (браузер передаст ссылку приложению) или скопируйте ссылку:</p>
+            <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+              <a class="button success" href="${data.link}">⚡ 1. Добавить ${data.flag} ${data.name}</a>
+              <button type="button" class="button secondary" onclick="copyWlLink(this)">📋 Скопировать ссылку</button>
+            </div>
+            <p style="font-size: 12.5px; color: var(--muted); margin-top: 6px;">💡 Ссылка формата <code>openflux://v1/...</code> открывается напрямую в OpenFlux Desktop и сохраняет параметры подключения.</p>
           </div>
           <div class="step" data-num="3">
-            <h3>3. Подключение в приложении (Happ, v2rayN, Sing-box, Clash)</h3>
-            <p>В вашем основном клиенте обновите подписку SilentConnect. В списке серверов выберите один из готовых профилей режима Белых Списков:</p>
-            <ul style="margin: 8px 0 14px 20px; font-size: 13.5px; color: #e5e7eb; line-height: 1.6;">
-              <li>🇳🇱 <strong>16. 🛡️ Белые Списки · NL</strong> — порт 1080</li>
-              <li>🇵🇱 <strong>17. 🛡️ Белые Списки · PL</strong> — порт 1081</li>
-              <li>🇫🇮 <strong>18. 🛡️ Белые Списки · FI</strong> — порт 1082</li>
-            </ul>
-            <p>Включите переключатель соединения. Готово!</p>
+            <h3>3. Активация соединения</h3>
+            <p>В приложении OpenFlux Desktop нажмите кнопку <strong>«Connect»</strong> для запуска защищенного системного туннеля.</p>
           </div>
-          <div class="step done" data-num="4">
-            <h3>4. Проверка работы</h3>
-            <p>Откройте браузер и проверьте соединение. Трафик защищённо направляется через доверенные узлы Яндекса в режиме Белых Списков!</p>
-          </div>
-        `;
-      } else if (currentWlPlatform === "linux") {
-        container.innerHTML = `
-          <div class="step" data-num="1">
-            <h3>1. Скачивание бинарника OpenFlux Linux</h3>
-            <p>Скачайте исполняемый файл для x86_64 архитектуры:</p>
-            <div class="buttons" style="margin: 12px 0;">
-              <a class="button success" href="https://github.com/p1neappleXpress/OpenFlux/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux для Linux (GitHub Releases)</a>
-            </div>
-          </div>
-          <div class="step" data-num="2">
-            <h3>2. Запуск туннеля через консоль</h3>
-            <p>Сделайте файл исполняемым и запустите локальный SOCKS5 шлюз. Выберите сервер для копирования готовой команды:</p>
-            <div class="buttons" style="margin: 12px 0;">
-              <button type="button" class="button success" onclick="copyTextVal(this, 'chmod +x universal-bypass-tool-linux-amd64 &amp;&amp; ./universal-bypass-tool-linux-amd64 -client -transport vyandex -url &quot;${volgaNlUrl}&quot; -socks5 &quot;127.0.0.1:1080&quot;')">🇳🇱 NL (:1080)</button>
-              <button type="button" class="button secondary" onclick="copyTextVal(this, 'chmod +x universal-bypass-tool-linux-amd64 &amp;&amp; ./universal-bypass-tool-linux-amd64 -client -transport vyandex -url &quot;${volgaPlUrl}&quot; -socks5 &quot;127.0.0.1:1081&quot;')">🇵🇱 PL (:1081)</button>
-              <button type="button" class="button secondary" onclick="copyTextVal(this, 'chmod +x universal-bypass-tool-linux-amd64 &amp;&amp; ./universal-bypass-tool-linux-amd64 -client -transport vyandex -url &quot;${volgaFiUrl}&quot; -socks5 &quot;127.0.0.1:1082&quot;')">🇫🇮 FI (:1082)</button>
-            </div>
-            <pre style="background: rgba(0,0,0,0.4); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; font-size: 12.5px; color: #38bdf8; overflow-x: auto; margin: 8px 0;">chmod +x universal-bypass-tool-linux-amd64
-./universal-bypass-tool-linux-amd64 -client -transport vyandex -url "${volgaNlUrl}" -socks5 "127.0.0.1:1080"</pre>
-          </div>
-          <div class="step" data-num="3">
-            <h3>3. Использование шлюза</h3>
-            <p>Используйте локальный SOCKS5 прокси <code>127.0.0.1:1080</code> в вашем браузере, в системе или в клиенте Sing-box / Clash Verge.</p>
+          `}
+          <div class="step done" data-num="${isSubActive ? 4 : 3}">
+            <h3>${isSubActive ? 4 : 3}. Соединение активно</h3>
+            <p>Весь сетевой трафик Windows защищённо направляется через доверенные узлы в режиме Белых Списков!</p>
           </div>
         `;
       } else if (currentWlPlatform === "macos") {
         container.innerHTML = `
           <div class="step" data-num="1">
-            <h3>1. Установка OpenFlux на macOS</h3>
-            <p>На компьютерах Mac с процессорами Apple Silicon (M1/M2/M3/M4) OpenFlux устанавливается напрямую через TestFlight:</p>
-            <div class="buttons" style="margin: 12px 0;">
-              <a class="button success" href="https://testflight.apple.com/join/BwnAcdus" target="_blank" rel="noopener">🍏 1. Открыть OpenFlux в TestFlight</a>
-              <a class="button secondary" href="https://apps.apple.com/app/testflight/id899247664" target="_blank" rel="noopener">📥 TestFlight в Mac App Store</a>
+            <h3>1. Установка OpenFlux для macOS</h3>
+            <p>Установите OpenFlux через TestFlight или скачайте сборку для macOS (Apple Silicon / Intel):</p>
+            <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+              <a class="button success" href="https://testflight.apple.com/join/BwnAcdus" target="_blank" rel="noopener">🍏 TestFlight для Mac</a>
+              <a class="button secondary" href="https://github.com/p1neappleXpress/OpenFlux/releases/latest" target="_blank" rel="noopener">📥 Релизы OpenFlux Desktop (GitHub)</a>
             </div>
           </div>
           ${!isSubActive ? inactiveWarningHtml : `
           <div class="step" data-num="2">
-            <h3>2. Настройка подключения</h3>
-            <p>Скопируйте персональный адрес нужного сервера для подключения в OpenFlux:</p>
-            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 10px 0;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <span style="font-weight: 600; font-size: 13px; color: #38bdf8;">🇳🇱 Сервер 1: Нидерланды (NL)</span>
-                <button class="button secondary" type="button" style="padding: 4px 10px; font-size: 12px; min-height: 32px;" onclick="copyTextVal(this, '${volgaNlUrl}')">Скопировать адрес</button>
-              </div>
-              <code style="display: block; font-size: 12px; color: #94a3b8; word-break: break-all; background: rgba(0,0,0,0.3); padding: 6px 8px; border-radius: 6px;">${volgaNlUrl}</code>
+            <h3>2. Добавление подключения</h3>
+            <p>Нажмите кнопку для быстрого импорта в OpenFlux или скопируйте ссылку:</p>
+            <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+              <a class="button success" href="${data.link}">⚡ 1. Добавить ${data.flag} ${data.name}</a>
+              <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
+              <button type="button" class="button secondary" onclick="copyWlLink(this)">📋 Скопировать ссылку</button>
             </div>
-            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 10px 0;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <span style="font-weight: 600; font-size: 13px; color: #38bdf8;">🇵🇱 Сервер 2: Польша (PL)</span>
-                <button class="button secondary" type="button" style="padding: 4px 10px; font-size: 12px; min-height: 32px;" onclick="copyTextVal(this, '${volgaPlUrl}')">Скопировать адрес</button>
-              </div>
-              <code style="display: block; font-size: 12px; color: #94a3b8; word-break: break-all; background: rgba(0,0,0,0.3); padding: 6px 8px; border-radius: 6px;">${volgaPlUrl}</code>
-            </div>
-            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 10px 0;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <span style="font-weight: 600; font-size: 13px; color: #38bdf8;">🇫🇮 Сервер 3: Финляндия (FI)</span>
-                <button class="button secondary" type="button" style="padding: 4px 10px; font-size: 12px; min-height: 32px;" onclick="copyTextVal(this, '${volgaFiUrl}')">Скопировать адрес</button>
-              </div>
-              <code style="display: block; font-size: 12px; color: #94a3b8; word-break: break-all; background: rgba(0,0,0,0.3); padding: 6px 8px; border-radius: 6px;">${volgaFiUrl}</code>
-            </div>
-            <p style="font-size: 12.5px; color: var(--muted); margin-top: 6px;">🛡️ В приложении OpenFlux выберите протокол <strong>vyandex</strong>, вставьте скопированный адрес в поле <strong>URL</strong> и нажмите «Подключиться».</p>
+          </div>
+          <div class="step" data-num="3">
+            <h3>3. Активация соединения</h3>
+            <p>Нажмите <strong>«Connect»</strong> / <strong>«Start VPN»</strong> в OpenFlux и подтвердите системное расширение macOS.</p>
           </div>
           `}
+          <div class="step done" data-num="${isSubActive ? 4 : 3}">
+            <h3>${isSubActive ? 4 : 3}. Соединение активно</h3>
+            <p>Туннель Белых Списков успешно запущен на macOS!</p>
+          </div>
+        `;
+      } else if (currentWlPlatform === "linux") {
+        container.innerHTML = `
+          <div class="step" data-num="1">
+            <h3>1. Скачивание OpenFlux для Linux</h3>
+            <p>Скачайте официальный исполняемый файл OpenFlux для Linux (x86_64 / arm64) с GitHub Releases:</p>
+            <div class="buttons" style="margin: 12px 0;">
+              <a class="button success" href="https://github.com/p1neappleXpress/OpenFlux/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux для Linux (GitHub)</a>
+            </div>
+          </div>
+          ${!isSubActive ? inactiveWarningHtml : `
+          <div class="step" data-num="2">
+            <h3>2. Копирование ссылки или команды запуска</h3>
+            <p>Скопируйте ссылку <code>openflux://v1/...</code> для OpenFlux Desktop или команду консольного запуска CLI:</p>
+            <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+              <button type="button" class="button success" onclick="copyWlLink(this)">📋 Скопировать ссылку ${data.flag}</button>
+              <button type="button" class="button secondary" onclick="copyTextVal(this, 'openflux -client -transport vyandex -url &quot;' + ('${data.primary_url}') + '&quot;')">📋 Скопировать команду CLI</button>
+            </div>
+            <pre style="background: rgba(0,0,0,0.4); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; font-size: 12.5px; color: #38bdf8; overflow-x: auto; margin: 8px 0;">chmod +x openflux-linux-amd64
+./openflux-linux-amd64 -client -transport vyandex -url "${data.primary_url}"</pre>
+          </div>
           <div class="step" data-num="3">
-            <h3>3. Подключение в Sing-box / Clash Verge / Happ</h3>
-            <p>В клиенте Sing-box, Happ или Clash Verge выберите профиль <strong>«🛡️ Белые Списки»</strong> и активируйте соединение.</p>
+            <h3>3. Активация соединения</h3>
+            <p>После запуска шлюз принимает трафик и направляет через защищенный канал Белых Списков.</p>
+          </div>
+          `}
+          <div class="step done" data-num="${isSubActive ? 4 : 3}">
+            <h3>${isSubActive ? 4 : 3}. Соединение активно</h3>
+            <p>Туннель Белых Списков успешно подключен на Linux!</p>
           </div>
         `;
       }
@@ -8223,6 +8313,7 @@ def setup_page_html(
 
     renderPlatformTabs();
     renderApps();
+    updateWlHeroCard();
     renderWlPlatformTabs();
     renderWlSteps();
     renderAwgPlatformTabs();
@@ -8231,6 +8322,14 @@ def setup_page_html(
     window.updateRenewPrice();
     initNoticeState();
     window.startOrderStatusPolling();
+
+    document.addEventListener("keydown", function(e) {
+      if (e.key === "Escape") {
+        if (typeof closeAwgQrModal === "function") closeAwgQrModal();
+        if (typeof closeAwgSwitchModal === "function") closeAwgSwitchModal();
+        if (typeof closeWlQrModal === "function") closeWlQrModal();
+      }
+    });
   })();
   </script>
 </body>
@@ -8250,6 +8349,7 @@ def setup_page_html(
     result = result.replace("__ESCAPED_SUBSCRIPTION__", escaped_subscription)
     result = result.replace("__SUB_ID__", subscription_id)
     result = result.replace("__SECRET_SEGMENT__", SECRET_SEGMENT)
+    result = result.replace("__OPENFLUX_DATA_JSON__", openflux_data_json)
     result = result.replace("__VOLGA_NL_URL__", html.escape(volga_nl_url, quote=True))
     result = result.replace("__VOLGA_PL_URL__", html.escape(volga_pl_url, quote=True))
     result = result.replace("__VOLGA_FI_URL__", html.escape(volga_fi_url, quote=True))
@@ -9209,45 +9309,33 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "quiesce_merge_in_progress", "retry_after": 10}, include_body)
                 return
 
-            if len(path) == 2 and path[0] == "downloads":
-                filename = path[1]
-                allowed_downloads = {
-                    "openflux-silentconnect-bypass.zip": "application/zip",
-                    "OpenFlux-Android-arm64.apk": "application/vnd.android.package-archive",
-                    "OpenFlux-Fork-Universal.apk": "application/vnd.android.package-archive",
-                    "universal-bypass-tool-linux-amd64": "application/octet-stream",
-                }
-                if filename in allowed_downloads:
-                    search_dirs = [
-                        Path("/opt/OpenFlux/downloads"),
-                        Path("/opt/OpenFlux"),
-                        Path("/root/openflux"),
-                        Path("/root/openflux-downloads"),
-                        Path(__file__).resolve().parent.parent / "openflux",
-                        Path(__file__).resolve().parent / "openflux",
-                    ]
-                    found_path = None
-                    for d in search_dirs:
-                        cand = d / filename
-                        if cand.is_file():
-                            found_path = cand
-                            break
-                    if found_path:
-                        file_size = found_path.stat().st_size
-                        mime_type = allowed_downloads[filename]
-                        self.send_response(HTTPStatus.OK)
-                        self.send_header("Content-Type", mime_type)
-                        self.send_header("Content-Length", str(file_size))
-                        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
-                        self.send_header("Cache-Control", "public, max-age=86400")
-                        self.end_headers()
-                        if include_body:
-                            with open(found_path, "rb") as f:
-                                shutil.copyfileobj(f, self.wfile, length=65536)
-                        return
-                    else:
-                        self._send_json(HTTPStatus.NOT_FOUND, {"error": "file_not_found"}, include_body)
-                        return
+            # OpenFlux Node QR Code
+            # GET /sub/openflux/<sub_id>/<country>/qr or /<SECRET_SEGMENT>/openflux/<sub_id>/<country>/qr or /api/sub/openflux/...
+            if (len(path) == 5 and path[0] in {"sub", SECRET_SEGMENT, "my-secret-sub"} and path[1] == "openflux" and path[4] in {"qr", "qrcode"}) or \
+               (len(path) == 6 and path[0] == "api" and path[1] in {"sub", "openflux"} and path[5] in {"qr", "qrcode"}):
+                sub_id = path[2] if path[0] in {"sub", SECRET_SEGMENT, "my-secret-sub"} else (path[3] if path[1] == "sub" else path[2])
+                country = path[3] if path[0] in {"sub", SECRET_SEGMENT, "my-secret-sub"} else (path[4] if path[1] == "sub" else path[3])
+                country = (country or "nl").lower().strip()
+                if country not in {"nl", "pl", "fi"}:
+                    country = "nl"
+                link, _, _ = build_openflux_v1_link(country, sub_id)
+                qr_bytes = b""
+                try:
+                    from vpn_shop import qr
+                    qr_bytes = qr.generate_qr_png(link, box_size=6, border=2)
+                except Exception as exc:
+                    LOGGER.warning("OpenFlux QR generation failed: %s", exc)
+                if not qr_bytes:
+                    self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "qr_generation_failed"}, include_body)
+                    return
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(qr_bytes)))
+                self.send_header("Cache-Control", "public, max-age=300")
+                self.end_headers()
+                if include_body:
+                    self.wfile.write(qr_bytes)
+                return
 
             if path == ["favicon.ico"]:
                 self._redirect(f"{HAPP_WEB_PAGE_URL}/assets/telegram/avatar.png", include_body)
