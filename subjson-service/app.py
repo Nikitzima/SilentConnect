@@ -6882,13 +6882,13 @@ def setup_page_html(
           </div>
 
           <div id="wl-hero-actions" style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
-            <button type="button" class="button success" id="wl-copy-trigger" onclick="copyWlLink(this)" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 6px; order: 1;">
+            <button type="button" class="button success" id="wl-copy-trigger" onclick="copyWlLink(this)" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 6px;">
               <span>📋</span> <span>Скопировать ссылку</span>
             </button>
-            <button type="button" class="button secondary" id="wl-qr-trigger" onclick="openWlQrModal()" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 6px; order: 2;">
+            <button type="button" class="button secondary" id="wl-qr-trigger" onclick="openWlQrModal()" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 6px;">
               <span>📱</span> <span>Показать QR-код</span>
             </button>
-            <a id="wl-hero-cta" class="button secondary btn-wl-disabled" href="javascript:void(0)" onclick="event.preventDefault(); return false;" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 8px; text-decoration: none; order: 3;" title="Прямой 1-Click запуск в разработке для этой платформы">
+            <a id="wl-hero-cta" class="button secondary btn-wl-disabled" href="javascript:void(0)" onclick="event.preventDefault(); return false;" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 8px; text-decoration: none;" title="Прямой 1-Click запуск в разработке для этой платформы">
               <span>⚡</span> <span id="wl-cta-flag" style="display: none;"><svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="5.33" fill="#AE1C28"/><rect y="5.33" width="24" height="5.33" fill="#FFFFFF"/><rect y="10.66" width="24" height="5.34" fill="#21468B"/></svg></span> <span id="wl-cta-text">1-Click импорт</span> <span id="wl-cta-badge"><span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span></span>
             </a>
           </div>
@@ -8034,45 +8034,38 @@ def setup_page_html(
           cta.href = data.link;
           cta.className = "button success";
           cta.onclick = null;
-          cta.style.order = "1";
           cta.style.cursor = "pointer";
           cta.title = "Прямое подключение в OpenFlux на Android";
         }
         if (ctaFlag) {
-          ctaFlag.style.display = "inline-flex";
-          ctaFlag.innerHTML = svg;
+          ctaFlag.style.display = "none";
         }
-        if (ctaText && data) {
-          ctaText.textContent = "Подключить узел · " + data.name;
+        if (ctaText) {
+          ctaText.textContent = "1-Click импорт";
         }
         if (ctaBadge) {
           ctaBadge.innerHTML = "";
         }
-        if (qrBtn) {
-          qrBtn.className = "button secondary";
-          qrBtn.style.order = "2";
-        }
         if (copyBtn) {
           copyBtn.className = "button secondary";
-          copyBtn.style.order = "3";
+        }
+        if (qrBtn) {
+          qrBtn.className = "button secondary";
         }
         if (hint) {
-          hint.innerHTML = '💡 <strong>Android:</strong> поддерживается прямое подключение в 1 клик. Нажмите «Подключить узел», и приложение запустится автоматически.';
+          hint.innerHTML = '💡 <strong>Android:</strong> поддерживается прямое подключение в 1 клик. Нажмите «1-Click импорт», и приложение запустится автоматически.';
         }
       } else {
         if (copyBtn) {
           copyBtn.className = "button success";
-          copyBtn.style.order = "1";
         }
         if (qrBtn) {
           qrBtn.className = "button secondary";
-          qrBtn.style.order = "2";
         }
         if (cta) {
           cta.href = "javascript:void(0)";
           cta.className = "button secondary btn-wl-disabled";
           cta.onclick = function(e) { e.preventDefault(); return false; };
-          cta.style.order = "3";
           cta.title = "Прямой 1-Click запуск в разработке для этой платформы";
         }
         if (ctaFlag) {
@@ -8195,9 +8188,9 @@ def setup_page_html(
             <h3>2. Добавление подключения</h3>
             <p>Нажмите кнопку для быстрого импорта или отсканируйте QR-код:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <a class="button success" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>⚡</span> ${flagSvg} <span>Подключить ${data.name}</span></a>
-              <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
-              <button type="button" class="button secondary" onclick="copyWlLink(this)">📋 Скопировать ссылку</button>
+              <button type="button" class="button secondary" onclick="copyWlLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ссылку</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal()" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📱</span> <span>Показать QR-код</span></button>
+              <a class="button success" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;" title="Прямое подключение в OpenFlux на Android"><span>⚡</span> <span>1-Click импорт</span></a>
             </div>
             <p style="font-size: 12.5px; color: var(--muted); margin-top: 6px;">💡 Браузер автоматически откроет приложение OpenFlux и добавит конфигурацию узла.</p>
           </div>
