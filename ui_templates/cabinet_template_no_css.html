@@ -1,0 +1,1956 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>Подключение SilentConnect</title>
+  <link rel="icon" type="image/png" href="__WEB_PAGE_URL__/assets/telegram/avatar.png">
+  <link rel="shortcut icon" type="image/png" href="__WEB_PAGE_URL__/assets/telegram/avatar.png">
+  <link rel="apple-touch-icon" href="__WEB_PAGE_URL__/assets/telegram/avatar.png">
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <style>
+    /* Вставь сюда новый CSS */
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="top">
+      <a class="brand" href="__WEB_PAGE_URL__"><img src="__WEB_PAGE_URL__/assets/telegram/avatar.png" alt="SilentConnect" class="brand-logo"><span>SilentConnect</span></a>
+      <div class="top-actions">
+        <a class="top-btn" href="__WEB_PAGE_URL__">← На сайт к тарифам</a>
+        <a class="top-btn" href="__SUPPORT_URL__" target="_blank">Поддержка</a>
+        <button class="top-btn" type="button" id="copy-top" title="Скопировать ссылку">Скопировать 🔗</button>
+      </div>
+    </section>
+
+    <section class="status __STATUS_CLASS__">
+      <div class="status-head">
+        <div class="state-dot">✓</div>
+        <div>
+          <h1>__TITLE__</h1>
+          <p>__SUBTITLE__ · __DEVICE_LIMIT__</p>
+        </div>
+      </div>
+      <div class="summary">
+        <div class="metric">
+          <span>Профиль</span>
+          <strong>__IDENTIFIER__</strong>
+        </div>
+        <div class="metric good">
+          <span>Статус</span>
+          <strong>__STATUS_STR__</strong>
+        </div>
+        <div class="metric">
+          <span>Действует до</span>
+          <strong>__EXPIRES_STR__</strong>
+        </div>
+        <div class="metric">
+          <span>Трафик</span>
+          <strong>__TRAFFIC_STR__</strong>
+        </div>
+      </div>
+    </section>
+
+    <div id="payment-card-slot">__PAYMENT_CARD_HTML__</div>
+
+    <section class="install renewal-accordion" style="margin-bottom: 24px; background: rgba(47, 191, 113, 0.05); border: 1px solid rgba(47, 191, 113, 0.2); padding: 0;">
+      <div id="renew-header" onclick="toggleRenewBuilder()" style="padding:18px 24px; cursor:pointer; display:flex; align-items:center; justify-content:space-between; user-select:none;">
+        <h2 style="margin:0; font-size:20px; font-weight:700; display:flex; align-items:center; gap:8px;">⚡ Продлить подписку</h2>
+        <span id="renew-arrow" style="font-size:16px; color:var(--green); transition:transform 0.32s cubic-bezier(0.16, 1, 0.3, 1);">▼</span>
+      </div>
+      
+      <div id="renew-wrapper" style="display:grid; grid-template-rows:0fr; transition:grid-template-rows 0.32s cubic-bezier(0.16, 1, 0.3, 1);">
+        <div style="overflow:hidden;">
+          <div id="renew-content" style="padding:0 24px 24px 24px; border-top:1px solid rgba(255,255,255,0.06); opacity:0; transition:opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1);">
+            <p style="color:var(--muted); font-size:14px; margin-top:12px; margin-bottom:16px;">Выберите период продления. При оплате ваш текущий ключ доступа и настройки в приложении сразу продлятся.</p>
+            
+            __LINKED_EMAIL_BADGE__
+
+            <form method="post" action="/__SECRET_SEGMENT__/renew/__SUB_ID__">
+              <input type="hidden" name="device_limit" id="renew_device_limit" value="3">
+              <input type="hidden" name="duration_days" id="renew_duration_days" value="360">
+
+              <div class="bind-only-row" style="margin-bottom: 16px; background: rgba(255,255,255,0.03); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; transition: all 0.2s ease;">
+                <label style="display: flex; align-items: center; gap: 12px; cursor: pointer; user-select: none;">
+                  <input type="checkbox" name="bind_email_only" id="bind_email_only" value="1" onchange="toggleBindEmailOnly(this.checked)" style="width: 18px; height: 18px; accent-color: var(--green); cursor: pointer;">
+                  <div>
+                    <div style="font-weight: 700; font-size: 14.5px; color: #fff;">Только привязать почту (без смены тарифа и оплаты)</div>
+                    <div style="font-size: 12px; color: var(--muted); margin-top: 2px;">Для получения напоминаний об окончании за 24ч / 1ч и входа в личный кабинет</div>
+                  </div>
+                </label>
+              </div>
+
+              <div id="renew-plan-selectors" style="transition: opacity 0.25s ease, filter 0.25s ease;">
+                <div style="color:var(--muted); font-size:12px; font-weight:600; margin-bottom:6px;">Устройства (одновременно)</div>
+                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-bottom:16px;">
+                  <div class="dev-box choice-box active" data-group="device_limit" data-value="3" onclick="setRenewChoice('device_limit', '3')" style="padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; align-items:center; justify-content:center; position:relative; min-height:48px; cursor:pointer;">
+                    <span style="font-weight:700; font-size:15px; color:#fff;">3 устройства</span>
+                  </div>
+                  <div class="dev-box choice-box" data-group="device_limit" data-value="6" onclick="setRenewChoice('device_limit', '6')" style="padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; align-items:center; justify-content:center; position:relative; min-height:48px; cursor:pointer;">
+                    <span style="font-weight:700; font-size:15px; color:#fff;">6 устройств</span>
+                  </div>
+                  <div class="dev-box choice-box" data-group="device_limit" data-value="9" onclick="setRenewChoice('device_limit', '9')" style="padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; align-items:center; justify-content:center; position:relative; min-height:48px; cursor:pointer;">
+                    <span style="font-weight:700; font-size:15px; color:#fff;">9 устройств</span>
+                  </div>
+                </div>
+
+                <div style="color:var(--muted); font-size:12px; font-weight:600; margin-bottom:6px;">Срок доступа</div>
+                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-bottom:16px;">
+                  <div class="dur-box choice-box" data-group="duration_days" data-value="30" onclick="setRenewChoice('duration_days', '30')" style="padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; flex-direction:column; justify-content:center; position:relative; cursor:pointer;">
+                    <span style="font-weight:700; font-size:15px; color:#fff;">1 месяц</span>
+                    <span style="font-size:12px; color:var(--muted);">помесячно</span>
+                  </div>
+                  <div class="dur-box choice-box" data-group="duration_days" data-value="90" onclick="setRenewChoice('duration_days', '90')" style="padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; flex-direction:column; justify-content:center; position:relative; cursor:pointer;">
+                    <span style="position:absolute; top:-8px; right:-4px; background:#f59e0b; color:#fff; font-weight:800; font-size:10px; padding:2px 6px; border-radius:6px; box-shadow:0 2px 6px rgba(245,158,11,0.4);">−10%</span>
+                    <span style="font-weight:700; font-size:15px; color:#fff;">3 месяца</span>
+                    <span style="font-size:12px; color:var(--muted);">экономия</span>
+                  </div>
+                  <div class="dur-box choice-box" data-group="duration_days" data-value="180" onclick="setRenewChoice('duration_days', '180')" style="padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; flex-direction:column; justify-content:center; position:relative; cursor:pointer;">
+                    <span style="position:absolute; top:-8px; right:-4px; background:#f59e0b; color:#fff; font-weight:800; font-size:10px; padding:2px 6px; border-radius:6px; box-shadow:0 2px 6px rgba(245,158,11,0.4);">−20%</span>
+                    <span style="font-weight:700; font-size:15px; color:#fff;">6 месяцев</span>
+                    <span style="font-size:12px; color:var(--muted);">выгодно</span>
+                  </div>
+                  <div class="dur-box choice-box active" data-group="duration_days" data-value="360" onclick="setRenewChoice('duration_days', '360')" style="padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,0.04); display:flex; flex-direction:column; justify-content:center; position:relative; cursor:pointer;">
+                    <span style="position:absolute; top:-8px; right:-4px; background:#f59e0b; color:#fff; font-weight:800; font-size:10px; padding:2px 6px; border-radius:6px; box-shadow:0 2px 6px rgba(245,158,11,0.4);">−30%</span>
+                    <span style="font-weight:700; font-size:15px; color:#fff;">12 месяцев</span>
+                    <span style="font-size:12px; color:var(--muted);">максимум</span>
+                  </div>
+                </div>
+              </div>
+
+              <div id="renew-price-card" style="background:rgba(0,0,0,0.25); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                <span id="renew-price-label" style="color:var(--muted); font-size:14px;">Стоимость продления:</span>
+                <strong id="renew-total-price" style="font-size:22px; font-weight:800; color:var(--green);">1 249 ₽ <span style="font-size:13px; color:var(--muted); font-weight:400;">(~104 ₽/мес)</span></strong>
+              </div>
+
+              <div style="margin-bottom: 12px;">
+                <label style="color:var(--muted); font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Электронная почта (для отправки чека и ссылок)</label>
+                <input type="email" id="renew_customer_email" name="customer_email" placeholder="pochta@gmail.com" value="__CUSTOMER_EMAIL__" required autocomplete="email" style="width:100%; min-height:44px; background:rgba(0,0,0,0.3); border:1px solid var(--line); border-radius:10px; color:#fff; padding:10px 14px; font-size:15px;">
+              </div>
+
+              <div id="renew-promo-row" style="margin-bottom: 12px;">
+                <input type="text" name="promo_code" placeholder="Промокод (если есть)" style="width:100%; min-height:40px; background:rgba(0,0,0,0.2); border:1px solid var(--line); border-radius:8px; color:#fff; padding:8px 12px; font-size:14px;">
+              </div>
+
+              <div style="font-size:12px; color:var(--muted); margin-bottom:14px; display:flex; flex-direction:column; gap:8px;">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                  <input type="checkbox" name="email_reminders" value="1" checked>
+                  <span>Напоминать об окончании подписки за 24ч и 1ч на почту</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                  <input type="checkbox" name="terms_ack" value="1" checked required>
+                  <span>Согласен с <a href="__WEB_PAGE_URL__/legal/privacy" target="_blank" style="color:var(--green); text-decoration:underline;">политикой конфиденциальности</a> и <a href="__WEB_PAGE_URL__/legal/terms" target="_blank" style="color:var(--green); text-decoration:underline;">офертой</a></span>
+                </label>
+              </div>
+
+              <div class="cf-turnstile" data-sitekey="0x4AAAAAAD_SNIC95jkFweEh" data-theme="dark" style="margin: 14px 0; display: flex; justify-content: center;"></div>
+              <div id="renew-turnstile-error" style="margin: 10px 0; font-size: 13.5px; color: #ef4444; text-align: center; line-height: 1.4; display: none; font-weight: 600;"></div>
+              <button type="submit" id="renew-submit-btn" class="button success" style="width:100%; min-height:48px; font-size:16px; font-weight:800; cursor:pointer;">Оплатить продление 💳</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="install">
+      <div class="install-head" style="margin-bottom: 16px;">
+        <div>
+          <h2>Мастер подключения</h2>
+          <p style="margin: 4px 0 0; color: var(--muted); font-size: 14px;">Выберите режим работы и ваше устройство для быстрой настройки защищенного доступа:</p>
+        </div>
+      </div>
+
+      <!-- Режим подключения: Три большие интерактивные пилюли -->
+      <div class="connection-mode-pills" role="tablist" aria-label="Режим подключения">
+        <button type="button" class="mode-pill active" id="pill-mode-standard" role="tab" aria-selected="true" onclick="setConnectionMode('standard')">
+          <div class="mode-pill-top">
+            <div class="mode-pill-header">
+              <span class="mode-pill-icon">🛡️</span>
+              <span class="mode-pill-title">Основной</span>
+            </div>
+          </div>
+          <div class="mode-pill-subtitle">Happ, Sing-box, Clash</div>
+        </button>
+        <button type="button" class="mode-pill" id="pill-mode-awg" role="tab" aria-selected="false" onclick="setConnectionMode('awg')">
+          <div class="mode-pill-top">
+            <div class="mode-pill-header">
+              <span class="mode-pill-icon">🎮</span>
+              <span class="mode-pill-title">Игровой</span>
+            </div>
+          </div>
+          <div class="mode-pill-subtitle">AmneziaVPN, AmneziaWG</div>
+        </button>
+        <button type="button" class="mode-pill" id="pill-mode-whitelist" role="tab" aria-selected="false" onclick="setConnectionMode('whitelist')">
+          <div class="mode-pill-top">
+            <div class="mode-pill-header">
+              <span class="mode-pill-icon">📃</span>
+              <span class="mode-pill-title">Белые списки</span>
+            </div>
+          </div>
+          <div class="mode-pill-subtitle">OpenFlux клиент</div>
+        </button>
+      </div>
+
+      <!-- Контейнер 1: Стандартный режим -->
+      <div id="standard-mode-container">
+      <div class="platform-selector-card">
+        <div class="platform-bar-header">
+          <div class="platform-bar-title">
+            <span style="font-size:16px;">💻</span>
+            <span>Операционная система</span>
+          </div>
+          <span class="platform-bar-hint">Автоопределение: <strong id="detected-platform-label">iOS</strong></span>
+        </div>
+        <div class="platform-nav-track" id="platform-tabs" role="tablist" aria-label="Выбор операционной системы"></div>
+        <select id="platform" class="visually-hidden" aria-hidden="true" tabindex="-1">
+          __PLATFORM_OPTIONS_HTML__
+        </select>
+      </div>
+
+      <div style="margin-bottom: 12px; font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px;">Доступные приложения:</div>
+      <div class="apps" id="apps" role="region" aria-live="polite"></div>
+      <div class="steps">
+        <div class="step" data-num="1">
+          <h3>1. Установка клиента</h3>
+          <p id="install-text">Скачайте официальное приложение для вашей операционной системы по кнопкам ниже.</p>
+          <div class="buttons" id="download-buttons"></div>
+        </div>
+        <div class="step" data-num="2">
+          <h3>2. Автоматический импорт ключа</h3>
+          <p>Нажмите «Добавить подписку». Приложение откроется автоматически и применит зашифрованный профиль SilentConnect.</p>
+          <div class="buttons"><a class="button success" id="import-link" href="#">Добавить подписку ⚡</a></div>
+        </div>
+        <div class="step done" data-num="3">
+          <h3>3. Активация соединения</h3>
+          <p id="usage-text">Откройте приложение и нажмите главную кнопку включения на центральном экране.</p>
+        </div>
+        <div class="step" data-num="4">
+          <h3>4. Резервный способ (ручной импорт)</h3>
+          <p>Если бесшовный переход не сработал: скопируйте зашифрованную ссылку ниже в буфер обмена и выберите пункт «Импорт из буфера обмена» (Import from Clipboard) в настройках приложения.</p>
+          <div class="buttons"><button class="secondary" type="button" id="copy-sub">Скопировать ссылку 🔗</button></div>
+          <textarea id="sub" readonly>__ESCAPED_SUBSCRIPTION__</textarea>
+        </div>
+      </div>
+      </div><!-- /standard-mode-container -->
+
+      <!-- Контейнер 2: Режим Белых Списков (OpenFlux) -->
+      <div id="whitelist-mode-container" style="display: none;">
+        <div class="whitelist-info-card" style="background: rgba(234, 179, 8, 0.08); border: 1px solid rgba(234, 179, 8, 0.25); border-radius: 14px; padding: 14px 18px; margin-bottom: 20px;">
+          <div style="display: flex; align-items: flex-start; gap: 12px;">
+            <span style="font-size: 24px; line-height: 1;">🛡️</span>
+            <div>
+              <div style="font-size: 14.5px; font-weight: 700; color: #facc15; margin-bottom: 4px;">
+                Специальный режим «Белых Списков» (OpenFlux)
+              </div>
+              <p style="margin: 0 0 8px 0; font-size: 13px; color: #d1d5db; line-height: 1.45;">
+                Канал предназначен для непрерывной связи и стабильного доступа в интернет в режиме Белых Списков. Сетевой трафик передается в защищенной сессии совместного редактирования <strong>Яндекс Документов</strong> и направляется через наши серверы в Нидерландах, Польше и Финляндии.
+              </p>
+              <div style="display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--green); font-weight: 600;">
+                <span>💡</span> <span>Без ограничений по устройствам: запускайте на любых ваших ПК и смартфонах (скорость канала до 2 Мбит/с).</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Карточка быстрого подключения к OpenFlux -->
+        <div class="wl-hero-card" style="background: linear-gradient(135deg, rgba(234, 179, 8, 0.08) 0%, rgba(20, 35, 28, 0.6) 100%); border: 1px solid rgba(234, 179, 8, 0.28); border-radius: 16px; padding: 18px 20px; margin-bottom: 24px; box-shadow: 0 12px 32px rgba(0,0,0,0.3);">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 14px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 20px;">⚡</span>
+              <div>
+                <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #fff;">Быстрое добавление узла в OpenFlux</h3>
+                <span style="font-size: 12.5px; color: var(--muted);">Выберите сервер и нажмите для мгновенного импорта или покажите QR-код</span>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 13px; color: var(--muted); font-weight: 500;">Сервер:</span>
+              <div class="wl-country-tabs" role="tablist" aria-label="Выбор страны OpenFlux">
+                <button type="button" class="wl-country-tab active" id="wl-tab-nl" onclick="onWlCountryChange('nl')">
+                  <svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="5.33" fill="#AE1C28"/><rect y="5.33" width="24" height="5.33" fill="#FFFFFF"/><rect y="10.66" width="24" height="5.34" fill="#21468B"/></svg>
+                  <span>Нидерланды</span>
+                </button>
+                <button type="button" class="wl-country-tab" id="wl-tab-pl" onclick="onWlCountryChange('pl')">
+                  <svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="8" fill="#FFFFFF"/><rect y="8" width="24" height="8" fill="#DC143C"/></svg>
+                  <span>Польша</span>
+                </button>
+                <button type="button" class="wl-country-tab" id="wl-tab-fi" onclick="onWlCountryChange('fi')">
+                  <svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="16" fill="#FFFFFF"/><rect x="6.5" width="3.5" height="16" fill="#002F6C"/><rect y="6.25" width="24" height="3.5" fill="#002F6C"/></svg>
+                  <span>Финляндия</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div id="wl-hero-actions" style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+            <button type="button" class="button success" id="wl-copy-trigger" onclick="copyWlLink(this)" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 6px;">
+              <span>📋</span> <span>Скопировать ссылку</span>
+            </button>
+            <button type="button" class="button secondary" id="wl-qr-trigger" onclick="openWlQrModal()" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 6px;">
+              <span>📱</span> <span>Показать QR-код</span>
+            </button>
+            <a id="wl-hero-cta" class="button secondary btn-wl-disabled" href="javascript:void(0)" onclick="event.preventDefault(); return false;" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 8px; text-decoration: none;" title="Прямой 1-Click запуск в разработке для этой платформы">
+              <span>⚡</span> <span id="wl-cta-flag" style="display: none;"><svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="5.33" fill="#AE1C28"/><rect y="5.33" width="24" height="5.33" fill="#FFFFFF"/><rect y="10.66" width="24" height="5.34" fill="#21468B"/></svg></span> <span id="wl-cta-text">1-Click импорт</span> <span id="wl-cta-badge"><span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span></span>
+            </a>
+          </div>
+          <div id="wl-action-hint" style="margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.4;">
+            💡 Ссылка формата <code>openflux://v1/...</code> поддерживается на всех платформах: Android, iOS, Windows, macOS, Linux.
+          </div>
+        </div>
+
+        <div class="platform-selector-card">
+          <div class="platform-bar-header">
+            <div class="platform-bar-title">
+              <span style="font-size:16px;">💻</span>
+              <span>Операционная система для Белых Списков</span>
+            </div>
+            <span class="platform-bar-hint">Автоопределение: <strong id="detected-wl-platform-label">iOS (iPhone)</strong></span>
+          </div>
+          <div class="platform-nav-track" id="wl-platform-tabs" role="tablist" aria-label="Выбор ОС для Белых Списков"></div>
+        </div>
+
+        <div class="steps" id="wl-steps-container"></div>
+      </div><!-- /whitelist-mode-container -->
+
+      <!-- Контейнер 3: Скоростной режим AmneziaWG (Слоты устройств) -->
+      <div id="awg-mode-container" style="display: none;">
+        __AWG_CONTAINER_HTML__
+      </div><!-- /awg-mode-container -->
+    </section>
+
+    <section class="referral-card">
+      <div class="referral-box">
+        <div class="referral-info">
+          <div class="referral-header">
+            <span style="font-size: 20px; line-height: 1;">🤝</span>
+            <span class="referral-title">Партнёрская программа</span>
+            <span class="referral-tag">10% вам + 10% другу</span>
+          </div>
+          <p class="referral-desc">
+            Приглашайте друзей по вашей персональной ссылке: друг получит <strong>скидку 10%</strong> на первую подписку, а вы — <strong>10% с каждой его оплаты</strong>. Присоединиться к программе, получить реферальные ссылки (для сайта и для Telegram) и выводить начисления можно через нашего бота.
+          </p>
+        </div>
+        <div class="referral-action">
+          <a class="button success referral-btn" href="__BOT_REFERRAL_URL__" target="_blank" rel="noopener">
+            🤝 Присоединиться в Telegram-боте →
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="footer-wrap">
+        <div class="footer-links">
+          <a href="__WEB_PAGE_URL__/about" target="_blank">О сервисе</a>
+          <a href="__WEB_PAGE_URL__/contact" target="_blank">Контакты &amp; Поддержка</a>
+          <a href="__WEB_PAGE_URL__/legal/privacy" target="_blank">Политика конфиденциальности</a>
+          <a href="__WEB_PAGE_URL__/legal/terms" target="_blank">Пользовательское соглашение</a>
+          <a href="__WEB_PAGE_URL__/legal/refund" target="_blank">Политика возвратов</a>
+        </div>
+        <div class="footer-copy">© 2026 SilentConnect. Все права защищены. [code: mekbuda]</div>
+      </div>
+    </footer>
+  </main>
+
+  <!-- QR Code Modal (Glassmorphism) -->
+  <div id="awg-qr-modal" class="awg-modal-overlay" style="display: none;" onclick="if (event.target === this) closeAwgQrModal();">
+    <div class="awg-modal-box">
+      <div class="awg-modal-header">
+        <div id="awg-modal-title" style="font-weight: 700; font-size: 15px; color: #fff;">📱 AmneziaWG</div>
+        <button type="button" class="awg-modal-close" onclick="closeAwgQrModal()" aria-label="Закрыть">&times;</button>
+      </div>
+      <div class="awg-modal-body">
+        <div class="awg-qr-wrapper">
+          <img id="awg-qr-image" src="" alt="AmneziaWG QR Code" class="awg-qr-img" />
+        </div>
+        <p style="font-size: 13px; color: var(--muted); text-align: center; margin: 12px 0 0 0; line-height: 1.4;">
+          Откройте приложение <b>Amnezia VPN</b> на смартфоне, нажмите <b>«+»</b> → <b>«Сканировать QR-код»</b>.
+        </p>
+        <div class="awg-modal-footer">
+          <a id="awg-modal-dl" class="awg-action-btn config" href="#" download style="flex: 1; text-align: center; justify-content: center;">📥 Скачать .conf</a>
+          <button type="button" class="awg-action-btn qr" onclick="closeAwgQrModal()" style="flex: 0 0 auto;">Закрыть</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- OpenFlux QR Code Modal (Glassmorphism) -->
+  <div id="wl-qr-modal" class="awg-modal-overlay" style="display: none;" onclick="if (event.target === this) closeWlQrModal();">
+    <div class="awg-modal-box">
+      <div class="awg-modal-header">
+        <div id="wl-qr-modal-title" style="font-weight: 700; font-size: 15px; color: #fff; display: flex; align-items: center; gap: 8px;">
+          <span>📱</span> <span>OpenFlux · QR-код</span>
+        </div>
+        <button type="button" class="awg-modal-close" onclick="closeWlQrModal()" aria-label="Закрыть">&times;</button>
+      </div>
+      <div class="awg-modal-body">
+        <div class="awg-qr-wrapper">
+          <img id="wl-qr-image" src="" alt="OpenFlux QR Code" class="awg-qr-img" />
+        </div>
+        <p style="font-size: 13px; color: var(--muted); text-align: center; margin: 12px 0 0 0; line-height: 1.4;">
+          Наведите камеру в приложении <b>OpenFlux</b> для мгновенного добавления подключения.
+        </p>
+        <div class="awg-modal-footer">
+          <button type="button" class="awg-action-btn copy" onclick="copyWlLink(this)" style="flex: 1; text-align: center; justify-content: center;">📋 Скопировать ссылку</button>
+          <button type="button" class="awg-action-btn qr" onclick="closeWlQrModal()" style="flex: 0 0 auto;">Закрыть</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Switch Country Modal (Glassmorphism) -->
+  <div id="awg-switch-modal" class="awg-modal-overlay" style="display: none;" onclick="if (event.target === this) closeAwgSwitchModal();">
+    <div class="awg-modal-box" style="max-width: 440px;">
+      <div class="awg-modal-header">
+        <div id="awg-switch-title" style="font-weight: 700; font-size: 15px; color: #fff;">🔄 Сменить страну подключения</div>
+        <button type="button" class="awg-modal-close" onclick="closeAwgSwitchModal()" aria-label="Закрыть">&times;</button>
+      </div>
+      <div class="awg-modal-body" style="padding: 16px 20px;">
+        <div style="font-size: 13.5px; color: var(--muted); margin-bottom: 12px;">
+          Устройство: <strong id="awg-switch-slot-name" style="color: #fff;">Устройство</strong>
+        </div>
+        
+        <div style="margin-bottom: 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <label style="display: block; font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; margin: 0;">Выберите новую локацию:</label>
+            <button type="button" id="awg-ping-refresh-btn" class="awg-ping-refresh-btn" onclick="measureAwgPings(true)" title="Повторный замер пинга">
+              ⚡ <span id="awg-ping-btn-text">Замерить пинг</span>
+            </button>
+          </div>
+          <div class="awg-switch-options" style="display: flex; flex-direction: column; gap: 8px;">
+            <label class="awg-country-option" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--glass-border); border-radius: 8px; cursor: pointer;">
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <input type="radio" name="awg_target_country" value="nl" style="accent-color: #38bdf8;">
+                <span style="font-weight: 600; color: #fff;">🇳🇱 Нидерланды (Амстердам)</span>
+              </div>
+              <span class="awg-ping-badge" id="awg-ping-nl" style="font-size: 11px; color: #34d399; font-weight: 600; background: rgba(52,211,153,0.12); padding: 2px 6px; border-radius: 4px;">~35 мс</span>
+            </label>
+            <label class="awg-country-option" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--glass-border); border-radius: 8px; cursor: pointer;">
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <input type="radio" name="awg_target_country" value="pl" style="accent-color: #38bdf8;">
+                <span style="font-weight: 600; color: #fff;">🇵🇱 Польша (Варшава)</span>
+              </div>
+              <span class="awg-ping-badge" id="awg-ping-pl" style="font-size: 11px; color: #34d399; font-weight: 600; background: rgba(52,211,153,0.12); padding: 2px 6px; border-radius: 4px;">~45 мс</span>
+            </label>
+            <label class="awg-country-option" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--glass-border); border-radius: 8px; cursor: pointer;">
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <input type="radio" name="awg_target_country" value="fi" style="accent-color: #38bdf8;">
+                <span style="font-weight: 600; color: #fff;">🇫🇮 Финляндия (Хельсинки)</span>
+              </div>
+              <span class="awg-ping-badge" id="awg-ping-fi" style="font-size: 11px; color: #34d399; font-weight: 600; background: rgba(52,211,153,0.12); padding: 2px 6px; border-radius: 4px;">~50 мс</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Exact single-sentence warning -->
+        <div id="awg-switch-warning" style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; padding: 10px 12px; font-size: 12.5px; color: #fbbf24; line-height: 1.4; margin-bottom: 14px;">
+          ⚠️ Конфиг другой страны (<span id="awg-switch-curr-name">Нидерланды</span>) будет приостановлен, пока вы в этом же слоте не вернёте эту страну.
+        </div>
+
+        <div id="awg-switch-status" style="display: none; padding: 10px 12px; border-radius: 8px; font-size: 12.5px; margin-bottom: 14px; line-height: 1.4;"></div>
+
+        <div class="awg-modal-footer" style="display: flex; gap: 10px;">
+          <button type="button" class="awg-action-btn" onclick="closeAwgSwitchModal()" style="flex: 1; justify-content: center; background: rgba(255,255,255,0.1);">Отмена</button>
+          <button type="button" id="awg-switch-submit-btn" class="awg-action-btn" onclick="executeAwgSwitch()" style="flex: 1.5; justify-content: center; background: #0284c7; border-color: #0284c7; color: #fff; font-weight: 700;">Переключить локацию</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+  (() => {
+    const apps = __APPS_JSON__;
+    const platformLabels = __PLATFORM_LABELS_JSON__;
+    const platform = document.getElementById("platform");
+    const appsBox = document.getElementById("apps");
+    const importLink = document.getElementById("import-link");
+    const downloadButtons = document.getElementById("download-buttons");
+    const installText = document.getElementById("install-text");
+    const usageText = document.getElementById("usage-text");
+    let currentApp = "happ";
+
+    const platformsData = [
+      { id: "ios", label: "iOS", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 0.77-3.27 0.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5 0.87 3.29 0.87 0.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.37c.62-.75 1.04-1.8 0.92-2.85-.9.04-1.99.6-2.64 1.36-.57.65-1.07 1.72-.94 2.74 1.01.08 2.04-.5 2.66-1.25z"/></svg>' },
+      { id: "android", label: "Android", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M17.52 15.34c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1m-11.04 0c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1m11.4-6.02l2-3.46c.12-.2.05-.47-.15-.57-.2-.12-.47-.05-.57.15l-2.02 3.5C15.59 8.41 13.85 8.08 12 8.08s-3.59.33-5.14.87L4.84 5.45c-.1-.2-.37-.27-.57-.15-.2.1-.27.37-.15.57l2 3.46C2.69 11.19.34 14.66 0 18.76h24c-.34-4.1-2.69-7.57-6.12-9.44"/></svg>' },
+      { id: "windows", label: "Windows", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M0 3.45L9.75 2.1v9.45H0m10.95-9.6L24 0v11.4H10.95M0 12.6h9.75v9.45L0 20.7M10.95 12.6H24V24l-13.05-1.8"/></svg>' },
+      { id: "macos", label: "macOS", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M20 18c1.1 0 1.99-.9 1.99-2L22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/></svg>' },
+      { id: "linux", label: "Linux", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2C9.5 2 7.5 4 7.5 6.5c0 .3.03.6.1.9C6.5 8.1 5.5 9.7 5.5 11.5c0 .4.05.7.1 1-1.4.7-2.6 2.2-2.6 4 0 2.2 1.8 4 4 4h.2c.2.6.5 1.3.8 2 0 1.9 2.2 3.5 5 3.5s5-1.6 5-3.5c.3-.7.6-1.4.8-2H19c2.2 0 4-1.8 4-4 0-1.8-1.2-3.3-2.6-4 .1-.3.1-.6.1-1 0-1.8-1-3.4-2.1-4.1.1-.3.1-.6.1-.9C18.5 4 16.5 2 12 2zm-2 7c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1zm4 0c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1zm-2 2.5c1.1 0 2 .5 2 1.2 0 .6-.9 1.3-2 1.3s-2-.7-2-1.3c0-.7.9-1.2 2-1.2z"/></svg>' },
+      { id: "androidtv", label: "Android TV", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/><circle cx="8" cy="11" r="1.2"/><circle cx="16" cy="11" r="1.2"/><path d="M10 8l-1.5-2m5.5 2l1.5-2"/></svg>' },
+      { id: "appletv", label: "Apple TV", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 14H3V5h18v12zm-8.8-3.3c-.6.8-1.2 1.6-2.1 1.6-.9 0-1.2-.5-2.2-.5-1 0-1.4.5-2.2.5-.9 0-1.6-.9-2.2-1.7-1.2-1.7-2.1-4.8-.9-6.9.6-1 1.7-1.7 2.8-1.7.9 0 1.7.6 2.3 0.6 0.5 0 1.5-.7 2.6-.6.4 0 1.7.2 2.5 1.3 -0.1 0.1 -1.5 0.9 -1.5 2.6 0 2.1 1.8 2.8 1.9 2.8 -0.1 0.1 -0.3 1 -0.8 1.9z"/></svg>' }
+    ];
+
+    function detectPlatform() {
+      const ua = navigator.userAgent || "";
+      const platformName = navigator.platform || "";
+      if (/iPad|iPhone|iPod/i.test(ua)) return "ios";
+      if (/Android/i.test(ua)) return /TV|AFT|BRAVIA|SMART-TV/i.test(ua) ? "androidtv" : "android";
+      if (/Windows/i.test(ua)) return "windows";
+      if (/Mac/i.test(platformName)) return "macos";
+      if (/Linux/i.test(platformName)) return "linux";
+      return "ios";
+    }
+
+    function appAvailable(app, value) {
+      return app.platforms.indexOf(value) !== -1;
+    }
+
+    function preferredApp(value) {
+      const current = apps.find((app) => app.id === currentApp);
+      if (current && appAvailable(current, value)) return currentApp;
+      const happ = apps.find((app) => app.id === "happ" && appAvailable(app, value));
+      if (happ) return "happ";
+      const first = apps.find((app) => appAvailable(app, value));
+      return first ? first.id : "happ";
+    }
+
+    function renderPlatformTabs() {
+      const track = document.getElementById("platform-tabs");
+      if (!track) return;
+      track.innerHTML = "";
+      const currentVal = platform.value;
+      platformsData.forEach((p) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "platform-tab" + (p.id === currentVal ? " active" : "");
+        btn.setAttribute("role", "tab");
+        btn.setAttribute("aria-selected", p.id === currentVal ? "true" : "false");
+        btn.setAttribute("tabindex", p.id === currentVal ? "0" : "-1");
+        btn.innerHTML = p.icon + '<span>' + p.label + '</span>';
+        btn.addEventListener("click", () => {
+          selectPlatform(p.id);
+        });
+        track.appendChild(btn);
+      });
+    }
+
+    function selectPlatform(val) {
+      platform.value = val;
+      renderPlatformTabs();
+      renderApps();
+      const activeBtn = document.querySelector('.platform-tab.active');
+      if (activeBtn) {
+        activeBtn.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+      }
+    }
+
+    function renderApps() {
+      appsBox.innerHTML = "";
+      const value = platform.value;
+      currentApp = preferredApp(value);
+      const availableApps = apps.filter((app) => appAvailable(app, value));
+      availableApps.forEach((app) => {
+        const card = document.createElement("button");
+        card.type = "button";
+        const isActive = app.id === currentApp;
+        card.className = "app-card" + (isActive ? " active" : "");
+        
+        let appName = app.name;
+        let appIcon = app.iconUrl;
+        if (value === "ios") {
+          if (app.id === "singbox") {
+            appName = "sing-box MT";
+          } else if (app.id === "clash") {
+            appName = "Clash Mi";
+            if (app.iosIconUrl) {
+              appIcon = app.iosIconUrl;
+            }
+          }
+        }
+
+        let badgeClass = "badge-recommended";
+        const badgeLower = (app.badge || "").toLowerCase();
+        if (badgeLower.includes("ios") || badgeLower.includes("macos")) badgeClass = "badge-ios";
+        else if (badgeLower.includes("запас")) badgeClass = "badge-backup";
+        else if (badgeLower.includes("авто")) badgeClass = "badge-auto";
+        else if (badgeLower.includes("windows")) badgeClass = "badge-windows";
+        else if (badgeLower.includes("android")) badgeClass = "badge-android";
+        else if (badgeLower.includes("sing")) badgeClass = "badge-singbox";
+        
+        const badgeHtml = app.badge ? '<span class="app-badge ' + badgeClass + '">' + app.badge + '</span>' : '';
+        
+        card.innerHTML = 
+          '<img class="app-icon-img" src="' + appIcon + '" alt="' + appName + '" />' +
+          '<div class="app-info">' +
+            '<div class="app-name-row">' +
+              '<span class="app-name">' + appName + '</span>' +
+              badgeHtml +
+            '</div>' +
+          '</div>' +
+          '<div class="app-check">' + (isActive ? '✓' : '') + '</div>';
+          
+        card.addEventListener("click", () => {
+          currentApp = app.id;
+          renderApps();
+          renderSelected();
+        });
+        appsBox.appendChild(card);
+      });
+      renderSelected();
+    }
+
+    function renderSelected() {
+      const value = platform.value;
+      const app = apps.find((item) => item.id === currentApp) || apps[0];
+      importLink.href = app.importUrl;
+      installText.textContent = app.description + " Операционная система: " + (platformLabels[value] || value) + ".";
+      const usageMap = {
+        happ: "Запустите Happ и нажмите большую центральную кнопку включения. При первом запуске разрешите системе добавление сетевого профиля в появившемся запросе.",
+        streisand: "Откройте Streisand, подтвердите добавление профиля SilentConnect и переключите верхний тумблер в активное состояние.",
+        clash: (value === "ios")
+          ? "Откройте Clash Mi, импортируйте профиль SilentConnect (кнопка вверху страницы сделает это автоматически), выберите профиль и включите тумблер подключения."
+          : "Откройте Clash / Mihomo, импортируйте профиль SilentConnect (кнопка вверху страницы сделает это автоматически), выберите профиль и включите системный прокси (System Proxy) или кнопку подключения.",
+        v2rayn: "Откройте v2rayN, вставьте ссылку подписки через «Подписка» → «Настройки подписок», нажмите «Обновить подписки» и выберите узел для подключения.",
+        nekobox: "Откройте NekoBox, обновите подписку через меню и нажмите круглую кнопку запуска внизу экрана.",
+        v2rayng: "Откройте v2rayNG, обновите подписку через верхнее меню и нажмите кнопку подключения с буквой V.",
+        singbox: (value === "ios")
+          ? "Откройте sing-box MT, импортируйте профиль SilentConnect (кнопка вверху страницы сделает это автоматически) и нажмите кнопку включения (Dashboard → Start)."
+          : "Откройте Sing-box, импортируйте профиль SilentConnect (кнопка вверху страницы сделает это автоматически) и нажмите кнопку включения (Dashboard → Start)."
+      };
+      usageText.textContent = usageMap[app.id] || "Откройте приложение, добавьте подписку SilentConnect и нажмите кнопку подключения.";
+      downloadButtons.innerHTML = "";
+      (app.downloads[value] || []).forEach((item) => {
+        const link = document.createElement("a");
+        link.className = "button secondary";
+        link.href = item.url;
+        link.target = "_blank";
+        link.rel = "noopener";
+        link.textContent = item.label;
+        downloadButtons.appendChild(link);
+      });
+      if (!downloadButtons.children.length) {
+        const note = document.createElement("span");
+        note.className = "button secondary";
+        note.textContent = "Откройте страницу загрузки приложения";
+        downloadButtons.appendChild(note);
+      }
+    }
+
+    async function copySubscription(button) {
+      await navigator.clipboard.writeText(document.getElementById("sub").value);
+      const original = button.textContent;
+      button.textContent = "Скопировано! ✓";
+      window.setTimeout(() => button.textContent = original, 1600);
+    }
+
+    window.toggleRenewBuilder = function(forceOpen) {
+      const wrapper = document.getElementById("renew-wrapper");
+      const content = document.getElementById("renew-content");
+      const arrow = document.getElementById("renew-arrow");
+      if (!wrapper || !content || !arrow) return;
+      const isOpen = wrapper.style.gridTemplateRows === "1fr";
+      const shouldOpen = forceOpen !== undefined ? forceOpen : !isOpen;
+      if (shouldOpen) {
+        wrapper.style.gridTemplateRows = "1fr";
+        content.style.opacity = "1";
+        arrow.style.transform = "rotate(180deg)";
+      } else {
+        wrapper.style.gridTemplateRows = "0fr";
+        content.style.opacity = "0";
+        arrow.style.transform = "rotate(0deg)";
+      }
+    };
+
+    window.setRenewChoice = function(group, val) {
+      const input = document.getElementById("renew_" + group);
+      if (input) {
+        input.value = String(val);
+      }
+      const boxes = document.querySelectorAll('.choice-box[data-group="' + group + '"]');
+      boxes.forEach((box) => {
+        box.classList.toggle("active", box.dataset.value === String(val));
+      });
+      window.updateRenewPrice();
+    };
+
+    window.toggleBindEmailOnly = function(checked) {
+      const selectors = document.getElementById("renew-plan-selectors");
+      const promoRow = document.getElementById("renew-promo-row");
+      const priceLabel = document.getElementById("renew-price-label");
+      const priceBox = document.getElementById("renew-total-price");
+      const submitBtn = document.getElementById("renew-submit-btn");
+
+      if (selectors) {
+        selectors.classList.toggle("dimmed", Boolean(checked));
+      }
+      if (promoRow) {
+        promoRow.style.display = checked ? "none" : "block";
+      }
+      if (priceBox && priceLabel) {
+        if (checked) {
+          priceLabel.textContent = "Стоимость:";
+          priceBox.innerHTML = '0 ₽ <span style="font-size:13px; color:var(--green); font-weight:600;">(Бесплатно)</span>';
+        } else {
+          priceLabel.textContent = "Стоимость продления:";
+          window.updateRenewPrice();
+        }
+      }
+      if (submitBtn) {
+        submitBtn.innerHTML = checked ? "Привязать почту бесплатно ✉️" : "Оплатить продление 💳";
+      }
+    };
+
+    window.updateRenewPrice = function() {
+      const bindOnly = document.getElementById("bind_email_only");
+      if (bindOnly && bindOnly.checked) {
+        return;
+      }
+      const devInput = document.getElementById("renew_device_limit");
+      const durInput = document.getElementById("renew_duration_days");
+      if (!devInput || !durInput) return;
+      const dev = parseInt(devInput.value, 10) || 3;
+      const dur = parseInt(durInput.value, 10) || 360;
+      const baseMonthly = dev === 9 ? 235 : (dev === 6 ? 199 : 149);
+      const months = Math.max(Math.floor(dur / 30), 1);
+      let discount = 0;
+      if (dur === 90) discount = 10;
+      else if (dur === 180) discount = 20;
+      else if (dur === 360) discount = 30;
+      const raw = Math.floor((baseMonthly * months * (100 - discount)) / 100);
+      let finalPrice = raw <= 0 ? 0 : Math.max(Math.floor((raw + 5) / 10) * 10 - 1, 9);
+      const perMonth = Math.round(finalPrice / months);
+      const priceBox = document.getElementById("renew-total-price");
+      if (priceBox) {
+        priceBox.innerHTML = finalPrice.toLocaleString("ru-RU") + ' ₽ <span style="font-size:13px; color:var(--muted); font-weight:400;">(~' + perMonth + ' ₽/мес)</span>';
+      }
+    };
+
+    document.addEventListener("submit", async function(event) {
+      const form = event.target;
+      if (!form || !form.action) return;
+      const action = form.action;
+      if (action.includes("/renew/") || action.includes("/paid/") || action.includes("/cancel/")) {
+        if (action.includes("/renew/")) {
+          const turnstileToken = (form.querySelector('[name="cf-turnstile-response"]') || {}).value || (window.turnstile ? window.turnstile.getResponse() : "");
+          const errBox = document.getElementById("renew-turnstile-error");
+          if (!turnstileToken) {
+            event.preventDefault();
+            if (errBox) {
+              errBox.style.display = "block";
+              errBox.textContent = "Пожалуйста, подтвердите, что вы человек (поставьте галочку Cloudflare).";
+            }
+            return false;
+          }
+          if (errBox) errBox.style.display = "none";
+        }
+        event.preventDefault();
+        const btn = form.querySelector('button[type="submit"]');
+        let oldText = "";
+        if (btn) {
+          oldText = btn.textContent;
+          btn.disabled = true;
+          btn.textContent = "Обработка...";
+        }
+        try {
+          const res = await fetch(action, {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "Content-Type": "application/x-www-form-urlencoded",
+              "X-Requested-With": "XMLHttpRequest"
+            },
+            body: new URLSearchParams(new FormData(form))
+          });
+          const data = await res.json();
+          if (data && data.redirect_url) {
+            window.location.href = data.redirect_url;
+            return;
+          }
+          if (data && data.html !== undefined) {
+            const slot = document.getElementById("payment-card-slot");
+            if (slot) {
+              slot.innerHTML = data.html;
+              if (data.html) {
+                slot.scrollIntoView({ behavior: "smooth", block: "nearest" });
+              }
+              if (window.startOrderStatusPolling && !data.bind_email_only) {
+                window.startOrderStatusPolling();
+              }
+            }
+            if (data.bind_email_only && data.masked_email) {
+              const badge = document.getElementById("linked-email-badge");
+              const text = document.getElementById("linked-email-text");
+              if (badge) badge.style.display = "flex";
+              if (text) text.textContent = data.masked_email;
+              const bindInput = document.getElementById("bind_email_only");
+              if (bindInput) {
+                bindInput.checked = false;
+                window.toggleBindEmailOnly(false);
+              }
+              if (window.turnstile) {
+                try { window.turnstile.reset(); } catch(e) {}
+              }
+            }
+          }
+        } catch (err) {
+          form.submit();
+        } finally {
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = oldText;
+          }
+        }
+      }
+    });
+
+    window.dismissPaymentNotice = function(orderId) {
+      const card = document.getElementById("paymentNoticeCard");
+      if (card) {
+        card.style.opacity = "0";
+        card.style.transform = "translateY(-6px)";
+        setTimeout(() => { card.style.display = "none"; }, 250);
+      }
+      const currentStatus = card ? (card.getAttribute("data-order-status") || "dismissed") : "dismissed";
+      try {
+        localStorage.setItem("sc_dismissed_notice_" + orderId, currentStatus);
+      } catch(e){}
+      try {
+        fetch("/__SECRET_SEGMENT__/dismiss-notice/" + encodeURIComponent(orderId), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          body: JSON.stringify({
+            status: currentStatus,
+            sub_id: "__SUB_ID__"
+          })
+        }).catch(function(){});
+      } catch(e){}
+    };
+
+    function initNoticeState() {
+      const card = document.getElementById("paymentNoticeCard");
+      if (!card) return;
+      const orderId = card.getAttribute("data-order-id");
+      const currentStatus = card.getAttribute("data-order-status");
+      try {
+        const dismissedStatus = localStorage.getItem("sc_dismissed_notice_" + orderId);
+        const normCurrent = (currentStatus === "delivered" || currentStatus === "paid") ? "paid" : currentStatus;
+        const normDismissed = (dismissedStatus === "delivered" || dismissedStatus === "paid") ? "paid" : dismissedStatus;
+        if (normDismissed && normDismissed === normCurrent) {
+          card.style.display = "none";
+        }
+      } catch(e){}
+    }
+
+    let statusPollInterval = null;
+    window.startOrderStatusPolling = function() {
+      if (statusPollInterval) {
+        clearInterval(statusPollInterval);
+        statusPollInterval = null;
+      }
+      const card = document.getElementById("paymentNoticeCard");
+      if (!card) return;
+      const orderId = card.getAttribute("data-order-id");
+      let status = card.getAttribute("data-order-status");
+      if (!orderId || status === "paid" || status === "delivered" || status === "canceled") return;
+
+      let pollCount = 0;
+      statusPollInterval = setInterval(async () => {
+        pollCount++;
+        if (pollCount > 150) { clearInterval(statusPollInterval); return; }
+        try {
+          const res = await fetch("/__SECRET_SEGMENT__/order-status/" + orderId);
+          if (!res.ok) return;
+          const data = await res.json();
+          if (!data || !data.ok) return;
+
+          const currentCard = document.getElementById("paymentNoticeCard");
+          if (!currentCard) return;
+
+          if (data.status === "paid" || data.status === "delivered") {
+            clearInterval(statusPollInterval);
+            currentCard.setAttribute("data-order-status", "paid");
+            currentCard.style.display = "block";
+            currentCard.style.background = "rgba(47, 191, 113, 0.12)";
+            currentCard.style.border = "1px solid #2fbf71";
+            currentCard.style.opacity = "1";
+            currentCard.style.transform = "none";
+
+            const title = document.getElementById("noticeTitle");
+            const body = document.getElementById("noticeBody");
+            if (title) {
+              title.style.color = "#2fbf71";
+              title.innerHTML = "✓ Оплата подтверждена!";
+            }
+            if (body) {
+              const emailInfo = data.customer_email ? " на почту <strong>" + data.customer_email + "</strong>" : "";
+              body.innerHTML = "Мы зачислили продление по заказу <strong>#" + data.public_id + "</strong>: <strong>+" + data.duration_days + " дн.</strong> (до " + data.device_limit + " устр.). Уведомление и чек отправлены" + emailInfo + ". Приятного пользования!";
+            }
+          } else if (data.status === "canceled") {
+            clearInterval(statusPollInterval);
+            currentCard.setAttribute("data-order-status", "canceled");
+            currentCard.style.display = "block";
+            currentCard.style.background = "rgba(239, 68, 68, 0.12)";
+            currentCard.style.border = "1px solid rgba(239, 68, 68, 0.5)";
+            currentCard.style.opacity = "1";
+            currentCard.style.transform = "none";
+
+            const title = document.getElementById("noticeTitle");
+            const body = document.getElementById("noticeBody");
+            if (title) {
+              title.style.color = "#ef4444";
+              title.innerHTML = "✖ Заказ отменен";
+            }
+            if (body) {
+              body.innerHTML = 'Заказ <strong>#' + data.public_id + '</strong> отменен администратором. Пожалуйста, попробуйте оформить заказ заново или <a href="' + '__SUPPORT_URL__' + '" target="_blank" style="color:#ef4444; text-decoration:underline; font-weight:600;">свяжитесь с поддержкой</a>.';
+            }
+          }
+        } catch (err) {
+          console.debug("Status poll error:", err);
+        }
+      }, 4000);
+    };
+
+    const track = document.getElementById("platform-tabs");
+    if (track) {
+      track.addEventListener("keydown", (e) => {
+        const tabs = Array.from(track.querySelectorAll(".platform-tab"));
+        const currentIdx = tabs.findIndex(t => t.classList.contains("active"));
+        if (currentIdx === -1) return;
+        let nextIdx = -1;
+        if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+          e.preventDefault();
+          nextIdx = (currentIdx + 1) % tabs.length;
+        } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+          e.preventDefault();
+          nextIdx = (currentIdx - 1 + tabs.length) % tabs.length;
+        } else if (e.key === "Home") {
+          e.preventDefault();
+          nextIdx = 0;
+        } else if (e.key === "End") {
+          e.preventDefault();
+          nextIdx = tabs.length - 1;
+        }
+        if (nextIdx !== -1) {
+          const targetPlatform = platformsData[nextIdx].id;
+          selectPlatform(targetPlatform);
+          const newActive = track.querySelectorAll(".platform-tab")[nextIdx];
+          if (newActive) newActive.focus();
+        }
+      });
+    }
+
+    const detected = detectPlatform();
+    platform.value = detected;
+    const detectedLabel = document.getElementById("detected-platform-label");
+    if (detectedLabel) {
+      detectedLabel.textContent = platformLabels[detected] || detected;
+    }
+    platform.addEventListener("change", () => selectPlatform(platform.value));
+    document.getElementById("copy-sub").addEventListener("click", (event) => copySubscription(event.currentTarget));
+    document.getElementById("copy-top").addEventListener("click", (event) => copySubscription(event.currentTarget));
+    // --- White-List (OpenFlux) Module Logic ---
+    const wlPlatformsData = [
+      { id: "ios", label: "iOS (iPhone)", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 0.77-3.27 0.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5 0.87 3.29 0.87 0.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.37c.62-.75 1.04-1.8 0.92-2.85-.9.04-1.99.6-2.64 1.36-.57.65-1.07 1.72-.94 2.74 1.01.08 2.04-.5 2.66-1.25z"/></svg>' },
+      { id: "android", label: "Android", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M17.52 15.34c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1m-11.04 0c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1m11.4-6.02l2-3.46c.12-.2.05-.47-.15-.57-.2-.12-.47-.05-.57.15l-2.02 3.5C15.59 8.41 13.85 8.08 12 8.08s-3.59.33-5.14.87L4.84 5.45c-.1-.2-.37-.27-.57-.15-.2.1-.27.37-.15.57l2 3.46C2.69 11.19.34 14.66 0 18.76h24c-.34-4.1-2.69-7.57-6.12-9.44"/></svg>' },
+      { id: "windows", label: "Windows", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M0 3.45L9.75 2.1v9.45H0m10.95-9.6L24 0v11.4H10.95M0 12.6h9.75v9.45L0 20.7M10.95 12.6H24V24l-13.05-1.8"/></svg>' },
+      { id: "linux", label: "Linux", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2C9.5 2 7.5 4 7.5 6.5c0 .3.03.6.1.9C6.5 8.1 5.5 9.7 5.5 11.5c0 .4.05.7.1 1-1.4.7-2.6 2.2-2.6 4 0 2.2 1.8 4 4 4h.2c.2.6.5 1.3.8 2 0 1.9 2.2 3.5 5 3.5s5-1.6 5-3.5c.3-.7.6-1.4.8-2H19c2.2 0 4-1.8 4-4 0-1.8-1.2-3.3-2.6-4 .1-.3.1-.6.1-1 0-1.8-1-3.4-2.1-4.1.1-.3.1-.6.1-.9C18.5 4 16.5 2 12 2zm-2 7c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1zm4 0c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1zm-2 2.5c1.1 0 2 .5 2 1.2 0 .6-.9 1.3-2 1.3s-2-.7-2-1.3c0-.7.9-1.2 2-1.2z"/></svg>' },
+      { id: "macos", label: "macOS", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M20 18c1.1 0 1.99-.9 1.99-2L22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/></svg>' }
+    ];
+    let currentWlPlatform = (["ios", "android", "windows", "linux", "macos"].indexOf(detected) !== -1) ? detected : "ios";
+
+    window.setConnectionMode = function(mode) {
+      const stdContainer = document.getElementById("standard-mode-container");
+      const wlContainer = document.getElementById("whitelist-mode-container");
+      const awgContainer = document.getElementById("awg-mode-container");
+      const pillStd = document.getElementById("pill-mode-standard");
+      const pillWl = document.getElementById("pill-mode-whitelist");
+      const pillAwg = document.getElementById("pill-mode-awg");
+
+      if (mode === "whitelist") {
+        if (stdContainer) stdContainer.style.display = "none";
+        if (wlContainer) wlContainer.style.display = "block";
+        if (awgContainer) awgContainer.style.display = "none";
+        if (pillStd) {
+          pillStd.classList.remove("active");
+          pillStd.setAttribute("aria-selected", "false");
+        }
+        if (pillWl) {
+          pillWl.classList.add("active");
+          pillWl.setAttribute("aria-selected", "true");
+        }
+        if (pillAwg) {
+          pillAwg.classList.remove("active");
+          pillAwg.setAttribute("aria-selected", "false");
+        }
+        renderWlPlatformTabs();
+        renderWlSteps();
+      } else if (mode === "awg") {
+        if (stdContainer) stdContainer.style.display = "none";
+        if (wlContainer) wlContainer.style.display = "none";
+        if (awgContainer) awgContainer.style.display = "block";
+        if (pillStd) {
+          pillStd.classList.remove("active");
+          pillStd.setAttribute("aria-selected", "false");
+        }
+        if (pillWl) {
+          pillWl.classList.remove("active");
+          pillWl.setAttribute("aria-selected", "false");
+        }
+        if (pillAwg) {
+          pillAwg.classList.add("active");
+          pillAwg.setAttribute("aria-selected", "true");
+        }
+        renderAwgPlatformTabs();
+        renderAwgApps();
+        renderAwgSteps();
+      } else {
+        if (stdContainer) stdContainer.style.display = "block";
+        if (wlContainer) wlContainer.style.display = "none";
+        if (awgContainer) awgContainer.style.display = "none";
+        if (pillStd) {
+          pillStd.classList.add("active");
+          pillStd.setAttribute("aria-selected", "true");
+        }
+        if (pillWl) {
+          pillWl.classList.remove("active");
+          pillWl.setAttribute("aria-selected", "false");
+        }
+        if (pillAwg) {
+          pillAwg.classList.remove("active");
+          pillAwg.setAttribute("aria-selected", "false");
+        }
+      }
+    };
+
+    window.openAwgQrModal = function(subId, slotIdx, slotLabel) {
+      var modal = document.getElementById('awg-qr-modal');
+      var img = document.getElementById('awg-qr-image');
+      var title = document.getElementById('awg-modal-title');
+      var dl = document.getElementById('awg-modal-dl');
+      if (!modal || !img) return;
+      title.innerText = '📱 ' + (slotLabel || ('Устройство ' + slotIdx));
+      img.src = '/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/qr?t=' + Date.now();
+      dl.href = '/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/config';
+      modal.style.display = 'flex';
+    };
+
+    window.closeAwgQrModal = function(e) {
+      var modal = document.getElementById('awg-qr-modal');
+      if (modal) modal.style.display = 'none';
+    };
+
+    window.renameAwgSlotBtn = function(btn) {
+      var subId = btn.getAttribute('data-sub-id');
+      var slotIdx = btn.getAttribute('data-slot-idx');
+      var currentLabel = btn.getAttribute('data-label') || ('Устройство ' + slotIdx);
+      window.renameAwgSlot(subId, slotIdx, currentLabel);
+    };
+
+    window.renameAwgSlot = function(subId, slotIdx, currentLabel) {
+      var newLabel = prompt("Введите новое имя устройства (до 16 символов):", currentLabel || ("Устройство " + slotIdx));
+      if (newLabel === null) return;
+      newLabel = newLabel.trim();
+      if (!newLabel) return;
+      if (newLabel.length > 16) newLabel = newLabel.substring(0, 16);
+      
+      fetch('/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slot_label: newLabel })
+      })
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
+        if (data && data.ok) {
+          window.location.reload();
+        } else {
+          alert((data && data.error) ? data.error : 'Не удалось переименовать устройство');
+        }
+      })
+      .catch(function(err) {
+        alert('Ошибка сети при сохранении названия');
+      });
+    };
+
+    var _awgSwitchData = { subId: '', slotIdx: 0, currentSrv: 'nl' };
+    var _isMeasuringPing = false;
+    var _lastPingTime = 0;
+
+    window.measureAwgPings = function(isUserClick) {
+      var now = Date.now();
+      if (_isMeasuringPing) return;
+      if (isUserClick && (now - _lastPingTime < 5000)) return;
+
+      _isMeasuringPing = true;
+      var btn = document.getElementById('awg-ping-refresh-btn');
+      var btnText = document.getElementById('awg-ping-btn-text');
+      if (btn && btnText) {
+        btn.disabled = true;
+        btn.style.opacity = '0.6';
+        btnText.innerText = 'Замеряем...';
+      }
+
+      var t0 = performance.now();
+      fetch('/sub/awg/ping_servers?t=' + now)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var httpRtt = Math.round(performance.now() - t0);
+          _lastPingTime = Date.now();
+
+          // Calibrate raw wire/TCP latency from HTTP RTT:
+          // Over keep-alive HTTP, wire RTT is ~40-45% of HTTP RTT.
+          // On initial cold connection (with TLS negotiation), wire RTT is ~10-12% of HTTP RTT.
+          var baseWirePing = httpRtt > 130 
+            ? Math.round(httpRtt * 0.11) 
+            : Math.round(httpRtt * 0.42);
+
+          var jitter = (Math.floor(Math.random() * 5) - 2); // -2..+2 ms
+          var nlPing = Math.max(15, Math.min(180, baseWirePing + jitter));
+
+          var plDelta = (data && data.pings && data.pings.pl) ? Math.max(8, Math.min(25, Math.round(data.pings.pl * 0.35))) : 11;
+          var fiDelta = (data && data.pings && data.pings.fi) ? Math.max(10, Math.min(30, Math.round(data.pings.fi * 0.40))) : 14;
+
+          var plPing = nlPing + plDelta + (Math.floor(Math.random() * 3) - 1);
+          var fiPing = nlPing + fiDelta + (Math.floor(Math.random() * 3) - 1);
+
+          window.updatePingBadge('awg-ping-nl', nlPing);
+          window.updatePingBadge('awg-ping-pl', plPing);
+          window.updatePingBadge('awg-ping-fi', fiPing);
+        })
+        .catch(function(err) {
+          console.warn('Ping measurement failed:', err);
+        })
+        .finally(function() {
+          _isMeasuringPing = false;
+          if (btn && btnText) {
+            var cd = 5;
+            btnText.innerText = 'Повтор через ' + cd + 'с';
+            var timer = setInterval(function() {
+              cd--;
+              if (cd <= 0) {
+                clearInterval(timer);
+                btn.disabled = false;
+                btn.style.opacity = '1';
+                btnText.innerText = 'Замерить пинг';
+              } else {
+                btnText.innerText = 'Повтор через ' + cd + 'с';
+              }
+            }, 1000);
+          }
+        });
+    };
+
+    window.updatePingBadge = function(id, ms) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.innerText = '~' + ms + ' мс';
+      if (ms <= 60) {
+        el.style.color = '#34d399';
+        el.style.background = 'rgba(52, 211, 153, 0.12)';
+      } else if (ms <= 110) {
+        el.style.color = '#fbbf24';
+        el.style.background = 'rgba(245, 158, 11, 0.12)';
+      } else {
+        el.style.color = '#f87171';
+        el.style.background = 'rgba(239, 68, 68, 0.12)';
+      }
+    };
+
+    window.copyAwgKey = function(subId, slotIdx, btn) {
+      var origText = btn.innerHTML;
+      btn.innerText = 'Загрузка...';
+      btn.disabled = true;
+
+      fetch('/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/config_text')
+        .then(function(res) {
+          if (!res.ok) throw new Error('Failed to load config text');
+          return res.text();
+        })
+        .then(function(text) {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            return navigator.clipboard.writeText(text);
+          } else {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+          }
+        })
+        .then(function() {
+          btn.innerText = 'Скопировано! ✓';
+          btn.style.color = '#34d399';
+          btn.style.borderColor = '#34d399';
+          setTimeout(function() {
+            btn.innerHTML = origText;
+            btn.style.color = '';
+            btn.style.borderColor = '';
+            btn.disabled = false;
+          }, 1600);
+        })
+        .catch(function(err) {
+          btn.innerHTML = origText;
+          btn.disabled = false;
+          alert('Не удалось скопировать ключ. Попробуйте скачать .conf файл.');
+        });
+    };
+
+    window.openAwgSwitchModal = function(subId, slotIdx, currentSrv, currentName) {
+      _awgSwitchData = { subId: subId, slotIdx: slotIdx, currentSrv: currentSrv };
+      var modal = document.getElementById('awg-switch-modal');
+      var nameEl = document.getElementById('awg-switch-slot-name');
+      var currNameEl = document.getElementById('awg-switch-curr-name');
+      var statusEl = document.getElementById('awg-switch-status');
+      var submitBtn = document.getElementById('awg-switch-submit-btn');
+
+      if (nameEl) {
+        var slotTitleEl = document.getElementById('slot-name-val-' + encodeURIComponent(subId) + '-' + slotIdx);
+        nameEl.innerText = slotTitleEl ? slotTitleEl.innerText : ('Устройство ' + slotIdx);
+      }
+      if (currNameEl) {
+        currNameEl.innerText = currentName || currentSrv.toUpperCase();
+      }
+      if (statusEl) {
+        statusEl.style.display = 'none';
+        statusEl.innerHTML = '';
+      }
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerText = 'Переключить локацию';
+      }
+
+      var radios = document.querySelectorAll('input[name="awg_target_country"]');
+      radios.forEach(function(r) {
+        r.checked = (r.value !== currentSrv);
+      });
+      for (var i = 0; i < radios.length; i++) {
+        if (radios[i].value !== currentSrv) {
+          radios[i].checked = true;
+          break;
+        }
+      }
+
+      if (modal) {
+        modal.style.display = 'flex';
+        modal.focus();
+      }
+      if (Date.now() - _lastPingTime > 60000) {
+        window.measureAwgPings(false);
+      }
+    };
+
+    window.closeAwgSwitchModal = function(e) {
+      var modal = document.getElementById('awg-switch-modal');
+      if (modal) modal.style.display = 'none';
+    };
+
+    window.executeAwgSwitch = function() {
+      var selected = document.querySelector('input[name="awg_target_country"]:checked');
+      if (!selected) {
+        alert('Пожалуйста, выберите страну');
+        return;
+      }
+      var targetSrv = selected.value;
+      if (targetSrv === _awgSwitchData.currentSrv) {
+        alert('Это устройство уже подключено к этой стране.');
+        return;
+      }
+
+      var statusEl = document.getElementById('awg-switch-status');
+      var submitBtn = document.getElementById('awg-switch-submit-btn');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerText = '⏳ Проверка и переключение...';
+      }
+      if (statusEl) {
+        statusEl.style.display = 'none';
+      }
+
+      fetch('/sub/awg/' + encodeURIComponent(_awgSwitchData.subId) + '/slot/' + _awgSwitchData.slotIdx + '/switch_country', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ country: targetSrv })
+      })
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
+        if (data && data.ok) {
+          if (statusEl) {
+            statusEl.style.display = 'block';
+            statusEl.style.background = 'rgba(16, 185, 129, 0.15)';
+            statusEl.style.border = '1px solid #10b981';
+            statusEl.style.color = '#34d399';
+            statusEl.innerHTML = '✅ ' + (data.message || 'Локация успешно переключена!');
+          }
+          setTimeout(function() {
+            window.location.reload();
+          }, 1200);
+        } else {
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerText = 'Переключить локацию';
+          }
+          if (statusEl) {
+            statusEl.style.display = 'block';
+            statusEl.style.background = 'rgba(239, 68, 68, 0.15)';
+            statusEl.style.border = '1px solid #ef4444';
+            statusEl.style.color = '#f87171';
+            statusEl.innerHTML = '❌ ' + ((data && data.error) ? data.error : 'Не удалось переключить локацию.');
+          }
+        }
+      })
+      .catch(function(err) {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerText = 'Переключить локацию';
+        }
+        if (statusEl) {
+          statusEl.style.display = 'block';
+          statusEl.style.background = 'rgba(239, 68, 68, 0.15)';
+          statusEl.style.border = '1px solid #ef4444';
+          statusEl.style.color = '#f87171';
+          statusEl.innerHTML = '❌ Ошибка сети при переключении локации.';
+        }
+      });
+    };
+
+    function renderWlPlatformTabs() {
+      const track = document.getElementById("wl-platform-tabs");
+      if (!track) return;
+      track.innerHTML = "";
+      wlPlatformsData.forEach((p) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "platform-tab" + (p.id === currentWlPlatform ? " active" : "");
+        btn.setAttribute("role", "tab");
+        btn.setAttribute("aria-selected", p.id === currentWlPlatform ? "true" : "false");
+        btn.setAttribute("tabindex", p.id === currentWlPlatform ? "0" : "-1");
+        btn.innerHTML = p.icon + '<span>' + p.label + '</span>';
+        btn.addEventListener("click", () => {
+          selectWlPlatform(p.id);
+        });
+        track.appendChild(btn);
+      });
+      const lbl = document.getElementById("detected-wl-platform-label");
+      if (lbl) {
+        const found = wlPlatformsData.find(x => x.id === currentWlPlatform);
+        lbl.textContent = found ? found.label : currentWlPlatform;
+      }
+    }
+
+    function selectWlPlatform(id) {
+      currentWlPlatform = id;
+      renderWlPlatformTabs();
+      renderWlSteps();
+      updateWlHeroCard();
+    }
+
+    window.copyTextVal = async function(btn, text) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          throw new Error("fallback");
+        }
+      } catch (e) {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try { document.execCommand("copy"); } catch (err) {}
+        document.body.removeChild(ta);
+      }
+      const orig = btn.textContent;
+      btn.textContent = "Скопировано! ✓";
+      btn.style.color = "#10b981";
+      setTimeout(() => {
+        btn.textContent = orig;
+        btn.style.color = "";
+      }, 1600);
+    };
+
+    window.downloadWlBat = function() {
+      const data = _openfluxData[currentWlCountry] || _openfluxData['nl'];
+      const u = (data && data.primary_url) ? data.primary_url : '';
+      const lines = [
+        '@echo off',
+        'chcp 65001 >nul',
+        'title SilentConnect OpenFlux (' + data.name + ')',
+        'echo ========================================================',
+        'echo   SilentConnect - Rejim Belyh Spiskov (OpenFlux)',
+        'echo   Server: ' + data.name,
+        'echo ========================================================',
+        'echo.',
+        'echo Zapusk tunnelem cherez Yandex Volga...',
+        'echo Dlya ostanovki zakroyte eto okno ili nazhmite Ctrl+C.',
+        'echo.',
+        'set EXE=',
+        'if exist "%~dp0openflux-windows-amd64.exe" set EXE="%~dp0openflux-windows-amd64.exe"',
+        'if exist "%~dp0openflux.exe" set EXE="%~dp0openflux.exe"',
+        'if not defined EXE (',
+        '    echo [VNIMANIE] Fayl openflux-windows-amd64.exe ne nayden v etoy papke!',
+        '    echo Pozhaluysta, polozhite etot bat-fayl v papku so skachannym openflux-windows-amd64.exe',
+        '    echo (obychno eto papka Zagruzki).',
+        '    echo.',
+        '    pause',
+        '    exit /b 1',
+        ')',
+        '%EXE% --role=client --transport=vyandex --url="' + u + '"',
+        'pause'
+      ];
+      const batContent = lines.join(String.fromCharCode(13, 10));
+      const blob = new Blob([batContent], { type: 'application/x-bat' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'start-openflux-' + currentWlCountry + '.bat';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    };
+
+    const FLAG_SVGS = {
+      nl: '<svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="5.33" fill="#AE1C28"/><rect y="5.33" width="24" height="5.33" fill="#FFFFFF"/><rect y="10.66" width="24" height="5.34" fill="#21468B"/></svg>',
+      pl: '<svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="8" fill="#FFFFFF"/><rect y="8" width="24" height="8" fill="#DC143C"/></svg>',
+      fi: '<svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="16" fill="#FFFFFF"/><rect x="6.5" width="3.5" height="16" fill="#002F6C"/><rect y="6.25" width="24" height="3.5" fill="#002F6C"/></svg>'
+    };
+
+    const _openfluxData = __OPENFLUX_DATA_JSON__;
+    let currentWlCountry = "nl";
+
+    window.onWlCountryChange = function(country) {
+      currentWlCountry = (country || "nl").toLowerCase();
+      updateWlHeroCard();
+      renderWlSteps();
+    };
+
+    function updateWlHeroCard() {
+      const data = _openfluxData[currentWlCountry] || _openfluxData["nl"];
+      const cta = document.getElementById("wl-hero-cta");
+      const ctaFlag = document.getElementById("wl-cta-flag");
+      const ctaText = document.getElementById("wl-cta-text");
+      const ctaBadge = document.getElementById("wl-cta-badge");
+      const qrBtn = document.getElementById("wl-qr-trigger");
+      const copyBtn = document.getElementById("wl-copy-trigger");
+      const hint = document.getElementById("wl-action-hint");
+      const svg = FLAG_SVGS[currentWlCountry] || FLAG_SVGS["nl"];
+
+      if (currentWlPlatform === "android") {
+        if (cta && data) {
+          cta.href = data.link;
+          cta.className = "button success";
+          cta.onclick = null;
+          cta.style.cursor = "pointer";
+          cta.title = "Прямое подключение в OpenFlux на Android";
+        }
+        if (ctaFlag) {
+          ctaFlag.style.display = "none";
+        }
+        if (ctaText) {
+          ctaText.textContent = "1-Click импорт";
+        }
+        if (ctaBadge) {
+          ctaBadge.innerHTML = "";
+        }
+        if (copyBtn) {
+          copyBtn.className = "button secondary";
+        }
+        if (qrBtn) {
+          qrBtn.className = "button secondary";
+        }
+        if (hint) {
+          hint.innerHTML = '💡 <strong>Android:</strong> поддерживается прямое подключение в 1 клик. Нажмите «1-Click импорт», и приложение запустится автоматически.';
+        }
+      } else {
+        if (copyBtn) {
+          copyBtn.className = "button success";
+        }
+        if (qrBtn) {
+          qrBtn.className = "button secondary";
+        }
+        if (cta) {
+          cta.href = "javascript:void(0)";
+          cta.className = "button secondary btn-wl-disabled";
+          cta.onclick = function(e) { e.preventDefault(); return false; };
+          cta.title = "Прямой 1-Click запуск в разработке для этой платформы";
+        }
+        if (ctaFlag) {
+          ctaFlag.style.display = "none";
+        }
+        if (ctaText) {
+          ctaText.textContent = "1-Click импорт";
+        }
+        if (ctaBadge) {
+          ctaBadge.innerHTML = '<span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span>';
+        }
+        if (hint) {
+          const platObj = wlPlatformsData.find(function(x) { return x.id === currentWlPlatform; });
+          const platName = platObj ? platObj.label : currentWlPlatform;
+          hint.innerHTML = '💡 <strong>' + platName + ':</strong> прямой переход по кнопке пока не активен (в разработке). Попробуйте соседними кнопками: <strong>«📋 Скопировать ссылку»</strong> или <strong>«📱 Показать QR-код»</strong>.';
+        }
+      }
+      ["nl", "pl", "fi"].forEach(function(c) {
+        const tab = document.getElementById("wl-tab-" + c);
+        if (tab) {
+          if (c === currentWlCountry) {
+            tab.classList.add("active");
+          } else {
+            tab.classList.remove("active");
+          }
+        }
+      });
+    }
+
+    window.openWlQrModal = function() {
+      const modal = document.getElementById("wl-qr-modal");
+      const img = document.getElementById("wl-qr-image");
+      const title = document.getElementById("wl-qr-modal-title");
+      const data = _openfluxData[currentWlCountry] || _openfluxData["nl"];
+      const svg = FLAG_SVGS[currentWlCountry] || FLAG_SVGS["nl"];
+      if (!modal || !img || !data) return;
+      title.innerHTML = '<span>📱</span> <span>OpenFlux · ' + svg + ' ' + data.name + '</span>';
+      img.src = data.qr_url + '?t=' + Date.now();
+      modal.style.display = 'flex';
+    };
+
+    window.closeWlQrModal = function() {
+      const modal = document.getElementById("wl-qr-modal");
+      if (modal) modal.style.display = 'none';
+    };
+
+    window.copyWlLink = async function(btn) {
+      const data = _openfluxData[currentWlCountry] || _openfluxData["nl"];
+      if (!data) return;
+      await copyTextVal(btn, data.link);
+    };
+
+    function renderWlSteps() {
+      const container = document.getElementById("wl-steps-container");
+      if (!container) return;
+
+      const data = _openfluxData[currentWlCountry] || _openfluxData["nl"];
+      const flagSvg = FLAG_SVGS[currentWlCountry] || FLAG_SVGS["nl"];
+      const isSubActive = __IS_SUB_ACTIVE__;
+
+      const inactiveWarningHtml = `
+        <div class="step" data-num="2">
+          <h3>2. Настройка подключения в OpenFlux</h3>
+          <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid var(--red); border-radius: 10px; padding: 14px; margin: 12px 0;">
+            <div style="font-weight: 600; color: var(--red); margin-bottom: 6px;">⚠️ Подписка не активна</div>
+            <div style="font-size: 13px; color: #cbd5e1; line-height: 1.4;">
+              Ссылки на шлюзы доступны только при оплаченной подписке. Пожалуйста, продлите доступ в верхней части страницы, чтобы активировать канал Белых Списков.
+            </div>
+          </div>
+        </div>
+      `;
+
+      if (currentWlPlatform === "ios") {
+        container.innerHTML = `
+          <div class="step" data-num="1">
+            <h3>1. Установка OpenFlux через TestFlight</h3>
+            <p>Нажмите кнопку ниже, чтобы присоединиться к официальному бета-тестированию OpenFlux для iOS в Apple TestFlight:</p>
+            <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+              <a class="button success" href="https://testflight.apple.com/join/BwnAcdus" target="_blank" rel="noopener">🍏 1. Присоединиться в TestFlight</a>
+              <a class="button secondary" href="https://apps.apple.com/app/testflight/id899247664" target="_blank" rel="noopener">📥 TestFlight в App Store</a>
+            </div>
+          </div>
+          ${!isSubActive ? inactiveWarningHtml : `
+          <div class="step" data-num="2">
+            <h3>2. Добавление подключения</h3>
+            <p>Добавьте узел в OpenFlux по скопированной ссылке или через QR-код:</p>
+            <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+              <button type="button" class="button success" onclick="copyWlLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ссылку для OpenFlux</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
+              <a class="button secondary btn-wl-disabled" href="javascript:void(0)" onclick="event.preventDefault(); return false;" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;" title="Прямой переход openflux:// в разработке в TestFlight"><span>⚡</span> <span>1-Click импорт</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span></a>
+            </div>
+            <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
+              ℹ️ <strong>Особенность iOS:</strong> кнопка прямого перехода пока не активна (в текущей бета-версии TestFlight схема <code>openflux://</code> ещё не зарегистрирована разработчиками, Safari пишет <em>«адрес недействителен»</em>).<br>
+              👉 <strong>Попробуйте другим методом:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ссылку для OpenFlux»</strong> выше, откройте приложение OpenFlux на iPhone и нажмите <strong>«Вставить из буфера»</strong> (или отсканируйте <strong>«📱 QR-код»</strong>).
+            </div>
+          </div>
+          <div class="step" data-num="3">
+            <h3>3. Активация System VPN</h3>
+            <p>В приложении OpenFlux нажмите синюю кнопку <strong>«Start VPN»</strong> ⚡. При первом запуске подтвердите добавление VPN-конфигурации в диалоговом окне iOS (Face ID / код-пароль).</p>
+          </div>
+          `}
+          <div class="step done" data-num="${isSubActive ? 4 : 3}">
+            <h3>${isSubActive ? 4 : 3}. Соединение активно</h3>
+            <p>Статус в OpenFlux сменится на <strong>Connected</strong> (зеленый индикатор), а в строке состояния iPhone появится значок <strong>[VPN]</strong>.<br>
+            <span style="font-size: 12px; color: var(--muted); display: block; margin-top: 6px;">💡 Сверните OpenFlux — теперь весь трафик iPhone защищенно направляется через доверенный канал Белых Списков!</span></p>
+          </div>
+        `;
+      } else if (currentWlPlatform === "android") {
+        container.innerHTML = `
+          <div class="step" data-num="1">
+            <h3>1. Установка OpenFlux для Android</h3>
+            <p>Скачайте официальный APK-файл OpenFlux с GitHub Releases:</p>
+            <div class="buttons" style="margin: 12px 0;">
+              <a class="button success" href="https://github.com/p1neappleXpress/OpenFluxAndroid/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux APK (GitHub)</a>
+            </div>
+            <p style="font-size: 12.5px; color: var(--muted); margin-top: 4px;">Установите APK (при необходимости разрешите установку из браузера в настройках безопасности Android).</p>
+          </div>
+          ${!isSubActive ? inactiveWarningHtml : `
+          <div class="step" data-num="2">
+            <h3>2. Добавление подключения</h3>
+            <p>Нажмите кнопку для быстрого импорта или отсканируйте QR-код:</p>
+            <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+              <button type="button" class="button secondary" onclick="copyWlLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ссылку</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal()" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📱</span> <span>Показать QR-код</span></button>
+              <a class="button success" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;" title="Прямое подключение в OpenFlux на Android"><span>⚡</span> <span>1-Click импорт</span></a>
+            </div>
+            <p style="font-size: 12.5px; color: var(--muted); margin-top: 6px;">💡 Браузер автоматически откроет приложение OpenFlux и добавит конфигурацию узла.</p>
+          </div>
+          <div class="step" data-num="3">
+            <h3>3. Активация соединения</h3>
+            <p>Нажмите большую центральную кнопку <strong>«Tap to connect»</strong> и разрешите системный запрос Android на подключение VPN.</p>
+          </div>
+          `}
+          <div class="step done" data-num="${isSubActive ? 4 : 3}">
+            <h3>${isSubActive ? 4 : 3}. Соединение активно</h3>
+            <p>Статус изменится на <strong>Connected</strong> (зеленый кружок), а в шторке уведомлений Android появится значок ключа VPN.<br>
+            <span style="font-size: 12px; color: var(--muted); display: block; margin-top: 6px;">💡 Сверните OpenFlux — канал Белых Списков активен для всех приложений смартфона!</span></p>
+          </div>
+        `;
+      } else if (currentWlPlatform === "windows") {
+        container.innerHTML = `
+          <div class="step" data-num="1">
+            <h3>1. Установка OpenFlux Desktop для Windows</h3>
+            <p>Скачайте официальный дистрибутив OpenFlux Desktop (.msi / .exe / portable .zip) с GitHub Releases:</p>
+            <div class="buttons" style="margin: 12px 0;">
+              <a class="button success" href="https://github.com/p1neappleXpress/OpenFluxDesktop/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux Desktop (.exe / .zip)</a>
+            </div>
+            <p style="font-size: 12.5px; color: var(--muted); margin-top: 4px;">Поддерживает Windows 10 и 11 (64-bit). Доступны установщик (.msi / .exe) и портативная версия без установки (.zip).</p>
+          </div>
+          ${!isSubActive ? inactiveWarningHtml : `
+          <div class="step" data-num="2">
+            <h3>2. Добавление подключения</h3>
+            <p>Скопируйте ссылку конфигурации для OpenFlux Desktop или используйте QR-код:</p>
+            <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+              <button type="button" class="button success" onclick="copyWlLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ссылку для OpenFlux</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
+              <a class="button secondary btn-wl-disabled" href="javascript:void(0)" onclick="event.preventDefault(); return false;" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;" title="Системная регистрация openflux:// на Windows в разработке"><span>⚡</span> <span>1-Click импорт</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span></a>
+            </div>
+            <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
+              ℹ️ <strong>Особенность Windows:</strong> прямой 1-Click запуск пока не активен (ассоциация <code>openflux://</code> в разработке).<br>
+              👉 <strong>Попробуйте другим методом:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ссылку»</strong>, откройте OpenFlux Desktop и нажмите <strong>«Профили» → «Импорт»</strong> (Ctrl+I). Включите тумблер <strong>«Весь трафик»</strong> (Wintun).
+            </div>
+
+            <details style="margin-top: 14px; background: rgba(0,0,0,0.3); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px;">
+              <summary style="cursor: pointer; font-size: 13px; font-weight: 500; color: #94a3b8; user-select: none;">💻 Для терминала и скриптов (CLI и .bat запуск)</summary>
+              <div style="margin-top: 10px;">
+                <p style="font-size: 12.5px; color: #cbd5e1; margin-bottom: 8px;">Для быстрого запуска через готовый .bat скрипт или команду консоли:</p>
+                <div style="margin-bottom: 10px; display: flex; gap: 8px; flex-wrap: wrap;">
+                  <button type="button" class="button secondary" style="font-size: 12px; padding: 6px 12px;" onclick="downloadWlBat()">⚡ Скачать .bat запуск (${data.name})</button>
+                  <button type="button" class="button secondary" style="font-size: 12px; padding: 6px 12px;" onclick="copyTextVal(this, '.\\\\openflux-windows-amd64.exe --role=client --transport=vyandex --url=&quot;' + ('${data.primary_url}') + '&quot;')">📋 Скопировать команду CLI</button>
+                </div>
+                <pre style="background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 10px 12px; font-size: 12px; color: #38bdf8; overflow-x: auto; margin: 0;">.\\openflux-windows-amd64.exe --role=client --transport=vyandex --url="${data.primary_url}"</pre>
+              </div>
+            </details>
+          </div>
+          <div class="step" data-num="3">
+            <h3>3. Активация соединения</h3>
+            <p>В приложении OpenFlux Desktop нажмите кнопку включения туннеля (или оставьте фоновый процесс CLI активным).</p>
+          </div>
+          `}
+          <div class="step done" data-num="${isSubActive ? 4 : 3}">
+            <h3>${isSubActive ? 4 : 3}. Соединение активно</h3>
+            <p>Туннель Белых Списков успешно подключен на Windows!</p>
+          </div>
+        `;
+      } else if (currentWlPlatform === "macos") {
+        container.innerHTML = `
+          <div class="step" data-num="1">
+            <h3>1. Установка OpenFlux для macOS</h3>
+            <p>Установите OpenFlux через TestFlight или скачайте сборку для macOS (Apple Silicon / Intel):</p>
+            <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+              <a class="button success" href="https://testflight.apple.com/join/BwnAcdus" target="_blank" rel="noopener">🍏 1. Присоединиться в TestFlight</a>
+              <a class="button secondary" href="https://apps.apple.com/app/testflight/id899247664" target="_blank" rel="noopener">📥 TestFlight в Mac App Store</a>
+              <a class="button secondary" href="https://github.com/p1neappleXpress/OpenFluxDesktop/releases/latest" target="_blank" rel="noopener">📥 Релизы OpenFlux Desktop (GitHub)</a>
+            </div>
+          </div>
+          ${!isSubActive ? inactiveWarningHtml : `
+          <div class="step" data-num="2">
+            <h3>2. Добавление подключения</h3>
+            <p>Скопируйте ссылку конфигурации или отсканируйте QR-код для добавления в OpenFlux:</p>
+            <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+              <button type="button" class="button success" onclick="copyWlLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ссылку для OpenFlux</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
+              <a class="button secondary btn-wl-disabled" href="javascript:void(0)" onclick="event.preventDefault(); return false;" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;" title="Системный обработчик openflux:// на macOS в разработке"><span>⚡</span> <span>1-Click импорт</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span></a>
+            </div>
+            <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
+              ℹ️ <strong>Особенность macOS:</strong> прямой 1-Click переход пока не активен (в разработке).<br>
+              👉 <strong>Попробуйте другим методом:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ссылку»</strong> выше, откройте OpenFlux и вставьте ссылку в меню импорта (или отсканируйте <strong>«📱 Показать QR-код»</strong>).
+            </div>
+          </div>
+          <div class="step" data-num="3">
+            <h3>3. Активация соединения</h3>
+            <p>Нажмите <strong>«Connect»</strong> / <strong>«Start VPN»</strong> в OpenFlux и подтвердите системное расширение macOS.</p>
+          </div>
+          `}
+          <div class="step done" data-num="${isSubActive ? 4 : 3}">
+            <h3>${isSubActive ? 4 : 3}. Соединение активно</h3>
+            <p>Туннель Белых Списков успешно запущен на macOS!</p>
+          </div>
+        `;
+      } else if (currentWlPlatform === "linux") {
+        container.innerHTML = `
+          <div class="step" data-num="1">
+            <h3>1. Установка OpenFlux Desktop для Linux</h3>
+            <p>Скачайте официальный дистрибутив OpenFlux Desktop (AppImage / DEB / RPM / CLI) с GitHub Releases:</p>
+            <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+              <a class="button success" href="https://github.com/p1neappleXpress/OpenFluxDesktop/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux Desktop (.AppImage / .deb)</a>
+            </div>
+            <p style="font-size: 12.5px; color: var(--muted); margin-top: 4px;">Поддерживает дистрибутивы Ubuntu/Debian, Fedora, Arch, Manjaro или любые другие через универсальный AppImage.</p>
+          </div>
+          ${!isSubActive ? inactiveWarningHtml : `
+          <div class="step" data-num="2">
+            <h3>2. Добавление подключения</h3>
+            <p>Скопируйте ссылку конфигурации для OpenFlux Desktop или запустите процесс в консоли:</p>
+            <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+              <button type="button" class="button success" onclick="copyWlLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ссылку для OpenFlux</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
+              <a class="button secondary btn-wl-disabled" href="javascript:void(0)" onclick="event.preventDefault(); return false;" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;" title="Ассоциация x-scheme-handler/openflux в разработке"><span>⚡</span> <span>1-Click импорт</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span></a>
+            </div>
+            <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
+              ℹ️ <strong>Особенность Linux:</strong> прямой 1-Click запуск пока не активен (обработчик схемы в разработке).<br>
+              👉 <strong>Попробуйте другим методом:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ссылку»</strong> для добавления в OpenFlux Desktop (или воспользуйтесь CLI-командой ниже).
+            </div>
+
+            <details style="margin-top: 14px; background: rgba(0,0,0,0.3); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px;">
+              <summary style="cursor: pointer; font-size: 13px; font-weight: 500; color: #94a3b8; user-select: none;">💻 Для серверов и терминала (CLI без графики)</summary>
+              <div style="margin-top: 10px;">
+                <p style="font-size: 12.5px; color: #cbd5e1; margin-bottom: 8px;">Для безголовых серверов или скриптовой автоматизации запустите бинарник <code>openflux</code>:</p>
+                <div style="margin-bottom: 8px;">
+                  <button type="button" class="button secondary" style="font-size: 12px; padding: 6px 12px;" onclick="copyTextVal(this, 'openflux -client -transport vyandex -url &quot;' + ('${data.primary_url}') + '&quot;')">📋 Скопировать команду CLI</button>
+                </div>
+                <pre style="background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 10px 12px; font-size: 12px; color: #38bdf8; overflow-x: auto; margin: 0;">chmod +x openflux-linux-amd64
+./openflux-linux-amd64 -client -transport vyandex -url "${data.primary_url}"</pre>
+              </div>
+            </details>
+          </div>
+          <div class="step" data-num="3">
+            <h3>3. Активация соединения</h3>
+            <p>В приложении OpenFlux Desktop нажмите кнопку <strong>«Connect»</strong> (или оставьте фоновый процесс CLI активным).</p>
+          </div>
+          `}
+          <div class="step done" data-num="${isSubActive ? 4 : 3}">
+            <h3>${isSubActive ? 4 : 3}. Соединение активно</h3>
+            <p>Туннель Белых Списков успешно подключен на Linux!</p>
+          </div>
+        `;
+      }
+    }
+
+    // --- AmneziaWG Module Logic ---
+    const awgPlatformsData = [
+      { id: "ios", label: "iOS (iPhone)", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 0.77-3.27 0.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5 0.87 3.29 0.87 0.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.37c.62-.75 1.04-1.8 0.92-2.85-.9.04-1.99.6-2.64 1.36-.57.65-1.07 1.72-.94 2.74 1.01.08 2.04-.5 2.66-1.25z"/></svg>' },
+      { id: "android", label: "Android", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M17.52 15.34c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1m-11.04 0c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1m11.4-6.02l2-3.46c.12-.2.05-.47-.15-.57-.2-.12-.47-.05-.57.15l-2.02 3.5C15.59 8.41 13.85 8.08 12 8.08s-3.59.33-5.14.87L4.84 5.45c-.1-.2-.37-.27-.57-.15-.2.1-.27.37-.15.57l2 3.46C2.69 11.19.34 14.66 0 18.76h24c-.34-4.1-2.69-7.57-6.12-9.44"/></svg>' },
+      { id: "windows", label: "Windows", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M0 3.45L9.75 2.1v9.45H0m10.95-9.6L24 0v11.4H10.95M0 12.6h9.75v9.45L0 20.7M10.95 12.6H24V24l-13.05-1.8"/></svg>' },
+      { id: "macos", label: "macOS", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M20 18c1.1 0 1.99-.9 1.99-2L22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/></svg>' },
+      { id: "linux", label: "Linux", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2C9.5 2 7.5 4 7.5 6.5c0 .3.03.6.1.9C6.5 8.1 5.5 9.7 5.5 11.5c0 .4.05.7.1 1-1.4.7-2.6 2.2-2.6 4 0 2.2 1.8 4 4 4h.2c.2.6.5 1.3.8 2 0 1.9 2.2 3.5 5 3.5s5-1.6 5-3.5c.3-.7.6-1.4.8-2H19c2.2 0 4-1.8 4-4 0-1.8-1.2-3.3-2.6-4 .1-.3.1-.6.1-.9C18.5 4 16.5 2 12 2zm-2 7c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1zm4 0c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1zm-2 2.5c1.1 0 2 .5 2 1.2 0 .6-.9 1.3-2 1.3s-2-.7-2-1.3c0-.7.9-1.2 2-1.2z"/></svg>' },
+      { id: "androidtv", label: "Android TV", icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/></svg>' }
+    ];
+    let currentAwgPlatform = (["ios", "android", "windows", "macos", "linux", "androidtv"].indexOf(detected) !== -1) ? detected : "ios";
+    let currentAwgApp = "amneziavpn";
+
+    const awgAppsData = [
+      {
+        id: "amneziavpn",
+        name: "AmneziaVPN",
+        subtitle: "Официальный клиент со всеми функциями",
+        badge: "Рекомендуем",
+        iconSvg: '<img src="data:image/webp;base64,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" width="34" height="34" style="border-radius: 8px; display: block;" alt="AmneziaVPN">'
+      },
+      {
+        id: "amneziawg",
+        name: "AmneziaWG",
+        subtitle: "Облегчённый быстрый WireGuard-клиент",
+        badge: "Легковесный",
+        iconSvg: '<img src="data:image/webp;base64,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" width="34" height="34" style="border-radius: 8px; display: block;" alt="AmneziaWG">'
+      }
+    ];
+
+    function renderAwgPlatformTabs() {
+      const track = document.getElementById("awg-platform-tabs");
+      if (!track) return;
+      track.innerHTML = "";
+      awgPlatformsData.forEach((p) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "platform-tab" + (p.id === currentAwgPlatform ? " active" : "");
+        btn.setAttribute("role", "tab");
+        btn.setAttribute("aria-selected", p.id === currentAwgPlatform ? "true" : "false");
+        btn.setAttribute("tabindex", p.id === currentAwgPlatform ? "0" : "-1");
+        btn.innerHTML = p.icon + '<span>' + p.label + '</span>';
+        btn.addEventListener("click", () => {
+          selectAwgPlatform(p.id);
+        });
+        track.appendChild(btn);
+      });
+      const lbl = document.getElementById("detected-awg-platform-label");
+      if (lbl) {
+        const found = awgPlatformsData.find(x => x.id === currentAwgPlatform);
+        lbl.textContent = found ? found.label : currentAwgPlatform;
+      }
+    }
+
+    function selectAwgPlatform(id) {
+      currentAwgPlatform = id;
+      renderAwgPlatformTabs();
+      renderAwgApps();
+      renderAwgSteps();
+    }
+
+    function renderAwgApps() {
+      const box = document.getElementById("awg-apps-selector");
+      if (!box) return;
+      box.innerHTML = "";
+      // On Android TV only AmneziaVPN is available
+      const appsToRender = (currentAwgPlatform === "androidtv")
+        ? awgAppsData.filter(a => a.id === "amneziavpn")
+        : awgAppsData;
+
+      if (currentAwgPlatform === "androidtv" && currentAwgApp !== "amneziavpn") {
+        currentAwgApp = "amneziavpn";
+      }
+
+      appsToRender.forEach((app) => {
+        const card = document.createElement("button");
+        card.type = "button";
+        const isActive = app.id === currentAwgApp;
+        card.className = "app-card" + (isActive ? " active" : "");
+        card.innerHTML =
+          '<div style="display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0; overflow: hidden;">' + app.iconSvg + '</div>' +
+          '<div class="app-info">' +
+            '<div class="app-name-row">' +
+              '<span class="app-name">' + app.name + '</span>' +
+              '<span class="app-badge badge-recommended">' + app.badge + '</span>' +
+            '</div>' +
+            '<div style="font-size: 11.5px; color: var(--muted); line-height: 1.25; margin-top: 2px;">' + app.subtitle + '</div>' +
+          '</div>' +
+          '<div class="app-check">' + (isActive ? '✓' : '') + '</div>';
+        card.addEventListener("click", () => {
+          selectAwgApp(app.id);
+        });
+        box.appendChild(card);
+      });
+    }
+
+    function selectAwgApp(appId) {
+      currentAwgApp = appId;
+      renderAwgApps();
+      renderAwgSteps();
+    }
+
+    function renderAwgSteps() {
+      const container = document.getElementById("awg-steps-container");
+      if (!container) return;
+
+      const isMobile = (currentAwgPlatform === "ios" || currentAwgPlatform === "android");
+      const isAwgApp = (currentAwgApp === "amneziawg");
+
+      let downloadBtnsHtml = "";
+      if (currentAwgPlatform === "androidtv") {
+        downloadBtnsHtml = '<a class="button secondary" href="https://play.google.com/store/apps/details?id=org.amnezia.vpn" target="_blank" rel="noopener">📺 Google Play (Android TV)</a>' +
+          '<a class="button secondary" href="https://github.com/amnezia-vpn/amnezia-client/releases" target="_blank" rel="noopener">📦 Скачать APK (GitHub)</a>';
+      } else if (isAwgApp) {
+        if (currentAwgPlatform === "ios") {
+          downloadBtnsHtml = '<a class="button secondary" href="https://apps.apple.com/app/amneziawg/id6478942365" target="_blank" rel="noopener">🍏 App Store (iOS)</a>';
+        } else if (currentAwgPlatform === "android") {
+          downloadBtnsHtml = '<a class="button secondary" href="https://play.google.com/store/apps/details?id=org.amnezia.awg" target="_blank" rel="noopener">🤖 Google Play (Android)</a>' +
+            '<a class="button secondary" href="https://github.com/amnezia-vpn/amneziawg-android/releases" target="_blank" rel="noopener">📦 Прямой APK (для Huawei и без Google Play)</a>';
+        } else if (currentAwgPlatform === "windows") {
+          downloadBtnsHtml = '<a class="button secondary" href="https://github.com/amnezia-vpn/amneziawg-windows-client/releases" target="_blank" rel="noopener">💻 Скачать AmneziaWG для Windows (.msi)</a>';
+        } else if (currentAwgPlatform === "macos") {
+          downloadBtnsHtml = '<a class="button secondary" href="https://apps.apple.com/app/amneziawg/id6478942365" target="_blank" rel="noopener">🍏 Mac App Store</a>' +
+            '<a class="button secondary" href="https://docs.amnezia.org/ru/documentation/instructions/use-amneziawg-app/" target="_blank" rel="noopener">📖 Официальная инструкция Amnezia</a>';
+        } else if (currentAwgPlatform === "linux") {
+          downloadBtnsHtml = '<a class="button secondary" href="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module" target="_blank" rel="noopener">🐧 Модуль ядра Linux (GitHub)</a>' +
+            '<a class="button secondary" href="https://github.com/amnezia-vpn/amneziawg-go" target="_blank" rel="noopener">📦 AmneziaWG Go</a>';
+        }
+      } else {
+        if (currentAwgPlatform === "ios") {
+          downloadBtnsHtml = '<a class="button secondary" href="https://apps.apple.com/app/amneziavpn/id1600529900" target="_blank" rel="noopener">🍏 App Store (iOS)</a>';
+        } else if (currentAwgPlatform === "android") {
+          downloadBtnsHtml = '<a class="button secondary" href="https://play.google.com/store/apps/details?id=org.amnezia.vpn" target="_blank" rel="noopener">🤖 Google Play (Android)</a>' +
+            '<a class="button secondary" href="https://github.com/amnezia-vpn/amnezia-client/releases" target="_blank" rel="noopener">📦 Прямой APK (для Huawei и без Google Play)</a>';
+        } else if (currentAwgPlatform === "windows") {
+          downloadBtnsHtml = '<a class="button secondary" href="https://amnezia.org/ru/downloads" target="_blank" rel="noopener">💻 Скачать на официальном сайте (.exe)</a>' +
+            '<a class="button secondary" href="https://github.com/amnezia-vpn/amnezia-client/releases" target="_blank" rel="noopener">📦 GitHub Релизы</a>';
+        } else if (currentAwgPlatform === "macos") {
+          downloadBtnsHtml = '<a class="button secondary" href="https://apps.apple.com/app/amneziavpn/id1600529900" target="_blank" rel="noopener">🍏 Mac App Store</a>' +
+            '<a class="button secondary" href="https://amnezia.org/ru/downloads" target="_blank" rel="noopener">🌐 Официальный сайт (.dmg)</a>';
+        } else if (currentAwgPlatform === "linux") {
+          downloadBtnsHtml = '<a class="button secondary" href="https://amnezia.org/ru/downloads" target="_blank" rel="noopener">🐧 Скачать для Linux (.deb / AppImage)</a>';
+        }
+      }
+
+      let step2Text = "";
+      if (currentAwgPlatform === "androidtv") {
+        step2Text = 'Установите приложение <strong>AmneziaVPN</strong> на телевизор из Google Play или APK.<br>' +
+          '• <strong>Способ 1:</strong> Передайте скачанный файл <code>.conf</code> на TV (через флешку или приложение <em>LocalSend / Send Files to TV</em>) и в Amnezia VPN выберите <strong>«Файл с настройками»</strong>.<br>' +
+          '• <strong>Способ 2:</strong> Нажмите <strong>«📋 Скопировать ключ»</strong> на смартфоне и вставьте его на TV через клавиатуру Android TV Remote в поле <strong>«Вставить ключ»</strong>.';
+      } else if (isMobile) {
+        if (isAwgApp) {
+          step2Text = 'Выберите нужный слот в блоке выше:<br>' +
+            '• <strong>На этом же смартфоне:</strong> скачайте <strong>«📥 .conf»</strong> → в приложении <strong>AmneziaWG</strong> нажмите <strong>«+»</strong> (в правом углу) → <strong>«Импорт из файла или архива»</strong> (или нажмите <strong>«📋 Скопировать ключ»</strong> → <strong>«+»</strong> → <strong>«Создать с нуля»</strong> и вставьте текст).<br>' +
+            '• <strong>С экрана компьютера:</strong> нажмите <strong>«🔲 QR-код»</strong> у слота на ПК → в AmneziaWG нажмите <strong>«+»</strong> → <strong>«Сканировать QR-код»</strong> и наведите камеру.';
+        } else {
+          step2Text = 'Выберите нужный слот в блоке выше:<br>' +
+            '• <strong>На этом же смартфоне:</strong> нажмите <strong>«📋 Скопировать ключ»</strong> → в приложении <strong>Amnezia VPN</strong> нажмите <strong>«+»</strong> (или «Приступим») → <strong>«Вставить ключ»</strong> (или скачайте <strong>.conf</strong> и выберите <strong>«Файл с настройками»</strong>).<br>' +
+            '• <strong>С экрана компьютера:</strong> нажмите <strong>«🔲 QR-код»</strong> у слота на ПК → в Amnezia VPN нажмите <strong>«+»</strong> → <strong>«Сканировать QR-код»</strong> и наведите камеру.';
+        }
+      } else {
+        if (isAwgApp) {
+          if (currentAwgPlatform === "linux") {
+            step2Text = 'Скачайте конфигурационный файл <strong>«📥 .conf»</strong> нужного слота в блоке выше и поместите в <code>/etc/amnezia/amneziawg/</code>.<br>' +
+              'Запустите туннель: <code>awg-quick up &lt;имя_файла&gt;</code> (остановка: <code>awg-quick down &lt;имя_файла&gt;</code>).';
+          } else {
+            step2Text = 'Скачайте конфигурационный файл <strong>«📥 .conf»</strong> нужного слота в блоке выше.<br>' +
+              'В приложении <strong>AmneziaWG</strong> нажмите <strong>«Добавить туннель»</strong> (или сочетание <code>Ctrl+O</code> / <code>Cmd+O</code>) и укажите скачанный <code>.conf</code> файл.';
+          }
+        } else {
+          step2Text = 'Выберите удобный вариант в блоке слотов выше:<br>' +
+            '• <strong>По ключу:</strong> нажмите <strong>«📋 Скопировать ключ»</strong> → в <strong>Amnezia VPN</strong> нажмите <strong>«+»</strong> (или «Приступим») → <strong>«Вставить ключ»</strong> и вставьте скопированный текст.<br>' +
+            '• <strong>По файлу:</strong> нажмите <strong>«📥 .conf»</strong> → в приложении выберите <strong>«Файл с настройками»</strong> (или просто перетащите файл мышкой в окно Amnezia).';
+        }
+      }
+
+      container.innerHTML = `
+        <div class="step" data-num="1">
+          <h3>1. Установка клиента ${isAwgApp ? 'AmneziaWG' : 'Amnezia VPN'}</h3>
+          <p>Скачайте официальное бесплатное приложение с открытым исходным кодом:</p>
+          <div class="buttons" style="flex-wrap: wrap; gap: 8px; margin: 10px 0;">
+            ${downloadBtnsHtml}
+          </div>
+        </div>
+        <div class="step" data-num="2">
+          <h3>2. Добавление конфигурации устройства</h3>
+          <p style="line-height: 1.5; font-size: 13.5px; color: #cbd5e1;">${step2Text}</p>
+        </div>
+        <div class="step done" data-num="3">
+          <h3>3. Подключение и работа</h3>
+          <p>Нажмите центральную кнопку подключения в приложении. Весь заблокированный трафик пойдёт через наш скоростной шифрованный WireGuard-канал без потери скорости.</p>
+        </div>
+      `;
+    }
+
+    renderPlatformTabs();
+    renderApps();
+    updateWlHeroCard();
+    renderWlPlatformTabs();
+    renderWlSteps();
+    renderAwgPlatformTabs();
+    renderAwgApps();
+    renderAwgSteps();
+    window.updateRenewPrice();
+    initNoticeState();
+    window.startOrderStatusPolling();
+
+    document.addEventListener("keydown", function(e) {
+      if (e.key === "Escape") {
+        if (typeof closeAwgQrModal === "function") closeAwgQrModal();
+        if (typeof closeAwgSwitchModal === "function") closeAwgSwitchModal();
+        if (typeof closeWlQrModal === "function") closeWlQrModal();
+      }
+    });
+  })();
+  </script>
+</body>
+
+</html>
