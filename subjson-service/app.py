@@ -1783,9 +1783,7 @@ def public_subscription_url(headers, route: str, subscription_id: str) -> str:
 
 
 def public_connection_page_url(headers, subscription_route: str, subscription_id: str) -> str:
-    setup_url = public_subscription_url(headers, "import", subscription_id)
-    subscription_url = public_subscription_url(headers, subscription_route, subscription_id)
-    return f"{setup_url}?{urllib.parse.urlencode({'url': subscription_url})}"
+    return public_subscription_url(headers, "import", subscription_id)
 
 
 def first_non_empty(values: list[Any] | tuple[Any, ...] | None) -> Any:
@@ -5311,14 +5309,15 @@ def setup_page_html(
     customer_email: str = "",
     payment_card_html: str = "",
 ) -> bytes:
+    query_suffix = f"?{import_query}" if import_query else ""
     fallback_links = {
-        "happ": f"/{SECRET_SEGMENT}/import/happ/{quoted_sub_id}?{import_query}",
-        "streisand": f"/{SECRET_SEGMENT}/import/streisand/{quoted_sub_id}?{import_query}",
-        "clash": f"/{SECRET_SEGMENT}/import/clash/{quoted_sub_id}?{import_query}",
-        "v2rayn": f"/{SECRET_SEGMENT}/import/v2rayn/{quoted_sub_id}?{import_query}",
-        "nekobox": f"/{SECRET_SEGMENT}/import/nekobox/{quoted_sub_id}?{import_query}",
-        "v2rayng": f"/{SECRET_SEGMENT}/import/v2rayng/{quoted_sub_id}?{import_query}",
-        "singbox": f"/{SECRET_SEGMENT}/import/singbox/{quoted_sub_id}?{import_query}",
+        "happ": f"/{SECRET_SEGMENT}/import/happ/{quoted_sub_id}{query_suffix}",
+        "streisand": f"/{SECRET_SEGMENT}/import/streisand/{quoted_sub_id}{query_suffix}",
+        "clash": f"/{SECRET_SEGMENT}/import/clash/{quoted_sub_id}{query_suffix}",
+        "v2rayn": f"/{SECRET_SEGMENT}/import/v2rayn/{quoted_sub_id}{query_suffix}",
+        "nekobox": f"/{SECRET_SEGMENT}/import/nekobox/{quoted_sub_id}{query_suffix}",
+        "v2rayng": f"/{SECRET_SEGMENT}/import/v2rayng/{quoted_sub_id}{query_suffix}",
+        "singbox": f"/{SECRET_SEGMENT}/import/singbox/{quoted_sub_id}{query_suffix}",
     }
     happ_link = encrypt_happ_link(subscription_url) or fallback_links["happ"]
     apps = [
@@ -10082,7 +10081,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 parsed_source = urllib.parse.urlsplit(raw_source)
                 source_url = urllib.parse.urlunsplit((parsed_source.scheme, parsed_source.netloc, parsed_source.path, "", "")) if parsed_source.scheme else raw_source
                 quoted_sub_id = urllib.parse.quote(sub_id, safe="")
-                import_query = urllib.parse.urlencode({"url": source_url})
+                import_query = ""
                 pending_card = check_pending_payment_card(sub_id)
                 existing_email = find_store_linked_email(sub_id)
                 generic_html = setup_page_html(
