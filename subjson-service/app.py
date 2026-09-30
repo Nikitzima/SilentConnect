@@ -8079,13 +8079,15 @@ def setup_page_html(
           ${!isSubActive ? inactiveWarningHtml : `
           <div class="step" data-num="2">
             <h3>2. Добавление подключения</h3>
-            <p>Нажмите кнопку для быстрого импорта в OpenFlux или покажите QR-код для сканирования с камеры:</p>
+            <p>Добавьте узел в OpenFlux по ссылке или через QR-код:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <a class="button success" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>⚡</span> ${flagSvg} <span>Подключить ${data.name}</span></a>
+              <a class="button success" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px; opacity: 0.9;"><span>⚡</span> ${flagSvg} <span>Подключить ${data.name}</span></a>
               <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
               <button type="button" class="button secondary" onclick="copyWlLink(this)">📋 Скопировать ссылку</button>
             </div>
-            <p style="font-size: 12.5px; color: var(--muted); margin-top: 6px;">💡 <strong>Важно:</strong> сначала установите OpenFlux в Шаге 1. Если при нажатии кнопки Safari сообщает <em>«адрес недействителен»</em>, нажмите <strong>«📋 Скопировать ссылку»</strong>, перейдите в установленный OpenFlux и добавьте узел через кнопку <strong>«+»</strong> (или покажите QR-код).</p>
+            <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
+              ℹ️ <strong>Особенность iOS (бета):</strong> прямое открытие по кнопке пока не активно в сборке TestFlight (Safari выдаёт <em>«адрес недействителен»</em>). Добавьте узел альтернативным способом: нажмите соседнюю кнопку <strong>«📋 Скопировать ссылку»</strong>, откройте приложение OpenFlux на iPhone и нажмите <strong>«Вставить из буфера»</strong> (или отсканируйте <strong>«📱 QR-код»</strong>).
+            </div>
           </div>
           <div class="step" data-num="3">
             <h3>3. Активация System VPN</h3>
@@ -8150,6 +8152,9 @@ def setup_page_html(
               <button type="button" class="button secondary" onclick="copyTextVal(this, '.\\\\openflux-windows-amd64.exe --role=client --transport=vyandex --url=&quot;' + ('${data.primary_url}') + '&quot;')">📋 Скопировать команду CLI</button>
               <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
               <button type="button" class="button secondary" onclick="copyWlLink(this)">📋 Скопировать ссылку</button>
+            </div>
+            <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
+              💡 <strong>Если используете OpenFlux GUI:</strong> нажмите <strong>«📋 Скопировать ссылку»</strong> выше, откройте приложение OpenFlux, перейдите в <strong>«Профили» → «Импорт»</strong> (или нажмите Ctrl+I), вставьте ссылку и включите тумблер <strong>«Весь трафик»</strong> (Wintun), чтобы перенаправлять весь интернет через туннель.
             </div>
 
             <details style="margin-top: 12px; background: rgba(0,0,0,0.3); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px;">
