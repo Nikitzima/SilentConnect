@@ -8005,8 +8005,21 @@ def setup_page_html(
       const ctaBadge = document.getElementById("wl-cta-badge");
       const hint = document.getElementById("wl-action-hint");
       const svg = FLAG_SVGS[currentWlCountry] || FLAG_SVGS["nl"];
+      const copyBtn = document.getElementById("wl-copy-trigger");
       if (cta && data) {
         cta.href = data.link;
+        if (currentWlPlatform === "android") {
+          cta.className = "button success";
+        } else {
+          cta.className = "button secondary";
+        }
+      }
+      if (copyBtn) {
+        if (currentWlPlatform === "android") {
+          copyBtn.className = "button secondary";
+        } else {
+          copyBtn.className = "button success";
+        }
       }
       if (ctaFlag) {
         ctaFlag.innerHTML = svg;
@@ -8020,14 +8033,14 @@ def setup_page_html(
       }
       if (ctaBadge) {
         if (currentWlPlatform === "android") {
-          ctaBadge.innerHTML = '<span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(16, 185, 129, 0.25); color: #6ee7b7; font-weight: 600;">1-Click ✓</span>';
+          ctaBadge.innerHTML = "";
         } else {
-          ctaBadge.innerHTML = '<span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.2); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span>';
+          ctaBadge.innerHTML = '<span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span>';
         }
       }
       if (hint) {
         if (currentWlPlatform === "android") {
-          hint.innerHTML = '💡 <strong>Android:</strong> поддерживается прямой 1-Click переход в OpenFlux. Нажмите «Подключить узел», и приложение запустится автоматически.';
+          hint.innerHTML = '💡 <strong>Android:</strong> поддерживается прямое подключение в 1 клик. Нажмите «Подключить узел», и приложение запустится автоматически.';
         } else {
           const platObj = wlPlatformsData.find(function(x) { return x.id === currentWlPlatform; });
           const platName = platObj ? platObj.label : currentWlPlatform;
@@ -8106,7 +8119,7 @@ def setup_page_html(
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
               <button type="button" class="button success" onclick="copyWlLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ссылку для OpenFlux</span></button>
               <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
-              <a class="button secondary" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px; opacity: 0.85;" title="Прямой переход openflux:// в разработке в TestFlight"><span>⚡</span> <span>1-Click импорт</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро · Coming Soon</span></a>
+              <a class="button secondary" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px; opacity: 0.85;" title="Прямой переход openflux:// в разработке в TestFlight"><span>⚡</span> <span>1-Click импорт</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span></a>
             </div>
             <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
               ℹ️ <strong>Особенность iOS:</strong> кнопка прямого перехода пока не активна (в текущей бета-версии TestFlight схема <code>openflux://</code> ещё не зарегистрирована разработчиками, Safari пишет <em>«адрес недействителен»</em>).<br>
@@ -8137,9 +8150,9 @@ def setup_page_html(
           ${!isSubActive ? inactiveWarningHtml : `
           <div class="step" data-num="2">
             <h3>2. Добавление подключения</h3>
-            <p>Нажмите кнопку для прямого импорта (на Android работает в 1 клик!) или отсканируйте QR-код:</p>
+            <p>Нажмите кнопку для быстрого импорта или отсканируйте QR-код:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <a class="button success" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>⚡</span> ${flagSvg} <span>Подключить ${data.name} (1-Click)</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(16, 185, 129, 0.25); color: #6ee7b7; font-weight: 600;">Работает ✓</span></a>
+              <a class="button success" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>⚡</span> ${flagSvg} <span>Подключить ${data.name}</span></a>
               <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
               <button type="button" class="button secondary" onclick="copyWlLink(this)">📋 Скопировать ссылку</button>
             </div>
@@ -8177,7 +8190,7 @@ def setup_page_html(
               <button type="button" class="button secondary" onclick="downloadWlBat()" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>⚡</span> ${flagSvg} <span>Скачать .bat запуск (${data.name})</span></button>
               <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
               <button type="button" class="button secondary" onclick="copyTextVal(this, '.\\\\openflux-windows-amd64.exe --role=client --transport=vyandex --url=&quot;' + ('${data.primary_url}') + '&quot;')">💻 Команда CLI</button>
-              <a class="button secondary" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px; opacity: 0.85;" title="Системная регистрация openflux:// на Windows в разработке"><span>⚡</span> <span>1-Click запуск</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро · Coming Soon</span></a>
+              <a class="button secondary" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px; opacity: 0.85;" title="Системная регистрация openflux:// на Windows в разработке"><span>⚡</span> <span>1-Click запуск</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span></a>
             </div>
             <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
               ℹ️ <strong>Особенность Windows:</strong> прямой 1-Click запуск из браузера пока не активен (ассоциация <code>openflux://</code> ещё не встроена в установщик Windows).<br>
@@ -8222,7 +8235,7 @@ def setup_page_html(
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
               <button type="button" class="button success" onclick="copyWlLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ссылку для OpenFlux</span></button>
               <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
-              <a class="button secondary" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px; opacity: 0.85;" title="Системный обработчик openflux:// на macOS в разработке"><span>⚡</span> <span>1-Click импорт</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро · Coming Soon</span></a>
+              <a class="button secondary" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px; opacity: 0.85;" title="Системный обработчик openflux:// на macOS в разработке"><span>⚡</span> <span>1-Click импорт</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span></a>
             </div>
             <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
               ℹ️ <strong>Особенность macOS:</strong> прямой 1-Click переход пока не активен (в разработке).<br>
@@ -8256,7 +8269,7 @@ def setup_page_html(
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
               <button type="button" class="button success" onclick="copyWlLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ссылку для OpenFlux</span></button>
               <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
-              <a class="button secondary" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px; opacity: 0.85;" title="Ассоциация x-scheme-handler/openflux в разработке"><span>⚡</span> <span>1-Click импорт</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро · Coming Soon</span></a>
+              <a class="button secondary" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px; opacity: 0.85;" title="Ассоциация x-scheme-handler/openflux в разработке"><span>⚡</span> <span>1-Click импорт</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span></a>
             </div>
             <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
               ℹ️ <strong>Особенность Linux:</strong> прямой 1-Click запуск пока не активен (обработчик схемы в разработке).<br>
