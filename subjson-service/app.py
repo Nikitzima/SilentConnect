@@ -564,7 +564,7 @@ OPENFLUX_CLUSTER_KEY = os.environ.get("OPENFLUX_CLUSTER_KEY", "sc_oflux_2026_e8d
 
 DEFAULT_OPENFLUX_POOLS: dict[str, list[str]] = {
     "nl": [
-        "https://disk.yandex.ru/i/_-g0vNUuu69ffw"
+        "https://disk.yandex.ru/i/2fQ-JSKoBNlWag"
     ],
     "pl": [
         "https://disk.yandex.ru/i/hb1xodFfECGL8w"
@@ -620,10 +620,12 @@ def build_openflux_v1_link(country: str, sub_id: str, label: str = "") -> tuple[
         "secret": OPENFLUX_CLUSTER_KEY,
         "context": primary_url,
         "transports": [
-            {"type": "vyandex", "url": primary_url, "priority": 100}
+            {"type": "vyandex", "url": primary_url}
         ]
     }
     if backup_url and backup_url != primary_url:
+        payload["negotiate"] = True
+        payload["transports"][0]["priority"] = 100
         payload["transports"].append({"type": "vyandex", "url": backup_url, "priority": 80})
 
     json_bytes = json.dumps(payload, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
