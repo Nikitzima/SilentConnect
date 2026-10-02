@@ -4,6 +4,78 @@ import json
 import subprocess
 import sys
 import os
+import time
+
+def heal_local_xui_from_shop_db():
+    shop_db = "/root/vpn-shop/data-silentconnect/vpn_shop.db"
+    xui_db = "/etc/x-ui/x-ui.db"
+    if not os.path.exists(shop_db) or not os.path.exists(xui_db):
+        return
+
+    try:
+        s_conn = sqlite3.connect(shop_db)
+        s_conn.row_factory = sqlite3.Row
+        s_cur = s_conn.cursor()
+        now_s = int(time.time())
+        now_ms = now_s * 1000
+        active_profiles = s_cur.execute(
+            "SELECT id, public_id, xui_email, xui_client_id, expires_at, status FROM profiles WHERE status = 'active' AND expires_at > ?",
+            (now_s,)
+        ).fetchall()
+        s_conn.close()
+
+        x_conn = sqlite3.connect(xui_db)
+        x_cur = x_conn.cursor()
+        healed_count = 0
+
+        inbounds = x_cur.execute("SELECT id, settings FROM inbounds").fetchall()
+
+        for prof in active_profiles:
+            email = prof["xui_email"]
+            uuid = prof["xui_client_id"]
+            exp_ms = prof["expires_at"] * 1000
+
+            # 1. Update clients table
+            cl_res = x_cur.execute(
+                "UPDATE clients SET enable = 1, expiry_time = ?, updated_at = ? WHERE email = ? AND (enable != 1 OR expiry_time != ?)",
+                (exp_ms, now_ms, email, exp_ms)
+            )
+            if cl_res.rowcount > 0:
+                healed_count += 1
+
+            # 2. Update inbounds
+            for ib_id, settings_raw in inbounds:
+                if not settings_raw:
+                    continue
+                try:
+                    st = json.loads(settings_raw)
+                    changed = False
+                    for cl in st.get("clients", []):
+                        if cl.get("email") == email or cl.get("id") == uuid:
+                            if cl.get("enable") is not True or cl.get("expiryTime") != exp_ms:
+                                cl["enable"] = True
+                                cl["expiryTime"] = exp_ms
+                                changed = True
+                    if changed:
+                        x_cur.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(st, ensure_ascii=False), ib_id))
+                        healed_count += 1
+                except Exception:
+                    pass
+
+            # 3. Update client_traffics
+            x_cur.execute(
+                "UPDATE client_traffics SET enable = 1, expiry_time = ? WHERE email = ? AND (enable != 1 OR expiry_time != ?)",
+                (exp_ms, email, exp_ms)
+            )
+
+        if healed_count > 0:
+            x_conn.commit()
+            print(f"Self-healed {healed_count} entries in local NL x-ui.db from active profiles in vpn_shop.db")
+            # Restart x-ui on NL if inbounds were healed
+            subprocess.run(["systemctl", "restart", "x-ui"], check=False)
+        x_conn.close()
+    except Exception as e:
+        print(f"heal_local_xui_from_shop_db error: {e}", file=sys.stderr)
 
 def sync_to_remote(remote_host):
     print(f"=== Syncing X-UI clients NL -> {remote_host} ===")
@@ -65,6 +137,8 @@ for row in clients:
 existing_traffics = {r[3]: r for r in c.execute("SELECT id, inbound_id, enable, email, up, down, expiry_time, total, reset, last_online FROM client_traffics").fetchall()}
 for row in traffics:
     tr_email = row[3]
+    tr_enable = row[2]
+    tr_expiry = row[6]
     if tr_email not in existing_traffics:
         try:
             c.execute('''
@@ -76,6 +150,26 @@ for row in traffics:
             print(f"Added traffic record for {tr_email}")
         except Exception as te:
             print(f"Traffic insert error for {tr_email}: {te}", file=sys.stderr)
+    else:
+        cur_tr = existing_traffics[tr_email]
+        if cur_tr[2] != tr_enable or cur_tr[6] != tr_expiry:
+            c.execute("UPDATE client_traffics SET enable=?, expiry_time=? WHERE email=?", (tr_enable, tr_expiry, tr_email))
+            changed = True
+            print(f"Updated traffic record for {tr_email}")
+
+# Ensure all client_traffics are aligned with clients table
+c.execute('''
+    UPDATE client_traffics
+    SET enable = (SELECT enable FROM clients WHERE clients.email = client_traffics.email),
+        expiry_time = (SELECT expiry_time FROM clients WHERE clients.email = client_traffics.email)
+    WHERE email IN (SELECT email FROM clients)
+    AND (
+        enable != (SELECT enable FROM clients WHERE clients.email = client_traffics.email)
+        OR expiry_time != (SELECT expiry_time FROM clients WHERE clients.email = client_traffics.email)
+    )
+''')
+if c.rowcount > 0:
+    changed = True
 
 inbounds = c.execute("SELECT id, tag, settings FROM inbounds").fetchall()
 for ib_id, tag, settings_raw in inbounds:
@@ -153,15 +247,7 @@ else:
     print("Database already up to date on remote.")
 conn.close()
 
-# If xray-maxru service exists (e.g. on FI), sync its config and reload
-maxru_sync = "/usr/local/etc/xray-maxru/sync_xui_to_xray.py"
-if os.path.exists(maxru_sync):
-    try:
-        res = subprocess.run(["python3", maxru_sync], capture_output=True, text=True, timeout=15)
-        print("xray-maxru sync:", res.stdout.strip())
-        subprocess.run(["systemctl", "restart", "xray-maxru"], check=False)
-    except Exception as me:
-        print("Error syncing xray-maxru:", me, file=sys.stderr)
+# Remote nodes (PL and FI) operate pure 3X-UI with unified inbounds (23385, 29443, 8443)
 
 # Restart x-ui and subjson if changes occurred
 if changed:
@@ -178,6 +264,7 @@ if changed:
         print("Stderr:", res.stderr, file=sys.stderr)
 
 if __name__ == "__main__":
+    heal_local_xui_from_shop_db()
     env_hosts = os.environ.get("SYNC_REMOTE_HOSTS", "").split(",")
     targets = [h.strip() for h in env_hosts if h.strip()]
     if not targets:
