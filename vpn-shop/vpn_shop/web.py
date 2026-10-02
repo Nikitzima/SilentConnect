@@ -3440,7 +3440,7 @@ class WebCheckout:
   </script>
 </head>
 <body>
-  <header><nav class="wrap"><a href="/" class="brand"><img src="/assets/telegram/avatar.png" alt="SilentConnect" class="brand-logo"><span>SilentConnect</span></a><div class="navlinks"><a href="/#tariffs" class="span-2">Тарифы</a><a href="/about" class="span-2"><span class="desktop-nav-txt">О сервисе</span><span class="mobile-nav-txt">О нас</span></a><a href="/contact" class="span-2">Контакты</a><a href="{html.escape(self.bot_url)}" class="span-3">Telegram-бот</a><a href="{html.escape(self.support_url)}" class="span-3">Поддержка</a><a href="#cabinet" class="span-6" onclick="openCabinetModal(); return false;" style="color: #2fbf71; font-weight: 600;">🔑 Личный кабинет</a></div></nav></header>
+  <header><nav class="wrap"><a href="/" class="brand"><img src="/assets/telegram/avatar.webp" alt="SilentConnect" class="brand-logo"><span>SilentConnect</span></a><div class="navlinks"><a href="/#tariffs" class="span-2">Тарифы</a><a href="/about" class="span-2"><span class="desktop-nav-txt">О сервисе</span><span class="mobile-nav-txt">О нас</span></a><a href="/contact" class="span-2">Контакты</a><a href="{html.escape(self.bot_url)}" class="span-3">Telegram-бот</a><a href="{html.escape(self.support_url)}" class="span-3">Поддержка</a><a href="#cabinet" class="span-6" onclick="openCabinetModal(); return false;" style="color: #2fbf71; font-weight: 600;">🔑 Личный кабинет</a></div></nav></header>
   <main class="wrap">{notice_html}{body}</main>
   <footer>
     <div class="wrap footer-wrap">
@@ -3884,7 +3884,7 @@ class WebCheckout:
             {ref_banner}
             <div class="notice">Ссылка на подписку придёт на электронную почту и появится на сайте сразу после оплаты</div>
           </div>
-          <img class="hero-img" src="/assets/telegram/welcome.png" alt="SilentConnect">
+          <img class="hero-img" src="/assets/telegram/welcome.webp" alt="SilentConnect">
         </section>
         <section class="section" style="padding-top: 0;">
           <div class="advantage-grid">
@@ -4546,10 +4546,20 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _serve_asset(self, path: list[str]) -> bool:
         if len(path) == 3 and path[0] == "assets" and path[1] == "telegram":
             asset_name = path[2]
-            if asset_name in {"welcome.png", "avatar.png", "telegram_icon.png", "telegram_official.png"}:
+            allowed_assets = {
+                "welcome.png", "avatar.png", "telegram_icon.png", "telegram_official.png",
+                "welcome.webp", "avatar.webp", "bot_menu_hero.webp", "quickstart.webp",
+                "telegram_icon.webp", "telegram_official.webp"
+            }
+            if asset_name in allowed_assets:
                 asset = self.checkout.settings.root_dir / "assets" / "telegram" / asset_name
                 if asset.is_file():
-                    content_type = "image/svg+xml" if asset_name.endswith(".svg") else "image/png"
+                    if asset_name.endswith(".webp"):
+                        content_type = "image/webp"
+                    elif asset_name.endswith(".svg"):
+                        content_type = "image/svg+xml"
+                    else:
+                        content_type = "image/png"
                     body = asset.read_bytes()
                     self._send(HTTPStatus.OK, body, content_type)
                     return True
