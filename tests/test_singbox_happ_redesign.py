@@ -34,6 +34,7 @@ os.environ["PUBLIC_HOST"] = "sub.example.com"
 os.environ["WS443_PUBLIC_HOST"] = "edge.example.com"
 os.environ["FI_STANDBY_HOST"] = "fi.example.com"
 
+from pathlib import Path
 import app as subjson_app
 from vpn_shop.bot import ShopBot
 
@@ -41,15 +42,13 @@ from vpn_shop.bot import ShopBot
 class TestSingboxHappRedesign(unittest.TestCase):
 
     def test_official_singbox_svg_icon(self):
-        """Verify OFFICIAL_SINGBOX_ICON is a valid official base64 SVG data-URI."""
+        """Verify OFFICIAL_SINGBOX_ICON is configured as a local WebP asset with valid file."""
         icon = subjson_app.OFFICIAL_SINGBOX_ICON
-        self.assertTrue(icon.startswith("data:image/svg+xml;base64,"))
-
-        # Decode base64 and verify SVG vector payload
-        b64_data = icon.split(",", 1)[1]
-        raw_bytes = base64.b64decode(b64_data)
-        self.assertTrue(raw_bytes.startswith(b"<svg"))
-        self.assertIn(b"viewBox=\"148 90 728 820\"", raw_bytes)
+        self.assertEqual(icon, "/assets/apps/singbox.webp")
+        asset_file = (Path(subjson_app.__file__).parent / "assets" / "apps" / "singbox.webp").resolve()
+        self.assertTrue(asset_file.is_file(), f"Missing WebP icon: {asset_file}")
+        data = asset_file.read_bytes()
+        self.assertTrue(data.startswith(b"RIFF") and data[8:12] == b"WEBP", "Invalid WebP header")
 
     def test_singbox_legacy_tag_style_backward_compatibility(self):
         """Verify default tag_style remains legacy for backward compatibility."""
