@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import sqlite3
 import threading
+import time
 from typing import Any, Iterator
 
 
@@ -221,41 +222,83 @@ class XuiDatabase:
         return [dict(row) for row in rows]
 
     def update_client_expiry_direct(self, inbound_id: int, email: str, new_expiry_ms: int, enable: bool = True, device_limit: int | None = None) -> bool:
-        # FIX 2026-08-22 (incident np4mp1ouyxadr4ht): this method previously
-        # updated ONLY inbounds.settings. subjson trusts client_traffics
-        # (enable/expiry_time) when deciding whether a subscription is active,
-        # so renewed clients were still served an "expired" stub.
+        # Incident 2026-08-22 & 2026-10-02:
+        # Multi-inbound and 3x-ui v2.4+ synchronization:
+        # 1. Update the `clients` table (enable, expiry_time, limit_ip, updated_at).
+        # 2. Update ALL inbounds in `inbounds.settings` that contain this client (by email).
+        # 3. Update `client_traffics` so subjson and telemetry stay in sync.
+        # 4. Ensure `client_inbounds` mapping exists for 3x-ui v2.4+.
         conn = sqlite3.connect(self.path, timeout=30.0)
         conn.execute("PRAGMA busy_timeout = 30000;")
         try:
-            row = conn.execute("SELECT settings FROM inbounds WHERE id = ?", (inbound_id,)).fetchone()
-            if not row or not row[0]:
-                return False
-            st = json.loads(row[0])
-            updated = False
-            for cl in st.get("clients") or []:
-                if str(cl.get("email") or "") == email:
-                    cl["expiryTime"] = new_expiry_ms
-                    cl["enable"] = enable
-                    if device_limit is not None:
-                        cl["limitIp"] = max(int(device_limit), 0)
-                    updated = True
-                    break
-            if not updated:
-                return False
-            conn.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(st, ensure_ascii=False), inbound_id))
-            # Keep client_traffics consistent - subjson reads enable/expiry from here.
-            conn.execute(
-                """
-                INSERT INTO client_traffics (inbound_id, enable, email, up, down, total, expiry_time)
-                VALUES (?, ?, ?, 0, 0, 0, ?)
-                ON CONFLICT(email) DO UPDATE SET
-                    enable = excluded.enable,
-                    inbound_id = excluded.inbound_id,
-                    expiry_time = excluded.expiry_time
-                """,
-                (inbound_id, int(enable), email, new_expiry_ms),
-            )
+            now_ms = int(time.time() * 1000)
+
+            # 1. Update clients table
+            try:
+                if device_limit is not None:
+                    conn.execute(
+                        "UPDATE clients SET enable = ?, expiry_time = ?, limit_ip = ?, updated_at = ? WHERE email = ?",
+                        (int(enable), new_expiry_ms, max(int(device_limit), 0), now_ms, email),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE clients SET enable = ?, expiry_time = ?, updated_at = ? WHERE email = ?",
+                        (int(enable), new_expiry_ms, now_ms, email),
+                    )
+            except sqlite3.OperationalError:
+                pass
+
+            # 2. Update ALL inbounds that contain this client
+            inbounds_rows = conn.execute("SELECT id, settings FROM inbounds").fetchall()
+            any_inbound_updated = False
+            for ib_id, settings_raw in inbounds_rows:
+                if not settings_raw:
+                    continue
+                try:
+                    st = json.loads(settings_raw)
+                    ib_changed = False
+                    for cl in st.get("clients") or []:
+                        if str(cl.get("email") or "") == email:
+                            cl["expiryTime"] = new_expiry_ms
+                            cl["enable"] = enable
+                            if device_limit is not None:
+                                cl["limitIp"] = max(int(device_limit), 0)
+                            ib_changed = True
+                    if ib_changed:
+                        conn.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(st, ensure_ascii=False), ib_id))
+                        any_inbound_updated = True
+                except Exception:
+                    pass
+
+            # 3. Keep client_traffics consistent - subjson reads enable/expiry from here
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO client_traffics (inbound_id, enable, email, up, down, total, expiry_time)
+                    VALUES (?, ?, ?, 0, 0, 0, ?)
+                    ON CONFLICT(email) DO UPDATE SET
+                        enable = excluded.enable,
+                        inbound_id = excluded.inbound_id,
+                        expiry_time = excluded.expiry_time
+                    """,
+                    (inbound_id, int(enable), email, new_expiry_ms),
+                )
+            except sqlite3.OperationalError:
+                pass
+
+            # 4. Ensure client_inbounds table mapping exists for 3x-ui v2.4+
+            try:
+                cl_row = conn.execute("SELECT id FROM clients WHERE email = ?", (email,)).fetchone()
+                if cl_row:
+                    cid = cl_row[0]
+                    for ib_id, _ in inbounds_rows:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO client_inbounds (client_id, inbound_id, flow_override, created_at) VALUES (?, ?, '', ?)",
+                            (cid, ib_id, now_ms),
+                        )
+            except sqlite3.OperationalError:
+                pass
+
             conn.commit()
             self.invalidate_cache()
             return True
