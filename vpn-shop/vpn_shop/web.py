@@ -3638,6 +3638,7 @@ class WebCheckout:
             <li>Содержимое передаваемого трафика, файлов и личной переписки;</li>
             <li>Временные метки (timestamps) открытия и завершения соединений с конкретными ресурсами.</li>
           </ul>
+          <p class="muted" style="margin-top: 12px;"><strong style="color: #2fbf71;">Техническая реализация:</strong> На всех серверных узлах отключена фиксация журналов доступа (access-логи), а временные системные технические метрики операционной системы автоматически удаляются каждые 48 часов.</p>
 
           <h3 style="color: #fff; font-size: 19px; margin-top: 24px;">2. Состав и цели обработки минимально необходимых сведений</h3>
           <p class="muted">В соответствии со ст. 5 Федерального закона № 152-ФЗ «О персональных данных» обработка ограничивается достижением конкретных, заранее определенных и законных целей предоставления доступа. Сервис обрабатывает исключительно необходимый технический минимум:</p>
@@ -3789,6 +3790,7 @@ class WebCheckout:
           <h3 style="color: #2fbf71; font-size: 20px; margin-top: 24px;">Инфраструктура и технологии:</h3>
           <ul class="muted" style="padding-left: 20px; line-height: 1.8;">
             <li><strong style="color:#fff;">Современное защищенное шифрование:</strong> Наш трафик маскируется под стандартный защищенный протокол веб-сервисов. Для сетевых фильтров ваше подключение выглядит как обычный визит на веб-сайт.</li>
+            <li><strong style="color:#fff;">Приватность сетевого доступа:</strong> На серверных узлах отключена фиксация сетевых маршрутов, DNS и истории посещаемых ресурсов. Временные системные журналы серверов автоматически очищаются каждые 48 часов.</li>
             <li><strong style="color:#fff;">Европейские гигабитные узлы:</strong> Серверы размещены в современных дата-центрах Нидерландов и Финляндии с прямыми магистральными каналами связи и минимальным пингом.</li>
             <li><strong style="color:#fff;">Умная доставка и личный кабинет:</strong> Мгновенная генерация подписки, отправка чеков и ключей на Email, удобное управление через веб-интерфейс и Telegram-бота.</li>
             <li><strong style="color:#fff;">Поддержка любых устройств:</strong> Готовые мастера установки под iOS (Happ, Streisand), Android (Happ, V2RayTun), Windows, macOS, Linux, Android TV и Apple TV.</li>
@@ -4011,6 +4013,17 @@ class WebCheckout:
             <p class="muted">Простые ответы для всех пользователей.</p>
           </div>
           <div style="display: grid; gap: 12px;">
+            <details class="card faq-card" style="padding: 16px 20px; cursor: pointer;">
+              <summary style="font-weight: 700; font-size: 16px; color: #fff; list-style: none; display: flex; justify-content: space-between; align-items: center; font-family: 'Outfit', sans-serif;">
+                Сохраняется ли история посещений и сетевые логи?
+                <span class="faq-arrow">▼</span>
+              </summary>
+              <div class="faq-content">
+                <div class="faq-content-inner">
+                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">Нет. На наших серверах отключена запись истории посещаемых сайтов (access-логи), DNS-запросов и сетевых маршрутов. Мы не сохраняем информацию о ваших действиях в интернете, а временные технические журналы операционной системы автоматически очищаются каждые 48 часов.</p>
+                </div>
+              </div>
+            </details>
             <details class="card faq-card" style="padding: 16px 20px; cursor: pointer;">
               <summary style="font-weight: 700; font-size: 16px; color: #fff; list-style: none; display: flex; justify-content: space-between; align-items: center; font-family: 'Outfit', sans-serif;">
                 Действительно ли трафик безлимитный?
