@@ -4563,6 +4563,19 @@ class RequestHandler(BaseHTTPRequestHandler):
                     body = asset.read_bytes()
                     self._send(HTTPStatus.OK, body, content_type)
                     return True
+        elif len(path) == 3 and path[0] == "assets" and path[1] == "apps":
+            asset_name = path[2]
+            allowed_apps = {
+                "amneziavpn.webp", "amneziawg.webp", "clash.webp", "clash_mi.webp",
+                "happ.webp", "nekobox.webp", "singbox.webp", "streisand.webp",
+                "v2rayn.webp", "v2rayng.webp"
+            }
+            if asset_name in allowed_apps:
+                asset = self.checkout.settings.root_dir / "assets" / "apps" / asset_name
+                if asset.is_file():
+                    body = asset.read_bytes()
+                    self._send(HTTPStatus.OK, body, "image/webp")
+                    return True
         return False
 
     def do_GET(self) -> None:

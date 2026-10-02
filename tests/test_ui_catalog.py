@@ -18,6 +18,8 @@ import re
 import sys
 import unittest
 import urllib.parse
+from http import HTTPStatus
+from pathlib import Path
 from typing import Any, Dict, List
 
 # Ensure repository root is in sys.path
@@ -204,18 +206,34 @@ class TestUICatalogAndLayout(unittest.TestCase):
         # 1. Assert no 404 raw GitHub URL in the codebase or rendered page
         self.assertNotIn("raw.githubusercontent.com/MetaCubeX/ClashMetaForAndroid", html_text)
 
-        # 2. Assert OFFICIAL_CLASH_ICON is a valid base64 image data-URI
-        self.assertTrue(subjson_app.OFFICIAL_CLASH_ICON.startswith("data:image/png;base64,"))
+        # 2. Assert OFFICIAL_CLASH_ICON is a valid WebP asset path
+        self.assertEqual(subjson_app.OFFICIAL_CLASH_ICON, "/assets/apps/clash.webp")
 
-        # 3. Assert all custom icons are authentic original base64 data URIs or official CDNs
-        self.assertTrue(subjson_app.OFFICIAL_V2RAYN_ICON.startswith("data:image/"))
-        self.assertTrue(subjson_app.OFFICIAL_NEKOBOX_ICON.startswith("data:image/png;base64,"))
-        self.assertTrue(subjson_app.OFFICIAL_V2RAYNG_ICON.startswith("data:image/png;base64,"))
-        self.assertTrue(
-            subjson_app.OFFICIAL_SINGBOX_ICON.startswith("data:image/svg+xml;base64,")
-            or subjson_app.OFFICIAL_SINGBOX_ICON.startswith("data:image/png;base64,")
-            or subjson_app.OFFICIAL_SINGBOX_ICON.startswith("https://")
-        )
+        # 3. Assert all custom icons are authentic local WebP assets
+        self.assertEqual(subjson_app.OFFICIAL_V2RAYN_ICON, "/assets/apps/v2rayn.webp")
+        self.assertEqual(subjson_app.OFFICIAL_NEKOBOX_ICON, "/assets/apps/nekobox.webp")
+        self.assertEqual(subjson_app.OFFICIAL_V2RAYNG_ICON, "/assets/apps/v2rayng.webp")
+        self.assertEqual(subjson_app.OFFICIAL_SINGBOX_ICON, "/assets/apps/singbox.webp")
+        self.assertEqual(subjson_app.OFFICIAL_HAPP_ICON, "/assets/apps/happ.webp")
+        self.assertEqual(subjson_app.OFFICIAL_STREISAND_ICON, "/assets/apps/streisand.webp")
+        self.assertEqual(subjson_app.OFFICIAL_CLASH_MI_ICON, "/assets/apps/clash_mi.webp")
+
+        # Verify all asset files exist on disk with valid WebP signatures
+        for icon_path in [
+            subjson_app.OFFICIAL_CLASH_ICON,
+            subjson_app.OFFICIAL_V2RAYN_ICON,
+            subjson_app.OFFICIAL_NEKOBOX_ICON,
+            subjson_app.OFFICIAL_V2RAYNG_ICON,
+            subjson_app.OFFICIAL_SINGBOX_ICON,
+            subjson_app.OFFICIAL_HAPP_ICON,
+            subjson_app.OFFICIAL_STREISAND_ICON,
+            subjson_app.OFFICIAL_CLASH_MI_ICON,
+        ]:
+            fname = icon_path.split("/")[-1]
+            asset_file = (Path(subjson_app.__file__).parent / "assets" / "apps" / fname).resolve()
+            self.assertTrue(asset_file.is_file(), f"Missing WebP asset: {asset_file}")
+            raw = asset_file.read_bytes()
+            self.assertTrue(raw.startswith(b"RIFF") and raw[8:12] == b"WEBP", f"Invalid WebP signature for {fname}")
 
     # =========================================================================
     # R3: Mobile Header Height <= 56-64px & Single-Row Flexbox (vpn-shop/web.py)
@@ -597,6 +615,64 @@ class TestUICatalogAndLayout(unittest.TestCase):
                 meta = json.loads(row[0])
                 self.assertEqual(meta.get("notice_dismissed_status"), "delivered")
                 self.assertIn("notice_dismissed_at", meta)
+
+    def test_subjson_static_asset_serving(self):
+        """Verify subjson-service _serve_static_asset serves WebP app icons and branding with correct headers."""
+        class MockServerHandler:
+            def __init__(self):
+                self.status = None
+                self.headers = {}
+                self.body = bytearray()
+
+            def send_response(self, code):
+                self.status = code
+
+            def send_header(self, key, value):
+                self.headers[key] = value
+
+            def end_headers(self):
+                pass
+
+            def _send_json(self, status, payload, include_body):
+                self.status = status
+                self.body = json.dumps(payload).encode("utf-8")
+
+            @property
+            def wfile(self):
+                class WFile:
+                    def __init__(self, target):
+                        self.target = target
+                    def write(self, data):
+                        self.target.extend(data)
+                return WFile(self.body)
+
+        # 1. Test serving app icon
+        h = MockServerHandler()
+        served = subjson_app.RequestHandler._serve_static_asset(h, ["assets", "apps", "happ.webp"], include_body=True)
+        self.assertTrue(served)
+        self.assertEqual(h.status, HTTPStatus.OK)
+        self.assertEqual(h.headers.get("Content-Type"), "image/webp")
+        self.assertIn("public, max-age=604800", h.headers.get("Cache-Control", ""))
+        self.assertTrue(bytes(h.body).startswith(b"RIFF") and bytes(h.body)[8:12] == b"WEBP")
+
+        # 2. Test serving branding avatar
+        h = MockServerHandler()
+        served = subjson_app.RequestHandler._serve_static_asset(h, ["assets", "branding", "avatar.webp"], include_body=True)
+        self.assertTrue(served)
+        self.assertEqual(h.status, HTTPStatus.OK)
+        self.assertEqual(h.headers.get("Content-Type"), "image/webp")
+
+        # 3. Test directory traversal rejection
+        h = MockServerHandler()
+        served = subjson_app.RequestHandler._serve_static_asset(h, ["assets", "..", "app.py"], include_body=True)
+        self.assertTrue(served)
+        self.assertEqual(h.status, HTTPStatus.FORBIDDEN)
+
+        # 4. Test nonexistent asset
+        h = MockServerHandler()
+        served = subjson_app.RequestHandler._serve_static_asset(h, ["assets", "apps", "nonexistent.webp"], include_body=True)
+        self.assertTrue(served)
+        self.assertEqual(h.status, HTTPStatus.NOT_FOUND)
 
 
 if __name__ == "__main__":
