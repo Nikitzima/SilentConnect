@@ -7526,9 +7526,18 @@ def setup_page_html(
 
     const detected = detectPlatform();
     platform.value = detected;
+    const detectedText = platformLabels[detected] || detected;
     const detectedLabel = document.getElementById("detected-platform-label");
     if (detectedLabel) {
-      detectedLabel.textContent = platformLabels[detected] || detected;
+      detectedLabel.textContent = detectedText;
+    }
+    const detectedWlLabel = document.getElementById("detected-wl-platform-label");
+    if (detectedWlLabel) {
+      detectedWlLabel.textContent = detectedText;
+    }
+    const detectedAwgLabel = document.getElementById("detected-awg-platform-label");
+    if (detectedAwgLabel) {
+      detectedAwgLabel.textContent = detectedText;
     }
     platform.addEventListener("change", () => selectPlatform(platform.value));
     document.getElementById("copy-sub").addEventListener("click", (event) => copySubscription(event.currentTarget));
@@ -7918,11 +7927,6 @@ def setup_page_html(
         });
         track.appendChild(btn);
       });
-      const lbl = document.getElementById("detected-wl-platform-label");
-      if (lbl) {
-        const found = wlPlatformsData.find(x => x.id === currentWlPlatform);
-        lbl.textContent = found ? found.label : currentWlPlatform;
-      }
     }
 
     function selectWlPlatform(id) {
@@ -8376,11 +8380,6 @@ def setup_page_html(
         });
         track.appendChild(btn);
       });
-      const lbl = document.getElementById("detected-awg-platform-label");
-      if (lbl) {
-        const found = awgPlatformsData.find(x => x.id === currentAwgPlatform);
-        lbl.textContent = found ? found.label : currentAwgPlatform;
-      }
     }
 
     function selectAwgPlatform(id) {
