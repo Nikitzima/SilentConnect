@@ -8190,7 +8190,6 @@ def setup_page_html(
       currentWlPlatform = id;
       renderWlPlatformTabs();
       renderWlSteps();
-      updateWlHeroCard();
     }
 
     window.copyTextVal = async function(btn, text) {
@@ -8218,45 +8217,6 @@ def setup_page_html(
         btn.textContent = orig;
         btn.style.color = "";
       }, 1600);
-    };
-
-    window.downloadWlBat = function() {
-      const data = _openfluxData[currentWlCountry] || _openfluxData['nl'];
-      const u = (data && data.primary_url) ? data.primary_url : '';
-      const lines = [
-        '@echo off',
-        'chcp 65001 >nul',
-        'title SilentConnect OpenFlux (' + data.name + ')',
-        'echo ========================================================',
-        'echo   SilentConnect - Rejim Belyh Spiskov (OpenFlux)',
-        'echo   Server: ' + data.name,
-        'echo ========================================================',
-        'echo.',
-        'echo Zapusk tunnelem cherez Yandex Volga...',
-        'echo Dlya ostanovki zakroyte eto okno ili nazhmite Ctrl+C.',
-        'echo.',
-        'set EXE=',
-        'if exist "%~dp0openflux-windows-amd64.exe" set EXE="%~dp0openflux-windows-amd64.exe"',
-        'if exist "%~dp0openflux.exe" set EXE="%~dp0openflux.exe"',
-        'if not defined EXE (',
-        '    echo [VNIMANIE] Fayl openflux-windows-amd64.exe ne nayden v etoy papke!',
-        '    echo Pozhaluysta, polozhite etot bat-fayl v papku so skachannym openflux-windows-amd64.exe',
-        '    echo (obychno eto papka Zagruzki).',
-        '    echo.',
-        '    pause',
-        '    exit /b 1',
-        ')',
-        '%EXE% --role=client --transport=vyandex --url="' + u + '"',
-        'pause'
-      ];
-      const batContent = lines.join(String.fromCharCode(13, 10));
-      const blob = new Blob([batContent], { type: 'application/x-bat' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'start-openflux-' + currentWlCountry + '.bat';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
     };
 
     const FLAG_SVGS = {
@@ -8324,6 +8284,7 @@ def setup_page_html(
 
         startWlTimer(_wlSlot.pending_remaining_seconds || 300);
       }
+      renderWlSteps();
     }
 
     function startWlTimer(seconds) {
@@ -8561,9 +8522,9 @@ def setup_page_html(
       const container = document.getElementById("wl-steps-container");
       if (!container) return;
 
-      const data = _openfluxData[currentWlCountry] || _openfluxData["nl"];
-      const flagSvg = FLAG_SVGS[currentWlCountry] || FLAG_SVGS["nl"];
       const isSubActive = __IS_SUB_ACTIVE__;
+      const isSlotActive = (_wlSlot && _wlSlot.status === "active");
+      const activeLink = (_wlSlot && _wlSlot.active_link) ? _wlSlot.active_link : "";
 
       const inactiveWarningHtml = `
         <div class="step" data-num="2">
@@ -8577,6 +8538,20 @@ def setup_page_html(
         </div>
       `;
 
+      const uninitGuidanceHtml = `
+        <div class="step" data-num="2">
+          <h3>2. Получение ключа подключения</h3>
+          <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 10px; padding: 14px; margin: 12px 0;">
+            <div style="font-weight: 600; color: #34d399; margin-bottom: 6px;">⚡ Требуется активация слота</div>
+            <div style="font-size: 13px; color: #cbd5e1; line-height: 1.45;">
+              Для вас будет бесплатно выделен персональный документ в Облаке Mail.ru. Нажмите зелёную кнопку <strong>«⚡ Активировать подключение (OpenFlux)»</strong> в карточке слота выше, чтобы получить ключ подключения и QR-код.
+            </div>
+          </div>
+        </div>
+      `;
+
+      const notReadyHtml = !isSubActive ? inactiveWarningHtml : (!isSlotActive ? uninitGuidanceHtml : "");
+
       if (currentWlPlatform === "ios") {
         container.innerHTML = `
           <div class="step" data-num="1">
@@ -8587,18 +8562,18 @@ def setup_page_html(
               <a class="button secondary" href="https://apps.apple.com/app/testflight/id899247664" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/appstore.webp" alt=""> TestFlight в App Store</a>
             </div>
           </div>
-          ${!isSubActive ? inactiveWarningHtml : `
+          ${notReadyHtml ? notReadyHtml : `
           <div class="step" data-num="2">
             <h3>2. Добавление подключения</h3>
             <p>Добавьте узел в OpenFlux по скопированной ссылке или через QR-код:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <button type="button" class="button success" onclick="copyWlLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ссылку для OpenFlux</span></button>
-              <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
+              <button type="button" class="button success" onclick="copyWlActiveLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ для OpenFlux</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal('active')"><span>📱</span> <span>Показать QR-код</span></button>
               <a class="button secondary btn-wl-disabled" href="javascript:void(0)" onclick="event.preventDefault(); return false;" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;" title="Прямой переход openflux:// в разработке в TestFlight"><span>⚡</span> <span>1-Click импорт</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span></a>
             </div>
             <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
-              ℹ️ <strong>Особенность iOS:</strong> кнопка прямого перехода пока не активна (в текущей бета-версии TestFlight схема <code>openflux://</code> ещё не зарегистрирована разработчиками, Safari пишет <em>«адрес недействителен»</em>).<br>
-              👉 <strong>Попробуйте другим методом:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ссылку для OpenFlux»</strong> выше, откройте приложение OpenFlux на iPhone и нажмите <strong>«Вставить из буфера»</strong> (или отсканируйте <strong>«📱 QR-код»</strong>).
+              ℹ️ <strong>Особенность iOS:</strong> кнопка прямого перехода пока не активна (в бета-версии TestFlight схема <code>openflux://</code> в разработке).<br>
+              👉 <strong>Способ подключения:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ключ для OpenFlux»</strong> выше, откройте приложение OpenFlux на iPhone и нажмите <strong>«Вставить из буфера»</strong> (или отсканируйте <strong>«📱 QR-код»</strong>).
             </div>
           </div>
           <div class="step" data-num="3">
@@ -8606,8 +8581,8 @@ def setup_page_html(
             <p>В приложении OpenFlux нажмите синюю кнопку <strong>«Start VPN»</strong> ⚡. При первом запуске подтвердите добавление VPN-конфигурации в диалоговом окне iOS (Face ID / код-пароль).</p>
           </div>
           `}
-          <div class="step done" data-num="${isSubActive ? 4 : 3}">
-            <h3>${isSubActive ? 4 : 3}. Соединение активно</h3>
+          <div class="step done" data-num="${isSlotActive ? 4 : 3}">
+            <h3>${isSlotActive ? 4 : 3}. Соединение активно</h3>
             <p>Статус в OpenFlux сменится на <strong>Connected</strong> (зеленый индикатор), а в строке состояния iPhone появится значок <strong>[VPN]</strong>.<br>
             <span style="font-size: 12px; color: var(--muted); display: block; margin-top: 6px;">💡 Сверните OpenFlux — теперь весь трафик iPhone защищенно направляется через доверенный канал Белых Списков!</span></p>
           </div>
@@ -8622,14 +8597,14 @@ def setup_page_html(
             </div>
             <p style="font-size: 12.5px; color: var(--muted); margin-top: 4px;">Установите APK (при необходимости разрешите установку из браузера в настройках безопасности Android).</p>
           </div>
-          ${!isSubActive ? inactiveWarningHtml : `
+          ${notReadyHtml ? notReadyHtml : `
           <div class="step" data-num="2">
             <h3>2. Добавление подключения</h3>
             <p>Нажмите кнопку для быстрого импорта или отсканируйте QR-код:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <button type="button" class="button secondary" onclick="copyWlLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ссылку</span></button>
-              <button type="button" class="button secondary" onclick="openWlQrModal()" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📱</span> <span>Показать QR-код</span></button>
-              <a class="button success" href="${data.link}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;" title="Прямое подключение в OpenFlux на Android"><span>⚡</span> <span>1-Click импорт</span></a>
+              <a class="button success" href="${activeLink}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;" title="Прямое подключение в OpenFlux на Android"><span>⚡</span> <span>1-Click импорт</span></a>
+              <button type="button" class="button secondary" onclick="copyWlActiveLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal('active')" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📱</span> <span>Показать QR-код</span></button>
             </div>
             <p style="font-size: 12.5px; color: var(--muted); margin-top: 6px;">💡 Браузер автоматически откроет приложение OpenFlux и добавит конфигурацию узла.</p>
           </div>
@@ -8638,8 +8613,8 @@ def setup_page_html(
             <p>Нажмите большую центральную кнопку <strong>«Tap to connect»</strong> и разрешите системный запрос Android на подключение VPN.</p>
           </div>
           `}
-          <div class="step done" data-num="${isSubActive ? 4 : 3}">
-            <h3>${isSubActive ? 4 : 3}. Соединение активно</h3>
+          <div class="step done" data-num="${isSlotActive ? 4 : 3}">
+            <h3>${isSlotActive ? 4 : 3}. Соединение активно</h3>
             <p>Статус изменится на <strong>Connected</strong> (зеленый кружок), а в шторке уведомлений Android появится значок ключа VPN.<br>
             <span style="font-size: 12px; color: var(--muted); display: block; margin-top: 6px;">💡 Сверните OpenFlux — канал Белых Списков активен для всех приложений смартфона!</span></p>
           </div>
@@ -8654,39 +8629,25 @@ def setup_page_html(
             </div>
             <p style="font-size: 12.5px; color: var(--muted); margin-top: 4px;">Поддерживает Windows 10 и 11 (64-bit). Доступны установщик (.msi / .exe) и портативная версия без установки (.zip).</p>
           </div>
-          ${!isSubActive ? inactiveWarningHtml : `
+          ${notReadyHtml ? notReadyHtml : `
           <div class="step" data-num="2">
             <h3>2. Добавление подключения</h3>
             <p>Скопируйте ссылку конфигурации для OpenFlux Desktop или используйте QR-код:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <button type="button" class="button success" onclick="copyWlLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ссылку для OpenFlux</span></button>
-              <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
-              <a class="button secondary btn-wl-disabled" href="javascript:void(0)" onclick="event.preventDefault(); return false;" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;" title="Системная регистрация openflux:// на Windows в разработке"><span>⚡</span> <span>1-Click импорт</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span></a>
+              <button type="button" class="button success" onclick="copyWlActiveLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ для OpenFlux</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal('active')"><span>📱</span> <span>Показать QR-код</span></button>
             </div>
             <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
-              ℹ️ <strong>Особенность Windows:</strong> прямой 1-Click запуск пока не активен (ассоциация <code>openflux://</code> в разработке).<br>
-              👉 <strong>Попробуйте другим методом:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ссылку»</strong>, откройте OpenFlux Desktop и нажмите <strong>«Профили» → «Импорт»</strong> (Ctrl+I). Включите тумблер <strong>«Весь трафик»</strong> (Wintun).
+              ℹ️ <strong>Инструкция для Windows:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ключ для OpenFlux»</strong>, откройте OpenFlux Desktop и нажмите <strong>«Профили» → «Импорт»</strong> (или <code>Ctrl+I</code>). Вставьте ключ и включите тумблер <strong>«Весь трафик»</strong> (Wintun).
             </div>
-
-            <details style="margin-top: 14px; background: rgba(0,0,0,0.3); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px;">
-              <summary style="cursor: pointer; font-size: 13px; font-weight: 500; color: #94a3b8; user-select: none;">💻 Для терминала и скриптов (CLI и .bat запуск)</summary>
-              <div style="margin-top: 10px;">
-                <p style="font-size: 12.5px; color: #cbd5e1; margin-bottom: 8px;">Для быстрого запуска через готовый .bat скрипт или команду консоли:</p>
-                <div style="margin-bottom: 10px; display: flex; gap: 8px; flex-wrap: wrap;">
-                  <button type="button" class="button secondary" style="font-size: 12px; padding: 6px 12px;" onclick="downloadWlBat()">⚡ Скачать .bat запуск (${data.name})</button>
-                  <button type="button" class="button secondary" style="font-size: 12px; padding: 6px 12px;" onclick="copyTextVal(this, '.\\\\openflux-windows-amd64.exe --role=client --transport=vyandex --url=&quot;' + ('${data.primary_url}') + '&quot;')">📋 Скопировать команду CLI</button>
-                </div>
-                <pre style="background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 10px 12px; font-size: 12px; color: #38bdf8; overflow-x: auto; margin: 0;">.\\openflux-windows-amd64.exe --role=client --transport=vyandex --url="${data.primary_url}"</pre>
-              </div>
-            </details>
           </div>
           <div class="step" data-num="3">
             <h3>3. Активация соединения</h3>
-            <p>В приложении OpenFlux Desktop нажмите кнопку включения туннеля (или оставьте фоновый процесс CLI активным).</p>
+            <p>В приложении OpenFlux Desktop нажмите кнопку включения туннеля.</p>
           </div>
           `}
-          <div class="step done" data-num="${isSubActive ? 4 : 3}">
-            <h3>${isSubActive ? 4 : 3}. Соединение активно</h3>
+          <div class="step done" data-num="${isSlotActive ? 4 : 3}">
+            <h3>${isSlotActive ? 4 : 3}. Соединение активно</h3>
             <p>Туннель Белых Списков успешно подключен на Windows!</p>
           </div>
         `;
@@ -8701,18 +8662,16 @@ def setup_page_html(
               <a class="button secondary" href="https://github.com/p1neappleXpress/OpenFluxDesktop/releases/latest" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (.dmg)</a>
             </div>
           </div>
-          ${!isSubActive ? inactiveWarningHtml : `
+          ${notReadyHtml ? notReadyHtml : `
           <div class="step" data-num="2">
             <h3>2. Добавление подключения</h3>
             <p>Скопируйте ссылку конфигурации или отсканируйте QR-код для добавления в OpenFlux:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <button type="button" class="button success" onclick="copyWlLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ссылку для OpenFlux</span></button>
-              <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
-              <a class="button secondary btn-wl-disabled" href="javascript:void(0)" onclick="event.preventDefault(); return false;" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;" title="Системный обработчик openflux:// на macOS в разработке"><span>⚡</span> <span>1-Click импорт</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span></a>
+              <button type="button" class="button success" onclick="copyWlActiveLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ для OpenFlux</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal('active')"><span>📱</span> <span>Показать QR-код</span></button>
             </div>
             <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
-              ℹ️ <strong>Особенность macOS:</strong> прямой 1-Click переход пока не активен (в разработке).<br>
-              👉 <strong>Попробуйте другим методом:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ссылку»</strong> выше, откройте OpenFlux и вставьте ссылку в меню импорта (или отсканируйте <strong>«📱 Показать QR-код»</strong>).
+              ℹ️ <strong>Инструкция для macOS:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ключ»</strong> выше, откройте OpenFlux и вставьте ссылку в меню импорта (или отсканируйте <strong>«📱 Показать QR-код»</strong>).
             </div>
           </div>
           <div class="step" data-num="3">
@@ -8720,8 +8679,8 @@ def setup_page_html(
             <p>Нажмите <strong>«Connect»</strong> / <strong>«Start VPN»</strong> в OpenFlux и подтвердите системное расширение macOS.</p>
           </div>
           `}
-          <div class="step done" data-num="${isSubActive ? 4 : 3}">
-            <h3>${isSubActive ? 4 : 3}. Соединение активно</h3>
+          <div class="step done" data-num="${isSlotActive ? 4 : 3}">
+            <h3>${isSlotActive ? 4 : 3}. Соединение активно</h3>
             <p>Туннель Белых Списков успешно запущен на macOS!</p>
           </div>
         `;
@@ -8735,39 +8694,25 @@ def setup_page_html(
             </div>
             <p style="font-size: 12.5px; color: var(--muted); margin-top: 4px;">Поддерживает дистрибутивы Ubuntu/Debian, Fedora, Arch, Manjaro или любые другие через универсальный AppImage.</p>
           </div>
-          ${!isSubActive ? inactiveWarningHtml : `
+          ${notReadyHtml ? notReadyHtml : `
           <div class="step" data-num="2">
             <h3>2. Добавление подключения</h3>
-            <p>Скопируйте ссылку конфигурации для OpenFlux Desktop или запустите процесс в консоли:</p>
+            <p>Скопируйте ссылку конфигурации для OpenFlux Desktop:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <button type="button" class="button success" onclick="copyWlLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ссылку для OpenFlux</span></button>
-              <button type="button" class="button secondary" onclick="openWlQrModal()">📱 Показать QR-код</button>
-              <a class="button secondary btn-wl-disabled" href="javascript:void(0)" onclick="event.preventDefault(); return false;" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;" title="Ассоциация x-scheme-handler/openflux в разработке"><span>⚡</span> <span>1-Click импорт</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span></a>
+              <button type="button" class="button success" onclick="copyWlActiveLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ для OpenFlux</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal('active')"><span>📱</span> <span>Показать QR-код</span></button>
             </div>
             <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
-              ℹ️ <strong>Особенность Linux:</strong> прямой 1-Click запуск пока не активен (обработчик схемы в разработке).<br>
-              👉 <strong>Попробуйте другим методом:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ссылку»</strong> для добавления в OpenFlux Desktop (или воспользуйтесь CLI-командой ниже).
+              ℹ️ <strong>Инструкция для Linux:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ключ»</strong> для добавления в OpenFlux Desktop.
             </div>
-
-            <details style="margin-top: 14px; background: rgba(0,0,0,0.3); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px;">
-              <summary style="cursor: pointer; font-size: 13px; font-weight: 500; color: #94a3b8; user-select: none;">💻 Для серверов и терминала (CLI без графики)</summary>
-              <div style="margin-top: 10px;">
-                <p style="font-size: 12.5px; color: #cbd5e1; margin-bottom: 8px;">Для безголовых серверов или скриптовой автоматизации запустите бинарник <code>openflux</code>:</p>
-                <div style="margin-bottom: 8px;">
-                  <button type="button" class="button secondary" style="font-size: 12px; padding: 6px 12px;" onclick="copyTextVal(this, 'openflux -client -transport vyandex -url &quot;' + ('${data.primary_url}') + '&quot;')">📋 Скопировать команду CLI</button>
-                </div>
-                <pre style="background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 10px 12px; font-size: 12px; color: #38bdf8; overflow-x: auto; margin: 0;">chmod +x openflux-linux-amd64
-./openflux-linux-amd64 -client -transport vyandex -url "${data.primary_url}"</pre>
-              </div>
-            </details>
           </div>
           <div class="step" data-num="3">
             <h3>3. Активация соединения</h3>
-            <p>В приложении OpenFlux Desktop нажмите кнопку <strong>«Connect»</strong> (или оставьте фоновый процесс CLI активным).</p>
+            <p>В приложении OpenFlux Desktop нажмите кнопку <strong>«Connect»</strong>.</p>
           </div>
           `}
-          <div class="step done" data-num="${isSubActive ? 4 : 3}">
-            <h3>${isSubActive ? 4 : 3}. Соединение активно</h3>
+          <div class="step done" data-num="${isSlotActive ? 4 : 3}">
+            <h3>${isSlotActive ? 4 : 3}. Соединение активно</h3>
             <p>Туннель Белых Списков успешно подключен на Linux!</p>
           </div>
         `;
@@ -8965,7 +8910,6 @@ def setup_page_html(
 
     renderPlatformTabs();
     renderApps();
-    updateWlHeroCard();
     renderWlPlatformTabs();
     renderWlSteps();
     renderAwgPlatformTabs();
