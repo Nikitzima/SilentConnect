@@ -8298,8 +8298,13 @@ def setup_page_html(
         box.textContent = "⏱️ " + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
       }
       tick();
+      let tickCount = 0;
       _wlTimerInterval = setInterval(function() {
         sec--;
+        tickCount++;
+        if (tickCount % 5 === 0) {
+          fetchWlState();
+        }
         if (sec <= 0) {
           stopWlTimer();
           fetchWlState();
@@ -8378,8 +8383,11 @@ def setup_page_html(
         btn.style.cssText = "min-height: 48px; padding: 10px 16px; font-size: 14px; font-weight: 600; display: flex; align-items: center; justify-content: space-between; width: 100%; border-radius: 10px; cursor: pointer;";
         btn.innerHTML = '<span>' + s.flag + ' ' + s.name + '</span> <span>Выбрать →</span>';
         btn.onclick = function() {
-          closeWlPickerModal();
-          startWlServerSwitch(s.code);
+          const allBtns = list.querySelectorAll("button");
+          allBtns.forEach(function(b) { b.disabled = true; b.style.opacity = "0.5"; });
+          btn.style.opacity = "1";
+          btn.innerHTML = '<span>' + s.flag + ' ' + s.name + '</span> <span>⏳ Подготовка канала...</span>';
+          startWlServerSwitch(s.code, btn);
         };
         list.appendChild(btn);
       });
@@ -8392,7 +8400,7 @@ def setup_page_html(
       if (modal) modal.style.display = "none";
     };
 
-    window.startWlServerSwitch = async function(targetCode) {
+    window.startWlServerSwitch = async function(targetCode, triggeringBtn) {
       try {
         const res = await fetch("/sub/openflux/__SUB_ID__/switch/prepare", {
           method: "POST",
@@ -8400,13 +8408,25 @@ def setup_page_html(
           body: JSON.stringify({ target: targetCode })
         });
         const data = await res.json();
+        closeWlPickerModal();
         if (data.ok && data.slot) {
           _wlSlot = data.slot;
           renderWlSlot();
         } else {
+          await fetchWlState();
+          if (_wlSlot && _wlSlot.status === "migrating") {
+            renderWlSlot();
+            return;
+          }
           alert("Не удалось запустить смену сервера: " + (data.error || "Ошибка"));
         }
       } catch (err) {
+        closeWlPickerModal();
+        await fetchWlState();
+        if (_wlSlot && _wlSlot.status === "migrating") {
+          renderWlSlot();
+          return;
+        }
         alert("Ошибка сети при подготовке сервера: " + err);
       }
     };
@@ -8523,8 +8543,19 @@ def setup_page_html(
       if (!container) return;
 
       const isSubActive = __IS_SUB_ACTIVE__;
-      const isSlotActive = (_wlSlot && _wlSlot.status === "active");
-      const activeLink = (_wlSlot && _wlSlot.active_link) ? _wlSlot.active_link : "";
+      const isSlotActive = (_wlSlot && (_wlSlot.status === "active" || _wlSlot.status === "migrating"));
+      const isMigrating = (_wlSlot && _wlSlot.status === "migrating");
+      const activeLink = (isMigrating && _wlSlot.pending_link) ? _wlSlot.pending_link : ((_wlSlot && _wlSlot.active_link) ? _wlSlot.active_link : "");
+      const copyFn = isMigrating ? "copyWlPendingLink(this)" : "copyWlActiveLink(this)";
+      const qrTarget = isMigrating ? "pending" : "active";
+      const srvName = isMigrating ? (_wlSlot.pending_server_name || "Польша") : (_wlSlot.active_server_name || "Нидерланды");
+      const srvFlag = isMigrating ? (_wlSlot.pending_server_flag || "🇵🇱") : (_wlSlot.active_server_flag || "🇳🇱");
+
+      const migratingBannerHtml = isMigrating ? `
+        <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
+          ⏳ <strong>Идёт смена сервера:</strong> ключ и QR-код ниже уже настроены на узел (${srvFlag} ${srvName}). Добавьте его в приложение OpenFlux, а затем подтвердите смену в карточке выше.
+        </div>
+      ` : "";
 
       const inactiveWarningHtml = `
         <div class="step" data-num="2">
@@ -8565,10 +8596,11 @@ def setup_page_html(
           ${notReadyHtml ? notReadyHtml : `
           <div class="step" data-num="2">
             <h3>2. Добавление подключения</h3>
+            ${migratingBannerHtml}
             <p>Добавьте узел в OpenFlux по скопированной ссылке или через QR-код:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <button type="button" class="button success" onclick="copyWlActiveLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ для OpenFlux</span></button>
-              <button type="button" class="button secondary" onclick="openWlQrModal('active')"><span>📱</span> <span>Показать QR-код</span></button>
+              <button type="button" class="button success" onclick="${copyFn}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ для OpenFlux</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal('${qrTarget}')"><span>📱</span> <span>Показать QR-код</span></button>
               <a class="button secondary btn-wl-disabled" href="javascript:void(0)" onclick="event.preventDefault(); return false;" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;" title="Прямой переход openflux:// в разработке в TestFlight"><span>⚡</span> <span>1-Click импорт</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span></a>
             </div>
             <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
@@ -8600,11 +8632,12 @@ def setup_page_html(
           ${notReadyHtml ? notReadyHtml : `
           <div class="step" data-num="2">
             <h3>2. Добавление подключения</h3>
+            ${migratingBannerHtml}
             <p>Нажмите кнопку для быстрого импорта или отсканируйте QR-код:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
               <a class="button success" href="${activeLink}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;" title="Прямое подключение в OpenFlux на Android"><span>⚡</span> <span>1-Click импорт</span></a>
-              <button type="button" class="button secondary" onclick="copyWlActiveLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ</span></button>
-              <button type="button" class="button secondary" onclick="openWlQrModal('active')" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📱</span> <span>Показать QR-код</span></button>
+              <button type="button" class="button secondary" onclick="${copyFn}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal('${qrTarget}')" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📱</span> <span>Показать QR-код</span></button>
             </div>
             <p style="font-size: 12.5px; color: var(--muted); margin-top: 6px;">💡 Браузер автоматически откроет приложение OpenFlux и добавит конфигурацию узла.</p>
           </div>
@@ -8632,10 +8665,11 @@ def setup_page_html(
           ${notReadyHtml ? notReadyHtml : `
           <div class="step" data-num="2">
             <h3>2. Добавление подключения</h3>
+            ${migratingBannerHtml}
             <p>Скопируйте ссылку конфигурации для OpenFlux Desktop или используйте QR-код:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <button type="button" class="button success" onclick="copyWlActiveLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ для OpenFlux</span></button>
-              <button type="button" class="button secondary" onclick="openWlQrModal('active')"><span>📱</span> <span>Показать QR-код</span></button>
+              <button type="button" class="button success" onclick="${copyFn}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ для OpenFlux</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal('${qrTarget}')"><span>📱</span> <span>Показать QR-код</span></button>
             </div>
             <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
               ℹ️ <strong>Инструкция для Windows:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ключ для OpenFlux»</strong>, откройте OpenFlux Desktop и нажмите <strong>«Профили» → «Импорт»</strong> (или <code>Ctrl+I</code>). Вставьте ключ и включите тумблер <strong>«Весь трафик»</strong> (Wintun).
@@ -8665,10 +8699,11 @@ def setup_page_html(
           ${notReadyHtml ? notReadyHtml : `
           <div class="step" data-num="2">
             <h3>2. Добавление подключения</h3>
+            ${migratingBannerHtml}
             <p>Скопируйте ссылку конфигурации или отсканируйте QR-код для добавления в OpenFlux:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <button type="button" class="button success" onclick="copyWlActiveLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ для OpenFlux</span></button>
-              <button type="button" class="button secondary" onclick="openWlQrModal('active')"><span>📱</span> <span>Показать QR-код</span></button>
+              <button type="button" class="button success" onclick="${copyFn}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ для OpenFlux</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal('${qrTarget}')"><span>📱</span> <span>Показать QR-код</span></button>
             </div>
             <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
               ℹ️ <strong>Инструкция для macOS:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ключ»</strong> выше, откройте OpenFlux и вставьте ссылку в меню импорта (или отсканируйте <strong>«📱 Показать QR-код»</strong>).
@@ -8697,10 +8732,11 @@ def setup_page_html(
           ${notReadyHtml ? notReadyHtml : `
           <div class="step" data-num="2">
             <h3>2. Добавление подключения</h3>
+            ${migratingBannerHtml}
             <p>Скопируйте ссылку конфигурации для OpenFlux Desktop:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <button type="button" class="button success" onclick="copyWlActiveLink(this)" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ для OpenFlux</span></button>
-              <button type="button" class="button secondary" onclick="openWlQrModal('active')"><span>📱</span> <span>Показать QR-код</span></button>
+              <button type="button" class="button success" onclick="${copyFn}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ для OpenFlux</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal('${qrTarget}')"><span>📱</span> <span>Показать QR-код</span></button>
             </div>
             <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
               ℹ️ <strong>Инструкция для Linux:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ключ»</strong> для добавления в OpenFlux Desktop.
@@ -10954,9 +10990,12 @@ class RequestHandler(BaseHTTPRequestHandler):
             fallback_url=fallback_url,
         ).items():
             self.send_header(name, value)
-        self.end_headers()
-        if include_body:
-            self.wfile.write(body)
+        try:
+            self.end_headers()
+            if include_body:
+                self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            LOGGER.debug("Client disconnected before receiving response")
 
     def _send_text(self, status: HTTPStatus, body_text: str, include_body: bool) -> None:
         body = body_text.encode("utf-8")

@@ -154,6 +154,13 @@ class TestOpenFluxEndpoints(unittest.TestCase):
                 self.assertEqual(body["slot"]["pending_server"], "pl")
                 self.assertTrue(body["slot"]["pending_link"].startswith("openflux://v1/"))
 
+                # 4b. Idempotent test: prepare switch to PL again when already migrating to PL
+                status, body2, _ = self.request("POST", "/sub/openflux/user123/switch/prepare", {"target": "pl"})
+                self.assertEqual(status, HTTPStatus.OK)
+                self.assertTrue(body2["ok"])
+                self.assertEqual(body2["slot"]["status"], "migrating")
+                self.assertEqual(body2["slot"]["pending_server"], "pl")
+
             # 5. QR code for pending slot
             status, qr_bytes, headers = self.request("GET", "/sub/openflux/user123/qr?target=pending")
             self.assertEqual(status, HTTPStatus.OK)

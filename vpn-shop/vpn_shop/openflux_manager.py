@@ -369,7 +369,7 @@ def activate_openflux_slot(conn: sqlite3.Connection, profile_id: str) -> dict[st
     4. Updates slot to 'active'.
     """
     slot = get_or_create_openflux_slot(conn, profile_id)
-    if slot["status"] == "active" and slot.get("active_doc_url"):
+    if slot["status"] in ("active", "migrating") and slot.get("active_doc_url"):
         return slot
 
     target_srv = choose_least_loaded_server(conn)
@@ -420,15 +420,24 @@ def start_server_switch(conn: sqlite3.Connection, profile_id: str, target_server
     - Starts 5-minute countdown.
     """
     slot = get_or_create_openflux_slot(conn, profile_id)
-    if slot["status"] != "active":
-        raise ValueError("Слот должен быть активен для запуска смены сервера")
-
     target_srv = (target_server or "").lower().strip()
     if target_srv not in SERVERS:
         raise ValueError(f"Недопустимый целевой сервер: {target_server}")
 
     if target_srv == slot.get("active_server"):
-        raise ValueError(f"Сервер {target_srv.upper()} уже активен")
+        raise ValueError(f"Сервер {target_srv.upper()} уже выбран текущим")
+
+    # If slot is already migrating:
+    if slot.get("status") == "migrating":
+        # If target server is the same as already pending, return current slot (idempotent)
+        if slot.get("pending_server") == target_srv:
+            return slot
+        # If migrating to a different server, cleanly cancel old pending migration first
+        cancel_server_switch(conn, profile_id)
+        slot = get_or_create_openflux_slot(conn, profile_id)
+
+    if slot.get("status") != "active":
+        raise ValueError("Слот должен быть активен для запуска смены сервера")
 
     clean_uid = re.sub(r"[^\w\-]", "", profile_id)
     pending_doc_name = f"{target_srv.upper()}_{clean_uid}_pending.docx"
