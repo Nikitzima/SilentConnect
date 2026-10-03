@@ -678,9 +678,9 @@ def render_subjson_awg_container(subscription_id: str, support_url: str) -> str:
             <h3>1. Установка клиента Amnezia VPN</h3>
             <p>Скачайте официальное бесплатное приложение с открытым исходным кодом для вашей операционной системы:</p>
             <div class="buttons" style="flex-wrap: wrap; gap: 8px;">
-              <a class="button secondary" href="https://apps.apple.com/app/amneziavpn/id1600529900" target="_blank" rel="noopener">🍏 App Store (iOS)</a>
-              <a class="button secondary" href="https://play.google.com/store/apps/details?id=org.amnezia.vpn" target="_blank" rel="noopener">🤖 Google Play (Android)</a>
-              <a class="button secondary" href="https://github.com/amnezia-vpn/amnezia-client/releases" target="_blank" rel="noopener">📦 Windows / macOS / Linux / APK</a>
+              <a class="button secondary" href="https://apps.apple.com/app/amneziavpn/id1600529900" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/appstore.webp" alt=""> App Store</a>
+              <a class="button secondary" href="https://play.google.com/store/apps/details?id=org.amnezia.vpn" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/googleplay.webp" alt=""> Google Play</a>
+              <a class="button secondary" href="https://github.com/amnezia-vpn/amnezia-client/releases" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (.apk / .exe / .dmg)</a>
             </div>
           </div>
           <div class="step" data-num="2">
@@ -4898,18 +4898,26 @@ def import_page_html(
         extra_html += f'<a class="button secondary" href="{html.escape(url, quote=True)}">{html.escape(label)}</a>'
     install_urls = install_urls or {}
     install_labels = {
-        "ios": "Установить для iPhone / iPad",
-        "android": "Установить для Android",
-        "android_apk": "Скачать APK для Huawei / без Google Play",
-        "windows": "Скачать для Windows",
-        "fallback": "Открыть страницу загрузки",
+        "ios": "App Store",
+        "android": "Google Play",
+        "android_apk": "GitHub Релизы (.apk)",
+        "windows": "Официальный сайт (.exe)",
+        "fallback": "Страница загрузки",
+    }
+    install_icons = {
+        "ios": "appstore",
+        "android": "googleplay",
+        "android_apk": "github",
+        "windows": "globe",
+        "fallback": "globe",
     }
     install_html = ""
     install_keys = ("ios", "android", "android_apk", "windows", "fallback")
     for key in install_keys:
         url = install_urls.get(key)
         if url:
-            install_html += f'<a class="button install" href="{html.escape(url, quote=True)}">{html.escape(install_labels[key])}</a>'
+            icon_name = install_icons.get(key, "globe")
+            install_html += f'<a class="button install" href="{html.escape(url, quote=True)}"><img class="btn-store-icon" src="/assets/stores/{icon_name}.webp" alt=""> {html.escape(install_labels[key])}</a>'
     if install_html:
         install_html = f'<p class="hint">Если приложение не установлено, откройте подходящую страницу загрузки.</p>{install_html}'
     auto_script = ""
@@ -4969,6 +4977,7 @@ def import_page_html(
     button.secondary {{ background: #2d5f88; }}
     .button.secondary {{ background: #2d5f88; }}
     .button.install {{ background: #4b5563; }}
+    .btn-store-icon {{ width: 18px; height: 18px; object-fit: contain; vertical-align: -3px; margin-right: 8px; display: inline-block; }}
     textarea {{ width: 100%; min-height: 118px; box-sizing: border-box; border-radius: 8px; border: 1px solid #364149; padding: 12px; color: #eef2f3; background: #151b20; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }}
     .hint {{ font-size: 14px; color: #9fb0b8; }}
   </style>
@@ -5325,19 +5334,19 @@ def setup_page_html(
             "importUrl": happ_link,
             "description": "Флагманский клиент с поддержкой протоколов REALITY и XHTTP. Обеспечивает максимальную скорость и незаметность подключения на любых устройствах.",
             "downloads": {
-                "ios": [{"label": "App Store", "url": HAPP_IOS_URL}],
+                "ios": [{"label": "App Store", "url": HAPP_IOS_URL, "icon": "appstore"}],
                 "android": [
-                    {"label": "Google Play", "url": HAPP_ANDROID_URL},
-                    {"label": "APK для Huawei / Android", "url": HAPP_ANDROID_APK_URL},
+                    {"label": "Google Play", "url": HAPP_ANDROID_URL, "icon": "googleplay"},
+                    {"label": "GitHub Релизы (.apk)", "url": HAPP_ANDROID_APK_URL, "icon": "github"},
                 ],
-                "windows": [{"label": "Скачать для Windows", "url": HAPP_DOWNLOAD_URL}],
-                "macos": [{"label": "Скачать для macOS", "url": HAPP_DOWNLOAD_URL}],
-                "linux": [{"label": "Скачать для Linux", "url": HAPP_DOWNLOAD_URL}],
+                "windows": [{"label": "Официальный сайт (.exe)", "url": HAPP_DOWNLOAD_URL, "icon": "globe"}],
+                "macos": [{"label": "Официальный сайт (.dmg)", "url": HAPP_DOWNLOAD_URL, "icon": "globe"}],
+                "linux": [{"label": "Официальный сайт (.deb / AppImage)", "url": HAPP_DOWNLOAD_URL, "icon": "globe"}],
                 "androidtv": [
-                    {"label": "Google Play", "url": HAPP_ANDROID_URL},
-                    {"label": "APK для Android TV", "url": HAPP_ANDROID_APK_URL},
+                    {"label": "Google Play", "url": HAPP_ANDROID_URL, "icon": "googleplay"},
+                    {"label": "GitHub Релизы (.apk)", "url": HAPP_ANDROID_APK_URL, "icon": "github"},
                 ],
-                "appletv": [{"label": "App Store", "url": HAPP_IOS_URL}],
+                "appletv": [{"label": "App Store", "url": HAPP_IOS_URL, "icon": "appstore"}],
             },
         },
         {
@@ -5350,11 +5359,11 @@ def setup_page_html(
             "importUrl": fallback_links["clash"],
             "description": "Мощный клиент с поддержкой умного авто-тестирования узлов и мгновенным переключением при сбоях.",
             "downloads": {
-                "windows": [{"label": "Clash Verge Rev (Windows)", "url": CLASH_DOWNLOAD_URL}],
-                "macos": [{"label": "Clash Verge Rev (macOS)", "url": CLASH_DOWNLOAD_URL}],
-                "android": [{"label": "Clash Meta Android", "url": "https://github.com/MetaCubeX/ClashMetaForAndroid/releases"}],
-                "linux": [{"label": "Clash Verge Rev (Linux)", "url": CLASH_DOWNLOAD_URL}],
-                "ios": [{"label": "Clash Mi (App Store)", "url": CLASH_MI_IOS_URL}],
+                "windows": [{"label": "GitHub Релизы (.exe)", "url": CLASH_DOWNLOAD_URL, "icon": "github"}],
+                "macos": [{"label": "GitHub Релизы (.dmg)", "url": CLASH_DOWNLOAD_URL, "icon": "github"}],
+                "android": [{"label": "GitHub Релизы (.apk)", "url": "https://github.com/MetaCubeX/ClashMetaForAndroid/releases", "icon": "github"}],
+                "linux": [{"label": "GitHub Релизы (.deb / AppImage)", "url": CLASH_DOWNLOAD_URL, "icon": "github"}],
+                "ios": [{"label": "App Store", "url": CLASH_MI_IOS_URL, "icon": "appstore"}],
             },
         },
         {
@@ -5366,7 +5375,7 @@ def setup_page_html(
             "importUrl": fallback_links["v2rayn"],
             "description": "Популярный клиент для Windows с поддержкой Xray-ядра, автоматическим обновлением подписок и гибкой маршрутизацией.",
             "downloads": {
-                "windows": [{"label": "Скачать v2rayN (GitHub)", "url": V2RAYN_DOWNLOAD_URL}],
+                "windows": [{"label": "GitHub Релизы (.zip)", "url": V2RAYN_DOWNLOAD_URL, "icon": "github"}],
             },
         },
         {
@@ -5378,7 +5387,7 @@ def setup_page_html(
             "importUrl": fallback_links["nekobox"],
             "description": "Мощный и функциональный клиент для Android с поддержкой прямых JSON и Sing-box конфигураций.",
             "downloads": {
-                "android": [{"label": "Скачать NekoBox (GitHub)", "url": NEKOBOX_DOWNLOAD_URL}],
+                "android": [{"label": "GitHub Релизы (.apk)", "url": NEKOBOX_DOWNLOAD_URL, "icon": "github"}],
             },
         },
         {
@@ -5390,7 +5399,7 @@ def setup_page_html(
             "importUrl": fallback_links["v2rayng"],
             "description": "Классический проверенный клиент для Android для прямого импорта VLESS-конфигураций.",
             "downloads": {
-                "android": [{"label": "Скачать v2rayNG (GitHub)", "url": V2RAYNG_DOWNLOAD_URL}],
+                "android": [{"label": "GitHub Релизы (.apk)", "url": V2RAYNG_DOWNLOAD_URL, "icon": "github"}],
             },
         },
         {
@@ -5402,8 +5411,8 @@ def setup_page_html(
             "importUrl": fallback_links["streisand"],
             "description": "Легкий и быстрый open-source клиент, идеально оптимизированный под экосистемы iOS и macOS без расхода аккумулятора.",
             "downloads": {
-                "ios": [{"label": "App Store", "url": STREISAND_IOS_URL}],
-                "macos": [{"label": "App Store (macOS)", "url": STREISAND_MACOS_URL}],
+                "ios": [{"label": "App Store", "url": STREISAND_IOS_URL, "icon": "appstore"}],
+                "macos": [{"label": "Mac App Store", "url": STREISAND_MACOS_URL, "icon": "appstore"}],
             },
         },
         {
@@ -5415,11 +5424,11 @@ def setup_page_html(
             "importUrl": fallback_links["singbox"],
             "description": "Универсальный сетевой клиент нового поколения с максимальной производительностью и нативной поддержкой Sing-box JSON.",
             "downloads": {
-                "ios": [{"label": "sing-box MT (App Store)", "url": SINGBOX_IOS_URL}],
-                "android": [{"label": "GitHub Releases", "url": SINGBOX_DOWNLOAD_URL}],
-                "windows": [{"label": "GitHub Releases", "url": SINGBOX_DOWNLOAD_URL}],
-                "macos": [{"label": "GitHub Releases", "url": SINGBOX_DOWNLOAD_URL}],
-                "linux": [{"label": "GitHub Releases", "url": SINGBOX_DOWNLOAD_URL}],
+                "ios": [{"label": "App Store", "url": SINGBOX_IOS_URL, "icon": "appstore"}],
+                "android": [{"label": "GitHub Релизы (.apk)", "url": SINGBOX_DOWNLOAD_URL, "icon": "github"}],
+                "windows": [{"label": "GitHub Релизы (.zip)", "url": SINGBOX_DOWNLOAD_URL, "icon": "github"}],
+                "macos": [{"label": "GitHub Релизы (.dmg / .zip)", "url": SINGBOX_DOWNLOAD_URL, "icon": "github"}],
+                "linux": [{"label": "GitHub Релизы (.tar.gz)", "url": SINGBOX_DOWNLOAD_URL, "icon": "github"}],
             },
         },
     ]
@@ -6430,6 +6439,13 @@ def setup_page_html(
     }
     .button.secondary:hover, button.secondary:hover { background:rgba(255,255,255,0.12); border-color:rgba(255,255,255,0.25); }
     .button.success { background:linear-gradient(135deg,var(--green),#24a05d); color:#000; }
+    .btn-store-icon {
+      width: 18px;
+      height: 18px;
+      object-fit: contain;
+      flex-shrink: 0;
+      display: inline-block;
+    }
     .btn-wl-disabled, .button.btn-wl-disabled, button.btn-wl-disabled {
       cursor: not-allowed !important;
       color: #94a3b8 !important;
@@ -7207,7 +7223,26 @@ def setup_page_html(
         link.href = item.url;
         link.target = "_blank";
         link.rel = "noopener";
-        link.textContent = item.label;
+
+        let iconName = item.icon;
+        if (!iconName) {
+          if (item.url.includes("apple.com") && item.url.includes("testflight")) iconName = "testflight";
+          else if (item.url.includes("apps.apple.com")) iconName = "appstore";
+          else if (item.url.includes("play.google.com")) iconName = "googleplay";
+          else if (item.url.includes("github.com")) iconName = "github";
+          else iconName = "globe";
+        }
+
+        const img = document.createElement("img");
+        img.className = "btn-store-icon";
+        img.src = "/assets/stores/" + iconName + ".webp";
+        img.alt = "";
+        link.appendChild(img);
+
+        const textSpan = document.createElement("span");
+        textSpan.textContent = item.label;
+        link.appendChild(textSpan);
+
         downloadButtons.appendChild(link);
       });
       if (!downloadButtons.children.length) {
@@ -8143,8 +8178,8 @@ def setup_page_html(
             <h3>1. Установка OpenFlux через TestFlight</h3>
             <p>Нажмите кнопку ниже, чтобы присоединиться к официальному бета-тестированию OpenFlux для iOS в Apple TestFlight:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <a class="button success" href="https://testflight.apple.com/join/BwnAcdus" target="_blank" rel="noopener">🍏 1. Присоединиться в TestFlight</a>
-              <a class="button secondary" href="https://apps.apple.com/app/testflight/id899247664" target="_blank" rel="noopener">📥 TestFlight в App Store</a>
+              <a class="button success" href="https://testflight.apple.com/join/BwnAcdus" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/testflight.webp" alt=""> 1. Присоединиться в TestFlight</a>
+              <a class="button secondary" href="https://apps.apple.com/app/testflight/id899247664" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/appstore.webp" alt=""> TestFlight в App Store</a>
             </div>
           </div>
           ${!isSubActive ? inactiveWarningHtml : `
@@ -8178,7 +8213,7 @@ def setup_page_html(
             <h3>1. Установка OpenFlux для Android</h3>
             <p>Скачайте официальный APK-файл OpenFlux с GitHub Releases:</p>
             <div class="buttons" style="margin: 12px 0;">
-              <a class="button success" href="https://github.com/p1neappleXpress/OpenFluxAndroid/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux APK (GitHub)</a>
+              <a class="button success" href="https://github.com/p1neappleXpress/OpenFluxAndroid/releases/latest" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (.apk)</a>
             </div>
             <p style="font-size: 12.5px; color: var(--muted); margin-top: 4px;">Установите APK (при необходимости разрешите установку из браузера в настройках безопасности Android).</p>
           </div>
@@ -8210,7 +8245,7 @@ def setup_page_html(
             <h3>1. Установка OpenFlux Desktop для Windows</h3>
             <p>Скачайте официальный дистрибутив OpenFlux Desktop (.msi / .exe / portable .zip) с GitHub Releases:</p>
             <div class="buttons" style="margin: 12px 0;">
-              <a class="button success" href="https://github.com/p1neappleXpress/OpenFluxDesktop/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux Desktop (.exe / .zip)</a>
+              <a class="button success" href="https://github.com/p1neappleXpress/OpenFluxDesktop/releases/latest" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (.exe / .zip)</a>
             </div>
             <p style="font-size: 12.5px; color: var(--muted); margin-top: 4px;">Поддерживает Windows 10 и 11 (64-bit). Доступны установщик (.msi / .exe) и портативная версия без установки (.zip).</p>
           </div>
@@ -8256,9 +8291,9 @@ def setup_page_html(
             <h3>1. Установка OpenFlux для macOS</h3>
             <p>Установите OpenFlux через TestFlight или скачайте сборку для macOS (Apple Silicon / Intel):</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <a class="button success" href="https://testflight.apple.com/join/BwnAcdus" target="_blank" rel="noopener">🍏 1. Присоединиться в TestFlight</a>
-              <a class="button secondary" href="https://apps.apple.com/app/testflight/id899247664" target="_blank" rel="noopener">📥 TestFlight в Mac App Store</a>
-              <a class="button secondary" href="https://github.com/p1neappleXpress/OpenFluxDesktop/releases/latest" target="_blank" rel="noopener">📥 Релизы OpenFlux Desktop (GitHub)</a>
+              <a class="button success" href="https://testflight.apple.com/join/BwnAcdus" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/testflight.webp" alt=""> 1. Присоединиться в TestFlight</a>
+              <a class="button secondary" href="https://apps.apple.com/app/testflight/id899247664" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/appstore.webp" alt=""> TestFlight в Mac App Store</a>
+              <a class="button secondary" href="https://github.com/p1neappleXpress/OpenFluxDesktop/releases/latest" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (.dmg)</a>
             </div>
           </div>
           ${!isSubActive ? inactiveWarningHtml : `
@@ -8291,7 +8326,7 @@ def setup_page_html(
             <h3>1. Установка OpenFlux Desktop для Linux</h3>
             <p>Скачайте официальный дистрибутив OpenFlux Desktop (AppImage / DEB / RPM / CLI) с GitHub Releases:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <a class="button success" href="https://github.com/p1neappleXpress/OpenFluxDesktop/releases/latest" target="_blank" rel="noopener">📥 Скачать OpenFlux Desktop (.AppImage / .deb)</a>
+              <a class="button success" href="https://github.com/p1neappleXpress/OpenFluxDesktop/releases/latest" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (.deb / AppImage)</a>
             </div>
             <p style="font-size: 12.5px; color: var(--muted); margin-top: 4px;">Поддерживает дистрибутивы Ubuntu/Debian, Fedora, Arch, Manjaro или любые другие через универсальный AppImage.</p>
           </div>
@@ -8439,37 +8474,37 @@ def setup_page_html(
 
       let downloadBtnsHtml = "";
       if (currentAwgPlatform === "androidtv") {
-        downloadBtnsHtml = '<a class="button secondary" href="https://play.google.com/store/apps/details?id=org.amnezia.vpn" target="_blank" rel="noopener">📺 Google Play (Android TV)</a>' +
-          '<a class="button secondary" href="https://github.com/amnezia-vpn/amnezia-client/releases" target="_blank" rel="noopener">📦 Скачать APK (GitHub)</a>';
+        downloadBtnsHtml = '<a class="button secondary" href="https://play.google.com/store/apps/details?id=org.amnezia.vpn" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/googleplay.webp" alt=""> Google Play</a>' +
+          '<a class="button secondary" href="https://github.com/amnezia-vpn/amnezia-client/releases" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (.apk)</a>';
       } else if (isAwgApp) {
         if (currentAwgPlatform === "ios") {
-          downloadBtnsHtml = '<a class="button secondary" href="https://apps.apple.com/app/amneziawg/id6478942365" target="_blank" rel="noopener">🍏 App Store (iOS)</a>';
+          downloadBtnsHtml = '<a class="button secondary" href="https://apps.apple.com/app/amneziawg/id6478942365" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/appstore.webp" alt=""> App Store</a>';
         } else if (currentAwgPlatform === "android") {
-          downloadBtnsHtml = '<a class="button secondary" href="https://play.google.com/store/apps/details?id=org.amnezia.awg" target="_blank" rel="noopener">🤖 Google Play (Android)</a>' +
-            '<a class="button secondary" href="https://github.com/amnezia-vpn/amneziawg-android/releases" target="_blank" rel="noopener">📦 Прямой APK (для Huawei и без Google Play)</a>';
+          downloadBtnsHtml = '<a class="button secondary" href="https://play.google.com/store/apps/details?id=org.amnezia.awg" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/googleplay.webp" alt=""> Google Play</a>' +
+            '<a class="button secondary" href="https://github.com/amnezia-vpn/amneziawg-android/releases" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (.apk)</a>';
         } else if (currentAwgPlatform === "windows") {
-          downloadBtnsHtml = '<a class="button secondary" href="https://github.com/amnezia-vpn/amneziawg-windows-client/releases" target="_blank" rel="noopener">💻 Скачать AmneziaWG для Windows (.msi)</a>';
+          downloadBtnsHtml = '<a class="button secondary" href="https://github.com/amnezia-vpn/amneziawg-windows-client/releases" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (.msi / .zip)</a>';
         } else if (currentAwgPlatform === "macos") {
-          downloadBtnsHtml = '<a class="button secondary" href="https://apps.apple.com/app/amneziawg/id6478942365" target="_blank" rel="noopener">🍏 Mac App Store</a>' +
-            '<a class="button secondary" href="https://docs.amnezia.org/ru/documentation/instructions/use-amneziawg-app/" target="_blank" rel="noopener">📖 Официальная инструкция Amnezia</a>';
+          downloadBtnsHtml = '<a class="button secondary" href="https://apps.apple.com/app/amneziawg/id6478942365" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/appstore.webp" alt=""> Mac App Store</a>' +
+            '<a class="button secondary" href="https://docs.amnezia.org/ru/documentation/instructions/use-amneziawg-app/" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/globe.webp" alt=""> Официальная инструкция</a>';
         } else if (currentAwgPlatform === "linux") {
-          downloadBtnsHtml = '<a class="button secondary" href="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module" target="_blank" rel="noopener">🐧 Модуль ядра Linux (GitHub)</a>' +
-            '<a class="button secondary" href="https://github.com/amnezia-vpn/amneziawg-go" target="_blank" rel="noopener">📦 AmneziaWG Go</a>';
+          downloadBtnsHtml = '<a class="button secondary" href="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (Kernel Module)</a>' +
+            '<a class="button secondary" href="https://github.com/amnezia-vpn/amneziawg-go" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (Go CLI)</a>';
         }
       } else {
         if (currentAwgPlatform === "ios") {
-          downloadBtnsHtml = '<a class="button secondary" href="https://apps.apple.com/app/amneziavpn/id1600529900" target="_blank" rel="noopener">🍏 App Store (iOS)</a>';
+          downloadBtnsHtml = '<a class="button secondary" href="https://apps.apple.com/app/amneziavpn/id1600529900" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/appstore.webp" alt=""> App Store</a>';
         } else if (currentAwgPlatform === "android") {
-          downloadBtnsHtml = '<a class="button secondary" href="https://play.google.com/store/apps/details?id=org.amnezia.vpn" target="_blank" rel="noopener">🤖 Google Play (Android)</a>' +
-            '<a class="button secondary" href="https://github.com/amnezia-vpn/amnezia-client/releases" target="_blank" rel="noopener">📦 Прямой APK (для Huawei и без Google Play)</a>';
+          downloadBtnsHtml = '<a class="button secondary" href="https://play.google.com/store/apps/details?id=org.amnezia.vpn" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/googleplay.webp" alt=""> Google Play</a>' +
+            '<a class="button secondary" href="https://github.com/amnezia-vpn/amnezia-client/releases" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (.apk)</a>';
         } else if (currentAwgPlatform === "windows") {
-          downloadBtnsHtml = '<a class="button secondary" href="https://amnezia.org/ru/downloads" target="_blank" rel="noopener">💻 Скачать на официальном сайте (.exe)</a>' +
-            '<a class="button secondary" href="https://github.com/amnezia-vpn/amnezia-client/releases" target="_blank" rel="noopener">📦 GitHub Релизы</a>';
+          downloadBtnsHtml = '<a class="button secondary" href="https://amnezia.org/ru/downloads" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/globe.webp" alt=""> Официальный сайт (.exe)</a>' +
+            '<a class="button secondary" href="https://github.com/amnezia-vpn/amnezia-client/releases" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (.exe)</a>';
         } else if (currentAwgPlatform === "macos") {
-          downloadBtnsHtml = '<a class="button secondary" href="https://apps.apple.com/app/amneziavpn/id1600529900" target="_blank" rel="noopener">🍏 Mac App Store</a>' +
-            '<a class="button secondary" href="https://amnezia.org/ru/downloads" target="_blank" rel="noopener">🌐 Официальный сайт (.dmg)</a>';
+          downloadBtnsHtml = '<a class="button secondary" href="https://apps.apple.com/app/amneziavpn/id1600529900" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/appstore.webp" alt=""> Mac App Store</a>' +
+            '<a class="button secondary" href="https://amnezia.org/ru/downloads" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/globe.webp" alt=""> Официальный сайт (.dmg)</a>';
         } else if (currentAwgPlatform === "linux") {
-          downloadBtnsHtml = '<a class="button secondary" href="https://amnezia.org/ru/downloads" target="_blank" rel="noopener">🐧 Скачать для Linux (.deb / AppImage)</a>';
+          downloadBtnsHtml = '<a class="button secondary" href="https://amnezia.org/ru/downloads" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/globe.webp" alt=""> Официальный сайт (.deb / AppImage)</a>';
         }
       }
 
@@ -8534,6 +8569,14 @@ def setup_page_html(
     window.updateRenewPrice();
     initNoticeState();
     window.startOrderStatusPolling();
+
+    try {
+      var urlParams = new URLSearchParams(window.location.search);
+      var modeParam = urlParams.get("mode") || (window.location.hash ? window.location.hash.replace("#", "") : "");
+      if (modeParam && ["standard", "awg", "whitelist"].indexOf(modeParam) !== -1) {
+        window.setConnectionMode(modeParam);
+      }
+    } catch(e) {}
 
     document.addEventListener("keydown", function(e) {
       if (e.key === "Escape") {
