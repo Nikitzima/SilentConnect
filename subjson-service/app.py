@@ -629,6 +629,94 @@ def build_openflux_v1_link(country: str, sub_id: str, label: str = "") -> tuple[
     return link, primary_url, (backup_url or primary_url)
 
 
+def get_openflux_slot_state_dict(sub_id: str) -> dict[str, Any]:
+    try:
+        from vpn_shop import openflux_manager
+        db_path = find_store_db_path()
+        if not db_path or not Path(db_path).exists():
+            return {"ok": False, "error": "db_not_found"}
+        conn = sqlite3.connect(db_path, timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        try:
+            openflux_manager.cleanup_expired_migrations(conn)
+            slot = openflux_manager.get_or_create_openflux_slot(conn, sub_id)
+        finally:
+            conn.close()
+
+        status = slot.get("status") or "uninitialized"
+        active_srv = (slot.get("active_server") or "nl").lower()
+        active_doc_url = slot.get("active_doc_url") or ""
+        active_link = ""
+        if status in {"active", "migrating"} and active_doc_url:
+            active_link = openflux_manager.build_openflux_stream_link(active_doc_url, active_srv)
+
+        pending_srv = (slot.get("pending_server") or "").lower() or None
+        pending_doc_url = slot.get("pending_doc_url") or ""
+        pending_link = ""
+        pending_remaining = 0
+        if status == "migrating" and pending_srv and pending_doc_url:
+            pending_link = openflux_manager.build_openflux_stream_link(pending_doc_url, pending_srv)
+            started_at = int(slot.get("pending_started_at") or 0)
+            elapsed = int(time.time()) - started_at
+            pending_remaining = max(0, openflux_manager.MIGRATION_TIMEOUT_SECONDS - elapsed)
+
+        srv_info = openflux_manager.SERVERS
+        active_info = srv_info.get(active_srv, srv_info["nl"])
+        pending_info = srv_info.get(pending_srv, {}) if pending_srv else {}
+
+        return {
+            "ok": True,
+            "slot": {
+                "profile_public_id": sub_id,
+                "status": status,
+                "active_server": active_srv,
+                "active_server_name": active_info.get("name", "Нидерланды"),
+                "active_server_flag": active_info.get("flag", "🇳🇱"),
+                "active_link": active_link,
+                "pending_server": pending_srv,
+                "pending_server_name": pending_info.get("name", "") if pending_info else "",
+                "pending_server_flag": pending_info.get("flag", "") if pending_info else "",
+                "pending_link": pending_link,
+                "pending_started_at": slot.get("pending_started_at"),
+                "pending_remaining_seconds": pending_remaining,
+            }
+        }
+    except Exception as exc:
+        LOGGER.exception("get_openflux_slot_state_dict error: %s", exc)
+        return {"ok": False, "error": str(exc)}
+
+
+_openflux_watchdog_started = False
+
+def _start_openflux_watchdog() -> None:
+    global _openflux_watchdog_started
+    if _openflux_watchdog_started:
+        return
+    _openflux_watchdog_started = True
+
+    def _loop() -> None:
+        while True:
+            try:
+                time.sleep(30)
+                db_path = find_store_db_path()
+                if db_path and Path(db_path).exists():
+                    conn = sqlite3.connect(db_path, timeout=10.0)
+                    conn.row_factory = sqlite3.Row
+                    try:
+                        from vpn_shop import openflux_manager
+                        openflux_manager.cleanup_expired_migrations(conn)
+                    finally:
+                        conn.close()
+            except Exception as e:
+                LOGGER.debug("OpenFlux watchdog tick error: %s", e)
+
+    import threading
+    t = threading.Thread(target=_loop, daemon=True, name="OpenFluxWatchdog")
+    t.start()
+
+_start_openflux_watchdog()
+
+
 def render_subjson_awg_container(subscription_id: str, support_url: str) -> str:
     try:
         wc = get_shop_checkout()
@@ -5501,6 +5589,23 @@ def setup_page_html(
     }
     openflux_data_json = json.dumps(openflux_data, ensure_ascii=False)
 
+    oflux_resp = get_openflux_slot_state_dict(subscription_id)
+    oflux_slot_data = oflux_resp.get("slot") or {
+        "profile_public_id": subscription_id,
+        "status": "uninitialized",
+        "active_server": "nl",
+        "active_server_name": "Нидерланды",
+        "active_server_flag": "🇳🇱",
+        "active_link": "",
+        "pending_server": None,
+        "pending_server_name": "",
+        "pending_server_flag": "",
+        "pending_link": "",
+        "pending_started_at": None,
+        "pending_remaining_seconds": 0,
+    }
+    openflux_slot_json = json.dumps(oflux_slot_data, ensure_ascii=False)
+
     template = """<!doctype html>
 <html lang="ru">
 <head>
@@ -6846,67 +6951,114 @@ def setup_page_html(
       </div>
       </div><!-- /standard-mode-container -->
 
-      <!-- Контейнер 2: Режим Белых Списков (OpenFlux) -->
+      <!-- Контейнер 2: Режим Белых Списков (OpenFlux 0.3.0) -->
       <div id="whitelist-mode-container" style="display: none;">
         <div class="whitelist-info-card" style="background: rgba(234, 179, 8, 0.08); border: 1px solid rgba(234, 179, 8, 0.25); border-radius: 14px; padding: 14px 18px; margin-bottom: 20px;">
           <div style="display: flex; align-items: flex-start; gap: 12px;">
             <span style="font-size: 24px; line-height: 1;">🛡️</span>
             <div>
               <div style="font-size: 14.5px; font-weight: 700; color: #facc15; margin-bottom: 4px;">
-                Специальный режим «Белых Списков» (OpenFlux)
+                Специальный режим «Белых Списков» (OpenFlux Stream)
               </div>
               <p style="margin: 0 0 8px 0; font-size: 13px; color: #d1d5db; line-height: 1.45;">
-                Канал предназначен для непрерывной связи и стабильного доступа в интернет в режиме Белых Списков. Сетевой трафик передается в защищенной сессии совместного редактирования <strong>Яндекс Документов</strong> и направляется через наши серверы в Нидерландах, Польше и Финляндии.
+                Канал предназначен для непрерывной связи и стабильного доступа в интернет в режиме строгих Белых Списков. Сетевой трафик передается в защищенной сессии совместного редактирования документов и направляется через наши серверы в Нидерландах, Польше и Финляндии.
               </p>
               <div style="display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--green); font-weight: 600;">
-                <span>💡</span> <span>Без ограничений по устройствам: запускайте на любых ваших ПК и смартфонах (скорость канала до 2 Мбит/с).</span>
+                <span>💡</span> <span>Персональный документ: выделенный канал с поддержкой отправки картинок и файлов (скорость до 3 Мбит/с).</span>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- Карточка быстрого подключения к OpenFlux -->
-        <div class="wl-hero-card" style="background: linear-gradient(135deg, rgba(234, 179, 8, 0.08) 0%, rgba(20, 35, 28, 0.6) 100%); border: 1px solid rgba(234, 179, 8, 0.28); border-radius: 16px; padding: 18px 20px; margin-bottom: 24px; box-shadow: 0 12px 32px rgba(0,0,0,0.3);">
-          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 14px;">
-            <div style="display: flex; align-items: center; gap: 10px;">
-              <span style="font-size: 20px;">⚡</span>
-              <div>
-                <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #fff;">Быстрое добавление узла в OpenFlux</h3>
-                <span style="font-size: 12.5px; color: var(--muted);">Выберите сервер и нажмите для мгновенного импорта или покажите QR-код</span>
-              </div>
+        <!-- Карточка персонального слота Белых Списков -->
+        <div class="awg-slot-card" id="wl-slot-card" style="margin-bottom: 24px; border: 1px solid rgba(234, 179, 8, 0.35); box-shadow: 0 10px 30px rgba(0,0,0,0.35);">
+          <div class="awg-slot-header">
+            <div class="awg-slot-name-box">
+              <span style="font-size: 18px;">🛡️</span>
+              <span class="awg-slot-name">Персональный канал «Белые списки»</span>
             </div>
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <span style="font-size: 13px; color: var(--muted); font-weight: 500;">Сервер:</span>
-              <div class="wl-country-tabs" role="tablist" aria-label="Выбор страны OpenFlux">
-                <button type="button" class="wl-country-tab active" id="wl-tab-nl" onclick="onWlCountryChange('nl')">
-                  <svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="5.33" fill="#AE1C28"/><rect y="5.33" width="24" height="5.33" fill="#FFFFFF"/><rect y="10.66" width="24" height="5.34" fill="#21468B"/></svg>
-                  <span>Нидерланды</span>
-                </button>
-                <button type="button" class="wl-country-tab" id="wl-tab-pl" onclick="onWlCountryChange('pl')">
-                  <svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="8" fill="#FFFFFF"/><rect y="8" width="24" height="8" fill="#DC143C"/></svg>
-                  <span>Польша</span>
-                </button>
-                <button type="button" class="wl-country-tab" id="wl-tab-fi" onclick="onWlCountryChange('fi')">
-                  <svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="16" fill="#FFFFFF"/><rect x="6.5" width="3.5" height="16" fill="#002F6C"/><rect y="6.25" width="24" height="3.5" fill="#002F6C"/></svg>
-                  <span>Финляндия</span>
-                </button>
-              </div>
+            <div id="wl-slot-badge-container">
+              <!-- Injected dynamically -->
             </div>
           </div>
 
-          <div id="wl-hero-actions" style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
-            <button type="button" class="button success" id="wl-copy-trigger" onclick="copyWlLink(this)" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 6px;">
-              <span>📋</span> <span>Скопировать ссылку</span>
+          <!-- Секция 1: Не активирован -->
+          <div id="wl-sec-uninitialized" style="display: none; padding-top: 10px;">
+            <p style="font-size: 13px; color: #d1d5db; line-height: 1.5; margin: 0 0 16px 0;">
+              Выделенный слот готов к работе. Нажмите кнопку ниже: наш умный балансировщик автоматически выберет наименее загруженный сервер и создаст защищённый рабочий документ.
+            </p>
+            <button type="button" class="button success" id="wl-btn-activate-main" onclick="activateWlSlot()" style="min-height: 48px; width: 100%; justify-content: center; font-size: 14.5px; font-weight: 700; display: inline-flex; align-items: center; gap: 8px;">
+              <span>⚡</span> <span>Активировать подключение (OpenFlux)</span>
             </button>
-            <button type="button" class="button secondary" id="wl-qr-trigger" onclick="openWlQrModal()" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 6px;">
-              <span>📱</span> <span>Показать QR-код</span>
-            </button>
-            <a id="wl-hero-cta" class="button secondary btn-wl-disabled" href="javascript:void(0)" onclick="event.preventDefault(); return false;" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 8px; text-decoration: none;" title="Прямой 1-Click запуск в разработке для этой платформы">
-              <span>⚡</span> <span id="wl-cta-flag" style="display: none;"><svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="5.33" fill="#AE1C28"/><rect y="5.33" width="24" height="5.33" fill="#FFFFFF"/><rect y="10.66" width="24" height="5.34" fill="#21468B"/></svg></span> <span id="wl-cta-text">1-Click импорт</span> <span id="wl-cta-badge"><span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span></span>
-            </a>
           </div>
-          <div id="wl-action-hint" style="margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.4;">
-            💡 Ссылка формата <code>openflux://v1/...</code> поддерживается на всех платформах: Android, iOS, Windows, macOS, Linux.
+
+          <!-- Секция 2: Активен -->
+          <div id="wl-sec-active" style="display: none; padding-top: 10px;">
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 13px; color: var(--muted);">Привязанный сервер:</span>
+                <span id="wl-active-srv-badge" style="font-size: 14px; font-weight: 700; color: #fff;">🇳🇱 Нидерланды (NL)</span>
+              </div>
+              <button type="button" class="button secondary" onclick="openWlPickerModal()" style="min-height: 36px; padding: 6px 14px; font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px;">
+                <span>🔄</span> <span>Сменить сервер</span>
+              </button>
+            </div>
+
+            <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+              <a id="wl-active-1click" class="button success" href="#" style="min-height: 44px; padding: 10px 18px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 8px; text-decoration: none; font-weight: 700;">
+                <span>⚡</span> <span>1-Click Подключить</span>
+              </a>
+              <button type="button" class="button secondary" onclick="copyWlActiveLink(this)" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 6px;">
+                <span>📋</span> <span>Скопировать ключ</span>
+              </button>
+              <button type="button" class="button secondary" onclick="openWlQrModal('active')" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 6px;">
+                <span>📱</span> <span>Показать QR-код</span>
+              </button>
+            </div>
+            <div style="margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.4;">
+              💡 Ключ формата <code>openflux://v1/...</code> поддерживается на всех платформах: Android, iOS, Windows, macOS, Linux.
+            </div>
+          </div>
+
+          <!-- Секция 3: Миграция / Handover (Шаг 1) -->
+          <div id="wl-sec-migrating" style="display: none; padding-top: 10px;">
+            <div style="background: rgba(234, 179, 8, 0.08); border: 1px solid rgba(234, 179, 8, 0.35); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="font-size: 18px;">⏳</span>
+                  <span style="font-size: 14px; font-weight: 700; color: #facc15;">
+                    Подготовлен новый сервер: <span id="wl-pending-srv-text">🇵🇱 Польша</span>
+                  </span>
+                </div>
+                <div id="wl-timer-box" style="font-size: 13px; font-weight: 700; color: #fde047; background: rgba(0,0,0,0.4); padding: 4px 10px; border-radius: 6px; font-family: monospace; border: 1px solid rgba(234, 179, 8, 0.3);">
+                  ⏱️ 05:00
+                </div>
+              </div>
+              <p style="margin: 0 0 12px 0; font-size: 12.5px; color: #d1d5db; line-height: 1.45;">
+                Старый сервер (<span id="wl-migrating-old-text">Нидерланды</span>) <strong>продолжает работать</strong>. Добавьте новый сервер в приложение OpenFlux по кнопкам ниже и проверьте связь перед удалением старого:
+              </p>
+
+              <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px;">
+                <a id="wl-pending-1click" class="button success" href="#" style="min-height: 42px; padding: 8px 16px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; font-weight: 700;">
+                  <span>⚡</span> <span>1-Click Подключить (<span id="wl-pending-code-text">Польша</span>)</span>
+                </a>
+                <button type="button" class="button secondary" onclick="copyWlPendingLink(this)" style="min-height: 42px; padding: 8px 14px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px;">
+                  <span>📋</span> <span>Скопировать новый ключ</span>
+                </button>
+                <button type="button" class="button secondary" onclick="openWlQrModal('pending')" style="min-height: 42px; padding: 8px 14px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px;">
+                  <span>📱</span> <span>Показать QR-код</span>
+                </button>
+              </div>
+
+              <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 12px;">
+                <button type="button" class="button secondary" onclick="cancelWlServerSwitch()" style="min-height: 38px; padding: 6px 14px; font-size: 12.5px; color: #f87171;">
+                  <span>❌</span> <span>Отменить смену</span>
+                </button>
+                <button type="button" class="button success" onclick="openWlConfirmModal()" style="min-height: 38px; padding: 8px 18px; font-size: 13px; font-weight: 700;">
+                  <span>✅</span> <span>Я подключил новый сервер →</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -7003,8 +7155,54 @@ def setup_page_html(
           Наведите камеру в приложении <b>OpenFlux</b> для мгновенного добавления подключения.
         </p>
         <div class="awg-modal-footer">
-          <button type="button" class="awg-action-btn copy" onclick="copyWlLink(this)" style="flex: 1; text-align: center; justify-content: center;">📋 Скопировать ссылку</button>
+          <button type="button" class="awg-action-btn copy" onclick="copyWlModalLink(this)" style="flex: 1; text-align: center; justify-content: center;">📋 Скопировать ключ</button>
           <button type="button" class="awg-action-btn qr" onclick="closeWlQrModal()" style="flex: 0 0 auto;">Закрыть</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- OpenFlux Switch Confirmation Modal (Red Warning) -->
+  <div id="wl-confirm-modal" class="awg-modal-overlay" style="display: none;" onclick="if (event.target === this) closeWlConfirmModal();">
+    <div class="awg-modal-box" style="max-width: 480px; border: 2px solid #ef4444; box-shadow: 0 0 35px rgba(239, 68, 68, 0.35);">
+      <div class="awg-modal-header" style="border-bottom: 1px solid rgba(239, 68, 68, 0.3);">
+        <div style="font-weight: 800; font-size: 16px; color: #ef4444; display: flex; align-items: center; gap: 8px;">
+          <span>⚠️</span> <span>ВНИМАНИЕ: Удаление старого сервера</span>
+        </div>
+        <button type="button" class="awg-modal-close" onclick="closeWlConfirmModal()" aria-label="Закрыть">&times;</button>
+      </div>
+      <div class="awg-modal-body">
+        <div style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 10px; padding: 14px 16px; margin-bottom: 18px; font-size: 13.5px; color: #fca5a5; line-height: 1.5;">
+          Старый рабочий конфиг (<b id="wl-modal-old-name">Нидерланды</b>) будет <strong>безвозвратно удалён</strong> из системы.
+          <br><br>
+          Вы <strong>точно добавили новый конфиг (<span id="wl-modal-new-name">Польша</span>)</strong> в приложение OpenFlux и проверили связь? Если старый конфиг будет удалён до добавления нового, вы можете временно потерять связь!
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap;">
+          <button type="button" class="button secondary" onclick="closeWlConfirmModal()" style="min-height: 42px; padding: 8px 16px; font-size: 13px;">
+            ← Назад (к новому QR-коду)
+          </button>
+          <button type="button" id="wl-modal-confirm-btn" onclick="confirmWlServerSwitch()" style="background: #ef4444; color: #fff; min-height: 42px; padding: 8px 20px; font-size: 13px; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
+            <span>🗑️</span> <span>Подтверждаю, удалить старый</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- OpenFlux Country Picker Modal -->
+  <div id="wl-picker-modal" class="awg-modal-overlay" style="display: none;" onclick="if (event.target === this) closeWlPickerModal();">
+    <div class="awg-modal-box" style="max-width: 420px;">
+      <div class="awg-modal-header">
+        <div style="font-weight: 700; font-size: 15px; color: #fff; display: flex; align-items: center; gap: 8px;">
+          <span>🔄</span> <span>Выберите новый сервер</span>
+        </div>
+        <button type="button" class="awg-modal-close" onclick="closeWlPickerModal()" aria-label="Закрыть">&times;</button>
+      </div>
+      <div class="awg-modal-body">
+        <p style="font-size: 13px; color: var(--muted); margin: 0 0 14px 0; line-height: 1.4;">
+          Новый рабочий документ будет создан в Облаке Mail.ru, а старый продолжит работать до вашего подтверждения:
+        </p>
+        <div id="wl-picker-options" style="display: flex; flex-direction: column; gap: 10px;">
         </div>
       </div>
     </div>
@@ -8053,114 +8251,297 @@ def setup_page_html(
       fi: '<svg viewBox="0 0 24 16" width="18" height="12" style="border-radius:2px;display:inline-block;vertical-align:middle;box-shadow:0 0 1px rgba(0,0,0,0.5);"><rect width="24" height="16" fill="#FFFFFF"/><rect x="6.5" width="3.5" height="16" fill="#002F6C"/><rect y="6.25" width="24" height="3.5" fill="#002F6C"/></svg>'
     };
 
-    const _openfluxData = __OPENFLUX_DATA_JSON__;
+    let _wlSlot = __OPENFLUX_SLOT_JSON__;
+    let _wlTimerInterval = null;
     let currentWlCountry = "nl";
 
-    window.onWlCountryChange = function(country) {
-      currentWlCountry = (country || "nl").toLowerCase();
-      updateWlHeroCard();
-      renderWlSteps();
-    };
+    function renderWlSlot() {
+      const badgeCont = document.getElementById("wl-slot-badge-container");
+      const secUninit = document.getElementById("wl-sec-uninitialized");
+      const secActive = document.getElementById("wl-sec-active");
+      const secMigrating = document.getElementById("wl-sec-migrating");
+      if (!badgeCont || !secUninit || !secActive || !secMigrating) return;
 
-    function updateWlHeroCard() {
-      const data = _openfluxData[currentWlCountry] || _openfluxData["nl"];
-      const cta = document.getElementById("wl-hero-cta");
-      const ctaFlag = document.getElementById("wl-cta-flag");
-      const ctaText = document.getElementById("wl-cta-text");
-      const ctaBadge = document.getElementById("wl-cta-badge");
-      const qrBtn = document.getElementById("wl-qr-trigger");
-      const copyBtn = document.getElementById("wl-copy-trigger");
-      const hint = document.getElementById("wl-action-hint");
-      const svg = FLAG_SVGS[currentWlCountry] || FLAG_SVGS["nl"];
+      const status = (_wlSlot && _wlSlot.status) ? _wlSlot.status : "uninitialized";
 
-      if (currentWlPlatform === "android") {
-        if (cta && data) {
-          cta.href = data.link;
-          cta.className = "button success";
-          cta.onclick = null;
-          cta.style.cursor = "pointer";
-          cta.title = "Прямое подключение в OpenFlux на Android";
+      if (status === "uninitialized") {
+        badgeCont.innerHTML = '<span class="slot-badge muted"><span class="badge-dot"></span>Не активирован</span>';
+        secUninit.style.display = "block";
+        secActive.style.display = "none";
+        secMigrating.style.display = "none";
+        stopWlTimer();
+      } else if (status === "active") {
+        badgeCont.innerHTML = '<span class="slot-badge active"><span class="badge-dot pulse-emerald"></span>Активен</span>';
+        secUninit.style.display = "none";
+        secActive.style.display = "block";
+        secMigrating.style.display = "none";
+
+        const badge = document.getElementById("wl-active-srv-badge");
+        if (badge) {
+          badge.textContent = (_wlSlot.active_server_flag || "🇳🇱") + " " + (_wlSlot.active_server_name || "Нидерланды");
         }
-        if (ctaFlag) {
-          ctaFlag.style.display = "none";
-        }
-        if (ctaText) {
-          ctaText.textContent = "1-Click импорт";
-        }
-        if (ctaBadge) {
-          ctaBadge.innerHTML = "";
-        }
-        if (copyBtn) {
-          copyBtn.className = "button secondary";
-        }
-        if (qrBtn) {
-          qrBtn.className = "button secondary";
-        }
-        if (hint) {
-          hint.innerHTML = '💡 <strong>Android:</strong> поддерживается прямое подключение в 1 клик. Нажмите «1-Click импорт», и приложение запустится автоматически.';
-        }
-      } else {
-        if (copyBtn) {
-          copyBtn.className = "button success";
-        }
-        if (qrBtn) {
-          qrBtn.className = "button secondary";
-        }
+        const cta = document.getElementById("wl-active-1click");
         if (cta) {
-          cta.href = "javascript:void(0)";
-          cta.className = "button secondary btn-wl-disabled";
-          cta.onclick = function(e) { e.preventDefault(); return false; };
-          cta.title = "Прямой 1-Click запуск в разработке для этой платформы";
+          cta.href = _wlSlot.active_link || "#";
         }
-        if (ctaFlag) {
-          ctaFlag.style.display = "none";
+        stopWlTimer();
+      } else if (status === "migrating") {
+        badgeCont.innerHTML = '<span class="slot-badge amber"><span class="badge-dot pulse-amber"></span>Смена сервера</span>';
+        secUninit.style.display = "none";
+        secActive.style.display = "none";
+        secMigrating.style.display = "block";
+
+        const pendText = document.getElementById("wl-pending-srv-text");
+        if (pendText) {
+          pendText.textContent = (_wlSlot.pending_server_flag || "🇵🇱") + " " + (_wlSlot.pending_server_name || "Польша");
         }
-        if (ctaText) {
-          ctaText.textContent = "1-Click импорт";
+        const pendCode = document.getElementById("wl-pending-code-text");
+        if (pendCode) {
+          pendCode.textContent = _wlSlot.pending_server_name || "Польша";
         }
-        if (ctaBadge) {
-          ctaBadge.innerHTML = '<span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span>';
+        const oldText = document.getElementById("wl-migrating-old-text");
+        if (oldText) {
+          oldText.textContent = _wlSlot.active_server_name || "Нидерланды";
         }
-        if (hint) {
-          const platObj = wlPlatformsData.find(function(x) { return x.id === currentWlPlatform; });
-          const platName = platObj ? platObj.label : currentWlPlatform;
-          hint.innerHTML = '💡 <strong>' + platName + ':</strong> прямой переход по кнопке пока не активен (в разработке). Попробуйте соседними кнопками: <strong>«📋 Скопировать ссылку»</strong> или <strong>«📱 Показать QR-код»</strong>.';
+        const pendCta = document.getElementById("wl-pending-1click");
+        if (pendCta) {
+          pendCta.href = _wlSlot.pending_link || "#";
         }
+
+        startWlTimer(_wlSlot.pending_remaining_seconds || 300);
       }
-      ["nl", "pl", "fi"].forEach(function(c) {
-        const tab = document.getElementById("wl-tab-" + c);
-        if (tab) {
-          if (c === currentWlCountry) {
-            tab.classList.add("active");
-          } else {
-            tab.classList.remove("active");
-          }
-        }
-      });
     }
 
-    window.openWlQrModal = function() {
+    function startWlTimer(seconds) {
+      stopWlTimer();
+      let sec = seconds;
+      function tick() {
+        const box = document.getElementById("wl-timer-box");
+        if (!box) return;
+        const m = Math.floor(sec / 60);
+        const s = sec % 60;
+        box.textContent = "⏱️ " + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+      }
+      tick();
+      _wlTimerInterval = setInterval(function() {
+        sec--;
+        if (sec <= 0) {
+          stopWlTimer();
+          fetchWlState();
+        } else {
+          tick();
+        }
+      }, 1000);
+    }
+
+    function stopWlTimer() {
+      if (_wlTimerInterval) {
+        clearInterval(_wlTimerInterval);
+        _wlTimerInterval = null;
+      }
+    }
+
+    async function fetchWlState() {
+      try {
+        const res = await fetch("/sub/openflux/__SUB_ID__/state");
+        const data = await res.json();
+        if (data.ok && data.slot) {
+          _wlSlot = data.slot;
+          renderWlSlot();
+        }
+      } catch (e) {
+        console.warn("fetchWlState error:", e);
+      }
+    }
+
+    window.activateWlSlot = async function() {
+      const btn = document.getElementById("wl-btn-activate-main");
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span>⏳</span> <span>Выделение защищенного канала...</span>';
+      }
+      try {
+        const res = await fetch("/sub/openflux/__SUB_ID__/activate", { method: "POST" });
+        const data = await res.json();
+        if (data.ok && data.slot) {
+          _wlSlot = data.slot;
+          renderWlSlot();
+        } else {
+          alert("Ошибка активации: " + (data.error || "Неизвестная ошибка"));
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<span>⚡</span> <span>Активировать подключение (OpenFlux)</span>';
+          }
+        }
+      } catch (err) {
+        alert("Ошибка связи с сервером: " + err);
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<span>⚡</span> <span>Активировать подключение (OpenFlux)</span>';
+        }
+      }
+    };
+
+    window.openWlPickerModal = function() {
+      const modal = document.getElementById("wl-picker-modal");
+      const list = document.getElementById("wl-picker-options");
+      if (!modal || !list) return;
+
+      const activeSrv = (_wlSlot && _wlSlot.active_server ? _wlSlot.active_server : "nl").toLowerCase();
+      const allSrvs = [
+        { code: "nl", name: "Нидерланды", flag: "🇳🇱" },
+        { code: "pl", name: "Польша", flag: "🇵🇱" },
+        { code: "fi", name: "Финляндия", flag: "🇫🇮" }
+      ];
+
+      list.innerHTML = "";
+      allSrvs.forEach(function(s) {
+        if (s.code === activeSrv) return;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "button secondary";
+        btn.style.cssText = "min-height: 48px; padding: 10px 16px; font-size: 14px; font-weight: 600; display: flex; align-items: center; justify-content: space-between; width: 100%; border-radius: 10px; cursor: pointer;";
+        btn.innerHTML = '<span>' + s.flag + ' ' + s.name + '</span> <span>Выбрать →</span>';
+        btn.onclick = function() {
+          closeWlPickerModal();
+          startWlServerSwitch(s.code);
+        };
+        list.appendChild(btn);
+      });
+
+      modal.style.display = "flex";
+    };
+
+    window.closeWlPickerModal = function() {
+      const modal = document.getElementById("wl-picker-modal");
+      if (modal) modal.style.display = "none";
+    };
+
+    window.startWlServerSwitch = async function(targetCode) {
+      try {
+        const res = await fetch("/sub/openflux/__SUB_ID__/switch/prepare", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target: targetCode })
+        });
+        const data = await res.json();
+        if (data.ok && data.slot) {
+          _wlSlot = data.slot;
+          renderWlSlot();
+        } else {
+          alert("Не удалось запустить смену сервера: " + (data.error || "Ошибка"));
+        }
+      } catch (err) {
+        alert("Ошибка сети при подготовке сервера: " + err);
+      }
+    };
+
+    window.openWlConfirmModal = function() {
+      const modal = document.getElementById("wl-confirm-modal");
+      const oldName = document.getElementById("wl-modal-old-name");
+      const newName = document.getElementById("wl-modal-new-name");
+      if (!modal) return;
+      if (oldName) oldName.textContent = _wlSlot.active_server_name || "Нидерланды";
+      if (newName) newName.textContent = _wlSlot.pending_server_name || "Польша";
+      modal.style.display = "flex";
+    };
+
+    window.closeWlConfirmModal = function() {
+      const modal = document.getElementById("wl-confirm-modal");
+      if (modal) modal.style.display = "none";
+    };
+
+    window.confirmWlServerSwitch = async function() {
+      const btn = document.getElementById("wl-modal-confirm-btn");
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span>⏳</span> <span>Удаление...</span>';
+      }
+      try {
+        const res = await fetch("/sub/openflux/__SUB_ID__/switch/confirm", { method: "POST" });
+        const data = await res.json();
+        closeWlConfirmModal();
+        if (data.ok && data.slot) {
+          _wlSlot = data.slot;
+          renderWlSlot();
+        } else {
+          alert("Ошибка финализации: " + (data.error || "Ошибка"));
+        }
+      } catch (err) {
+        alert("Ошибка связи при подтверждении: " + err);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<span>🗑️</span> <span>Подтверждаю, удалить старый</span>';
+        }
+      }
+    };
+
+    window.cancelWlServerSwitch = async function() {
+      if (!confirm("Отменить процедуру смены сервера? Временный новый сервер будет удален, вы останетесь на " + (_wlSlot.active_server_name || "текущем сервере") + ".")) {
+        return;
+      }
+      try {
+        const res = await fetch("/sub/openflux/__SUB_ID__/switch/cancel", { method: "POST" });
+        const data = await res.json();
+        if (data.ok && data.slot) {
+          _wlSlot = data.slot;
+          renderWlSlot();
+        }
+      } catch (err) {
+        alert("Ошибка при отмене: " + err);
+      }
+    };
+
+    window.copyWlActiveLink = async function(btn) {
+      if (!_wlSlot || !_wlSlot.active_link) return;
+      await copyTextVal(btn, _wlSlot.active_link);
+    };
+
+    window.copyWlPendingLink = async function(btn) {
+      if (!_wlSlot || !_wlSlot.pending_link) return;
+      await copyTextVal(btn, _wlSlot.pending_link);
+    };
+
+    window.openWlQrModal = function(target) {
       const modal = document.getElementById("wl-qr-modal");
       const img = document.getElementById("wl-qr-image");
       const title = document.getElementById("wl-qr-modal-title");
-      const data = _openfluxData[currentWlCountry] || _openfluxData["nl"];
-      const svg = FLAG_SVGS[currentWlCountry] || FLAG_SVGS["nl"];
-      if (!modal || !img || !data) return;
-      title.innerHTML = '<span>📱</span> <span>OpenFlux · ' + svg + ' ' + data.name + '</span>';
-      img.src = data.qr_url + '?t=' + Date.now();
-      modal.style.display = 'flex';
+      if (!modal || !img) return;
+
+      const isPending = (target === "pending");
+      const srvName = isPending ? (_wlSlot.pending_server_name || "Польша") : (_wlSlot.active_server_name || "Нидерланды");
+      const srvFlag = isPending ? (_wlSlot.pending_server_flag || "🇵🇱") : (_wlSlot.active_server_flag || "🇳🇱");
+      const link = isPending ? _wlSlot.pending_link : _wlSlot.active_link;
+
+      if (title) {
+        title.innerHTML = '<span>📱</span> <span>OpenFlux · ' + srvFlag + ' ' + srvName + (isPending ? ' (Новый)' : '') + '</span>';
+      }
+      img.src = "/sub/openflux/__SUB_ID__/qr?target=" + (isPending ? "pending" : "active") + "&t=" + Date.now();
+      modal.setAttribute("data-current-link", link || "");
+      modal.style.display = "flex";
     };
 
     window.closeWlQrModal = function() {
       const modal = document.getElementById("wl-qr-modal");
-      if (modal) modal.style.display = 'none';
+      if (modal) modal.style.display = "none";
+    };
+
+    window.copyWlModalLink = async function(btn) {
+      const modal = document.getElementById("wl-qr-modal");
+      const link = modal ? modal.getAttribute("data-current-link") : "";
+      if (link) {
+        await copyTextVal(btn, link);
+      }
     };
 
     window.copyWlLink = async function(btn) {
-      const data = _openfluxData[currentWlCountry] || _openfluxData["nl"];
-      if (!data) return;
-      await copyTextVal(btn, data.link);
+      await window.copyWlActiveLink(btn);
     };
+
+    setTimeout(function() {
+      renderWlSlot();
+    }, 50);
 
     function renderWlSteps() {
       const container = document.getElementById("wl-steps-container");
@@ -8615,6 +8996,7 @@ def setup_page_html(
     result = result.replace("__SUB_ID__", subscription_id)
     result = result.replace("__SECRET_SEGMENT__", SECRET_SEGMENT)
     result = result.replace("__OPENFLUX_DATA_JSON__", openflux_data_json)
+    result = result.replace("__OPENFLUX_SLOT_JSON__", openflux_slot_json)
     result = result.replace("__VOLGA_NL_URL__", html.escape(volga_nl_url, quote=True))
     result = result.replace("__VOLGA_PL_URL__", html.escape(volga_pl_url, quote=True))
     result = result.replace("__VOLGA_FI_URL__", html.escape(volga_fi_url, quote=True))
