@@ -9730,7 +9730,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     if oflux_action == "activate":
                         openflux_manager.activate_openflux_slot(conn, pid)
                     elif oflux_action in {"switch_prepare", "prepare"}:
-                        target_code = str(payload.get("target") or payload.get("target_country") or payload.get("country") or "").strip().lower()
+                        target_code = str(payload.get("target") or payload.get("target_server") or payload.get("server") or payload.get("target_country") or payload.get("country") or "").strip().lower()
                         if not target_code or target_code not in openflux_manager.SERVERS:
                             self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": f"invalid_target_country: {target_code}"}, True)
                             return

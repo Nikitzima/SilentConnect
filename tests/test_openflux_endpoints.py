@@ -120,6 +120,7 @@ class TestOpenFluxEndpoints(unittest.TestCase):
              patch("vpn_shop.openflux_manager.rclone_get_public_link", return_value="https://cloud.mail.ru/public/NL/doc1"), \
              patch("vpn_shop.openflux_manager.start_openflux_worker", return_value=True), \
              patch("vpn_shop.openflux_manager.stop_openflux_worker", return_value=True), \
+             patch("vpn_shop.openflux_manager.rename_openflux_worker", return_value=True), \
              patch("vpn_shop.openflux_manager.rclone_delete_user_doc", return_value=True):
 
             # 1. State before activation

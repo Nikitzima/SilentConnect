@@ -18,6 +18,23 @@ from typing import Any, Optional
 
 LOGGER = logging.getLogger("openflux_manager")
 
+def load_env_file_if_needed() -> None:
+    for f in ("/root/subjson-service/subjson.env", "/root/vpn-shop/.env.silentconnect"):
+        if os.path.exists(f):
+            try:
+                with open(f, "r", encoding="utf-8") as fp:
+                    for line in fp:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            k, v = k.strip(), v.strip().strip("'").strip('"')
+                            if k not in os.environ:
+                                os.environ[k] = v
+            except Exception:
+                pass
+
+load_env_file_if_needed()
+
 NL_IP = os.environ.get("NL_HOST", os.environ.get("NL_MASTER_IP", "192.0.2.1"))
 PL_IP = os.environ.get("PL_HOST", os.environ.get("PL_STANDBY_IP", "192.0.2.2"))
 FI_IP = os.environ.get("FI_HOST", os.environ.get("FI_STANDBY_IP", "198.51.100.1"))
@@ -112,6 +129,17 @@ def build_openflux_stream_link(public_url: str, country_code: str) -> str:
     return f"openflux://v1/{b64}"
 
 
+def get_server_ip(server_code: str) -> str:
+    code = (server_code or "").lower().strip()
+    if code == "nl":
+        return os.environ.get("NL_HOST", os.environ.get("NL_MASTER_IP", "192.0.2.1"))
+    if code == "pl":
+        return os.environ.get("PL_HOST", os.environ.get("PL_STANDBY_IP", "192.0.2.2"))
+    if code == "fi":
+        return os.environ.get("FI_HOST", os.environ.get("FI_STANDBY_IP", "198.51.100.1"))
+    return "192.0.2.1"
+
+
 def run_node_command(server_code: str, cmd: str, timeout: int = 15) -> tuple[int, str, str]:
     """Execute a shell command either locally (if on NL) or via SSH on remote nodes."""
     srv = SERVERS.get(server_code.lower().strip())
@@ -119,10 +147,16 @@ def run_node_command(server_code: str, cmd: str, timeout: int = 15) -> tuple[int
         return 1, "", f"Unknown server {server_code}"
 
     # Determine if local execution is possible
-    # We detect if our host matches the server IP or default to local on NL
+    # Detect local host by matching server code or local ips
+    target_ip = get_server_ip(srv["code"])
     is_local = False
-    local_ips = os.environ.get("LOCAL_NODE_IPS", "").split(",")
-    if srv["ip"] in local_ips or (srv["code"] == "nl" and not local_ips[0]):
+    local_ips = {ip.strip() for ip in os.environ.get("LOCAL_NODE_IPS", "").split(",") if ip.strip()}
+    local_ips.add("127.0.0.1")
+    local_ips.add("::1")
+    local_ips.add(get_server_ip("nl"))
+
+    current_srv = os.environ.get("CURRENT_SERVER_CODE", "nl").lower().strip()
+    if srv["code"] == current_srv or target_ip in local_ips:
         is_local = True
 
     if is_local:
@@ -143,8 +177,9 @@ def run_node_command(server_code: str, cmd: str, timeout: int = 15) -> tuple[int
     ssh_cmd = [
         "ssh",
         "-o", "StrictHostKeyChecking=no",
+        "-o", "BatchMode=yes",
         "-o", f"ConnectTimeout={min(5, timeout)}",
-        f"root@{srv['ip']}",
+        f"root@{target_ip}",
         cmd,
     ]
     try:
@@ -159,12 +194,14 @@ def run_node_command(server_code: str, cmd: str, timeout: int = 15) -> tuple[int
         # Fallback for PL: jump through FI if direct SSH fails
         if srv["code"] == "pl":
             try:
+                fi_host = get_server_ip("fi")
                 jump_cmd = [
                     "ssh",
                     "-o", "StrictHostKeyChecking=no",
+                    "-o", "BatchMode=yes",
                     "-o", "ConnectTimeout=5",
-                    f"root@{FI_IP}",
-                    f"ssh -o StrictHostKeyChecking=no root@{PL_IP} {subprocess.list2cmdline([cmd])}",
+                    f"root@{fi_host}",
+                    f"ssh -o StrictHostKeyChecking=no -o BatchMode=yes root@{target_ip} {subprocess.list2cmdline([cmd])}",
                 ]
                 jump_res = subprocess.run(
                     jump_cmd,
@@ -239,7 +276,7 @@ def start_openflux_worker(server_code: str, container_name: str, public_doc_url:
         f"--memory=64m --cpus=0.5 "
         f"-v /opt/openflux:/opt/openflux:ro "
         f"php:8.2-cli-alpine "
-        f"php -d memory_limit=48M /opt/openflux/mailruexit.php '{public_doc_url}'"
+        f"sh -c 'while true; do php -d memory_limit=48M /opt/openflux/runner.php \"$1\"; sleep 1; done' _ '{public_doc_url}'"
     )
     code, stdout, stderr = run_node_command(server_code, docker_cmd, timeout=20)
     if code == 0:
@@ -256,6 +293,17 @@ def stop_openflux_worker(server_code: str, container_name: str) -> bool:
     clean_name = re.sub(r"[^\w\-]", "", container_name)
     docker_cmd = f"docker rm -f {clean_name} 2>/dev/null || true"
     code, _, _ = run_node_command(server_code, docker_cmd, timeout=15)
+    return code == 0
+
+
+def rename_openflux_worker(server_code: str, old_container: str, new_container: str) -> bool:
+    """Rename a Docker container on target node."""
+    if not old_container or not new_container or old_container == new_container:
+        return True
+    old_clean = re.sub(r"[^\w\-]", "", old_container)
+    new_clean = re.sub(r"[^\w\-]", "", new_container)
+    cmd = f"docker rm -f {new_clean} 2>/dev/null || true; docker rename {old_clean} {new_clean} 2>/dev/null || true"
+    code, _, _ = run_node_command(server_code, cmd, timeout=15)
     return code == 0
 
 
@@ -443,14 +491,24 @@ def confirm_server_switch(conn: sqlite3.Connection, profile_id: str) -> dict[str
     new_container = slot["pending_container_name"]
 
     # 1. Stop and remove old worker
-    if old_srv and old_container:
-        stop_openflux_worker(old_srv, old_container)
+    clean_uid = re.sub(r"[^\w\-]", "", profile_id)
+    if old_srv:
+        if old_container:
+            stop_openflux_worker(old_srv, old_container)
+        if old_container != f"openflux-worker-{clean_uid}":
+            stop_openflux_worker(old_srv, f"openflux-worker-{clean_uid}")
 
     # 2. Delete old doc from Cloud
     if old_doc:
         rclone_delete_user_doc(old_doc)
 
-    # 3. Finalize slot state
+    # 3. Rename pending container to canonical name on new server
+    canonical_container = f"openflux-worker-{clean_uid}"
+    if new_srv and new_container and new_container != canonical_container:
+        rename_openflux_worker(new_srv, new_container, canonical_container)
+        new_container = canonical_container
+
+    # 4. Finalize slot state
     now = int(time.time())
     conn.execute(
         """
@@ -490,8 +548,12 @@ def cancel_server_switch(conn: sqlite3.Connection, profile_id: str) -> dict[str,
     pending_container = slot.get("pending_container_name")
     pending_doc = slot.get("pending_doc_name")
 
-    if pending_srv and pending_container:
-        stop_openflux_worker(pending_srv, pending_container)
+    clean_uid = re.sub(r"[^\w\-]", "", profile_id)
+    if pending_srv:
+        if pending_container:
+            stop_openflux_worker(pending_srv, pending_container)
+        if pending_container != f"openflux-worker-{clean_uid}-pending":
+            stop_openflux_worker(pending_srv, f"openflux-worker-{clean_uid}-pending")
 
     if pending_doc:
         rclone_delete_user_doc(pending_doc)
