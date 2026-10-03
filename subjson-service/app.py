@@ -4908,16 +4908,18 @@ def import_page_html(
         "ios": "appstore",
         "android": "googleplay",
         "android_apk": "github",
-        "windows": "globe",
-        "fallback": "globe",
     }
     install_html = ""
     install_keys = ("ios", "android", "android_apk", "windows", "fallback")
     for key in install_keys:
         url = install_urls.get(key)
         if url:
-            icon_name = install_icons.get(key, "globe")
-            install_html += f'<a class="button install" href="{html.escape(url, quote=True)}"><img class="btn-store-icon" src="/assets/stores/{icon_name}.webp" alt=""> {html.escape(install_labels[key])}</a>'
+            icon_name = install_icons.get(key)
+            if icon_name:
+                badge = f'<img class="btn-store-icon" src="/assets/stores/{icon_name}.webp" alt=""> '
+            else:
+                badge = '<span style="font-size: 16px; line-height: 1;">🌐</span> '
+            install_html += f'<a class="button install" href="{html.escape(url, quote=True)}">{badge}{html.escape(install_labels[key])}</a>'
     if install_html:
         install_html = f'<p class="hint">Если приложение не установлено, откройте подходящую страницу загрузки.</p>{install_html}'
     auto_script = ""
@@ -7233,11 +7235,19 @@ def setup_page_html(
           else iconName = "globe";
         }
 
-        const img = document.createElement("img");
-        img.className = "btn-store-icon";
-        img.src = "/assets/stores/" + iconName + ".webp";
-        img.alt = "";
-        link.appendChild(img);
+        if (iconName === "globe") {
+          const globeSpan = document.createElement("span");
+          globeSpan.style.fontSize = "16px";
+          globeSpan.style.lineHeight = "1";
+          globeSpan.textContent = "🌐";
+          link.appendChild(globeSpan);
+        } else {
+          const img = document.createElement("img");
+          img.className = "btn-store-icon";
+          img.src = "/assets/stores/" + iconName + ".webp";
+          img.alt = "";
+          link.appendChild(img);
+        }
 
         const textSpan = document.createElement("span");
         textSpan.textContent = item.label;
@@ -8486,7 +8496,7 @@ def setup_page_html(
           downloadBtnsHtml = '<a class="button secondary" href="https://github.com/amnezia-vpn/amneziawg-windows-client/releases" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (.msi / .zip)</a>';
         } else if (currentAwgPlatform === "macos") {
           downloadBtnsHtml = '<a class="button secondary" href="https://apps.apple.com/app/amneziawg/id6478942365" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/appstore.webp" alt=""> Mac App Store</a>' +
-            '<a class="button secondary" href="https://docs.amnezia.org/ru/documentation/instructions/use-amneziawg-app/" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/globe.webp" alt=""> Официальная инструкция</a>';
+            '<a class="button secondary" href="https://docs.amnezia.org/ru/documentation/instructions/use-amneziawg-app/" target="_blank" rel="noopener">🌐 Официальная инструкция</a>';
         } else if (currentAwgPlatform === "linux") {
           downloadBtnsHtml = '<a class="button secondary" href="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (Kernel Module)</a>' +
             '<a class="button secondary" href="https://github.com/amnezia-vpn/amneziawg-go" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (Go CLI)</a>';
@@ -8498,13 +8508,13 @@ def setup_page_html(
           downloadBtnsHtml = '<a class="button secondary" href="https://play.google.com/store/apps/details?id=org.amnezia.vpn" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/googleplay.webp" alt=""> Google Play</a>' +
             '<a class="button secondary" href="https://github.com/amnezia-vpn/amnezia-client/releases" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (.apk)</a>';
         } else if (currentAwgPlatform === "windows") {
-          downloadBtnsHtml = '<a class="button secondary" href="https://amnezia.org/ru/downloads" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/globe.webp" alt=""> Официальный сайт (.exe)</a>' +
+          downloadBtnsHtml = '<a class="button secondary" href="https://amnezia.org/ru/downloads" target="_blank" rel="noopener">🌐 Официальный сайт (.exe)</a>' +
             '<a class="button secondary" href="https://github.com/amnezia-vpn/amnezia-client/releases" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (.exe)</a>';
         } else if (currentAwgPlatform === "macos") {
           downloadBtnsHtml = '<a class="button secondary" href="https://apps.apple.com/app/amneziavpn/id1600529900" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/appstore.webp" alt=""> Mac App Store</a>' +
-            '<a class="button secondary" href="https://amnezia.org/ru/downloads" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/globe.webp" alt=""> Официальный сайт (.dmg)</a>';
+            '<a class="button secondary" href="https://amnezia.org/ru/downloads" target="_blank" rel="noopener">🌐 Официальный сайт (.dmg)</a>';
         } else if (currentAwgPlatform === "linux") {
-          downloadBtnsHtml = '<a class="button secondary" href="https://amnezia.org/ru/downloads" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/globe.webp" alt=""> Официальный сайт (.deb / AppImage)</a>';
+          downloadBtnsHtml = '<a class="button secondary" href="https://amnezia.org/ru/downloads" target="_blank" rel="noopener">🌐 Официальный сайт (.deb / AppImage)</a>';
         }
       }
 
