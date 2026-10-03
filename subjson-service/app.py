@@ -629,9 +629,23 @@ def build_openflux_v1_link(country: str, sub_id: str, label: str = "") -> tuple[
     return link, primary_url, (backup_url or primary_url)
 
 
+def resolve_sub_profile_id(sub_id: str) -> str:
+    clean = str(sub_id or "").strip()
+    try:
+        wc = get_shop_checkout()
+        if wc:
+            prof = find_profile_for_sub(wc, clean)
+            if prof and prof.get("public_id"):
+                return str(prof["public_id"]).strip()
+    except Exception:
+        pass
+    return clean
+
+
 def get_openflux_slot_state_dict(sub_id: str) -> dict[str, Any]:
     try:
         from vpn_shop import openflux_manager
+        pid = resolve_sub_profile_id(sub_id)
         db_path = find_store_db_path()
         if not db_path or not Path(db_path).exists():
             return {"ok": False, "error": "db_not_found"}
@@ -639,7 +653,7 @@ def get_openflux_slot_state_dict(sub_id: str) -> dict[str, Any]:
         conn.row_factory = sqlite3.Row
         try:
             openflux_manager.cleanup_expired_migrations(conn)
-            slot = openflux_manager.get_or_create_openflux_slot(conn, sub_id)
+            slot = openflux_manager.get_or_create_openflux_slot(conn, pid)
         finally:
             conn.close()
 
@@ -667,7 +681,7 @@ def get_openflux_slot_state_dict(sub_id: str) -> dict[str, Any]:
         return {
             "ok": True,
             "slot": {
-                "profile_public_id": sub_id,
+                "profile_public_id": pid,
                 "status": status,
                 "active_server": active_srv,
                 "active_server_name": active_info.get("name", "Нидерланды"),
@@ -9671,6 +9685,74 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send_json(status_code, res, True)
                 return
 
+            # OpenFlux Dedicated Slot Management (POST)
+            # /sub/openflux/<sub_id>/activate
+            # /sub/openflux/<sub_id>/switch/prepare
+            # /sub/openflux/<sub_id>/switch/confirm
+            # /sub/openflux/<sub_id>/switch/cancel
+            is_oflux_post = False
+            oflux_sub_id = ""
+            oflux_action = ""
+            if len(path) == 4 and path[0] in {"sub", SECRET_SEGMENT, "my-secret-sub"} and path[1] == "openflux":
+                is_oflux_post = True
+                oflux_sub_id = path[2]
+                oflux_action = path[3]
+            elif len(path) == 5 and path[0] in {"sub", SECRET_SEGMENT, "my-secret-sub"} and path[1] == "openflux" and path[3] == "switch":
+                is_oflux_post = True
+                oflux_sub_id = path[2]
+                oflux_action = f"switch_{path[4]}"
+            elif len(path) == 5 and path[0] == "api" and path[1] == "sub" and path[2] == "openflux":
+                is_oflux_post = True
+                oflux_sub_id = path[3]
+                oflux_action = path[4]
+            elif len(path) == 6 and path[0] == "api" and path[1] == "sub" and path[2] == "openflux" and path[4] == "switch":
+                is_oflux_post = True
+                oflux_sub_id = path[3]
+                oflux_action = f"switch_{path[5]}"
+
+            if is_oflux_post:
+                from vpn_shop import openflux_manager
+                db_path = find_store_db_path()
+                if not db_path or not Path(db_path).exists():
+                    self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "db_not_found"}, True)
+                    return
+                pid = resolve_sub_profile_id(oflux_sub_id)
+                content_length = int(self.headers.get("Content-Length") or 0)
+                raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+                try:
+                    payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+                except Exception:
+                    payload = {}
+
+                conn = sqlite3.connect(db_path, timeout=20.0)
+                conn.row_factory = sqlite3.Row
+                try:
+                    if oflux_action == "activate":
+                        openflux_manager.activate_openflux_slot(conn, pid)
+                    elif oflux_action in {"switch_prepare", "prepare"}:
+                        target_code = str(payload.get("target") or payload.get("target_country") or payload.get("country") or "").strip().lower()
+                        if not target_code or target_code not in openflux_manager.SERVERS:
+                            self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": f"invalid_target_country: {target_code}"}, True)
+                            return
+                        openflux_manager.start_server_switch(conn, pid, target_code)
+                    elif oflux_action in {"switch_confirm", "confirm"}:
+                        openflux_manager.confirm_server_switch(conn, pid)
+                    elif oflux_action in {"switch_cancel", "cancel"}:
+                        openflux_manager.cancel_server_switch(conn, pid)
+                    else:
+                        self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": f"unknown_action: {oflux_action}"}, True)
+                        return
+                except Exception as exc:
+                    LOGGER.exception("OpenFlux action %s failed for %s: %s", oflux_action, pid, exc)
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)}, True)
+                    return
+                finally:
+                    conn.close()
+
+                state = get_openflux_slot_state_dict(pid)
+                self._send_json(HTTPStatus.OK, state, True)
+                return
+
             if len(path) == 3 and path[0] == SECRET_SEGMENT and path[1] in ("renew", "bind-email"):
                 sub_id = path[2]
                 form = self._read_form()
@@ -9993,29 +10075,77 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "quiesce_merge_in_progress", "retry_after": 10}, include_body)
                 return
 
-            # OpenFlux Node QR Code
-            # GET /sub/openflux/<sub_id>/<country>/qr or /<SECRET_SEGMENT>/openflux/<sub_id>/<country>/qr or /api/sub/openflux/...
-            if (len(path) == 5 and path[0] in {"sub", SECRET_SEGMENT, "my-secret-sub"} and path[1] == "openflux" and path[4] in {"qr", "qrcode"}) or \
-               (len(path) == 6 and path[0] == "api" and path[1] in {"sub", "openflux"} and path[5] in {"qr", "qrcode"}):
-                sub_id = path[2] if path[0] in {"sub", SECRET_SEGMENT, "my-secret-sub"} else (path[3] if path[1] == "sub" else path[2])
-                country = path[3] if path[0] in {"sub", SECRET_SEGMENT, "my-secret-sub"} else (path[4] if path[1] == "sub" else path[3])
-                country = (country or "nl").lower().strip()
-                if country not in {"nl", "pl", "fi"}:
-                    country = "nl"
-                link, _, _ = build_openflux_v1_link(country, sub_id)
+            # OpenFlux Slot State Endpoint
+            # GET /sub/openflux/<sub_id>/state or /<SECRET_SEGMENT>/openflux/<sub_id>/state or /api/sub/openflux/...
+            if (len(path) == 4 and path[0] in {"sub", SECRET_SEGMENT, "my-secret-sub"} and path[1] == "openflux" and path[3] == "state") or \
+               (len(path) == 5 and path[0] == "api" and path[1] == "sub" and path[2] == "openflux" and path[4] == "state"):
+                sub_id = path[2] if path[0] in {"sub", SECRET_SEGMENT, "my-secret-sub"} else path[3]
+                pid = resolve_sub_profile_id(sub_id)
+                self._send_json(HTTPStatus.OK, get_openflux_slot_state_dict(pid), include_body)
+                return
+
+            # OpenFlux Slot QR Code (Dynamic slot link or legacy country-specific)
+            # GET /sub/openflux/<sub_id>/qr?target=active|pending
+            # GET /sub/openflux/<sub_id>/<country>/qr
+            is_oflux_qr = False
+            oflux_sub_id = ""
+            oflux_country = ""
+            if (len(path) == 4 and path[0] in {"sub", SECRET_SEGMENT, "my-secret-sub"} and path[1] == "openflux" and path[3] in {"qr", "qrcode"}):
+                is_oflux_qr = True
+                oflux_sub_id = path[2]
+            elif (len(path) == 5 and path[0] == "api" and path[1] == "sub" and path[2] == "openflux" and path[4] in {"qr", "qrcode"}):
+                is_oflux_qr = True
+                oflux_sub_id = path[3]
+            elif (len(path) == 5 and path[0] in {"sub", SECRET_SEGMENT, "my-secret-sub"} and path[1] == "openflux" and path[4] in {"qr", "qrcode"}):
+                is_oflux_qr = True
+                oflux_sub_id = path[2]
+                oflux_country = path[3]
+            elif (len(path) == 6 and path[0] == "api" and path[1] == "sub" and path[2] == "openflux" and path[5] in {"qr", "qrcode"}):
+                is_oflux_qr = True
+                oflux_sub_id = path[3]
+                oflux_country = path[4]
+
+            if is_oflux_qr:
+                pid = resolve_sub_profile_id(oflux_sub_id)
+                target = str(first_non_empty(query.get("target")) or "active").strip().lower()
+                country_override = str(first_non_empty(query.get("country")) or oflux_country or "").strip().lower()
+
+                link = ""
+                # If explicit legacy country was provided in URL path or query
+                if oflux_country and oflux_country in {"nl", "pl", "fi"}:
+                    link, _, _ = build_openflux_v1_link(oflux_country, pid)
+                else:
+                    state_data = get_openflux_slot_state_dict(pid)
+                    slot = state_data.get("slot") or {}
+                    if target == "pending":
+                        link = str(slot.get("pending_link") or "").strip()
+                    else:
+                        link = str(slot.get("active_link") or "").strip()
+
+                    if not link:
+                        fallback_c = country_override if country_override in {"nl", "pl", "fi"} else (str(slot.get("active_server") or "nl").lower())
+                        if fallback_c not in {"nl", "pl", "fi"}:
+                            fallback_c = "nl"
+                        link, _, _ = build_openflux_v1_link(fallback_c, pid)
+
                 qr_bytes = b""
                 try:
                     from vpn_shop import qr
                     qr_bytes = qr.generate_qr_png(link, box_size=6, border=2)
                 except Exception as exc:
                     LOGGER.warning("OpenFlux QR generation failed: %s", exc)
+
                 if not qr_bytes:
                     self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "qr_generation_failed"}, include_body)
                     return
+
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "image/png")
                 self.send_header("Content-Length", str(len(qr_bytes)))
-                self.send_header("Cache-Control", "public, max-age=300")
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                for k, v in SECURITY_HEADERS:
+                    self.send_header(k, v)
                 self.end_headers()
                 if include_body:
                     self.wfile.write(qr_bytes)
