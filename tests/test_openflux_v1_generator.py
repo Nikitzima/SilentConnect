@@ -75,18 +75,20 @@ class TestOpenFluxV1Generator(unittest.TestCase):
         )
         html_str = html_bytes.decode("utf-8")
 
-        # Verify Hero Card & UI components are present
-        self.assertIn("wl-hero-card", html_str)
-        self.assertIn("wl-country-tabs", html_str)
-        self.assertIn("wl-tab-nl", html_str)
-        self.assertIn("wl-hero-cta", html_str)
+        # Verify OpenFlux Dedicated Slot & UI components are present
+        self.assertIn("wl-slot-badge-container", html_str)
+        self.assertIn("wl-sec-active", html_str)
+        self.assertIn("wl-picker-modal", html_str)
+        self.assertIn("wl-confirm-modal", html_str)
+        self.assertIn("ВНИМАНИЕ: Удаление старого сервера", html_str)
         self.assertIn("wl-qr-modal", html_str)
         self.assertIn("openflux://v1/", html_str)
 
         # Verify NO hosted binary ZIPs or obsolete downloads are present
         self.assertNotIn("openflux-silentconnect-bypass.zip", html_str)
         self.assertNotIn("universal-bypass-tool-linux-amd64", html_str)
-        self.assertNotIn(".conf", html_str.split("whitelist-mode-container")[1].split("awg-mode-container")[0])
+        wl_section = html_str.split('id="whitelist-mode-container"')[1].split('</section>')[0]
+        self.assertNotIn(".conf", wl_section)
 
     def test_openflux_qr_generation(self):
         from vpn_shop import qr

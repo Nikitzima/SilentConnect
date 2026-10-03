@@ -81,8 +81,9 @@ class TestOpenFluxManager(unittest.TestCase):
     @patch("vpn_shop.openflux_manager.rclone_get_public_link", return_value="https://cloud.mail.ru/public/NL/Doc")
     @patch("vpn_shop.openflux_manager.start_openflux_worker", return_value=True)
     @patch("vpn_shop.openflux_manager.stop_openflux_worker", return_value=True)
+    @patch("vpn_shop.openflux_manager.rename_openflux_worker", return_value=True)
     @patch("vpn_shop.openflux_manager.rclone_delete_user_doc", return_value=True)
-    def test_two_phase_handover_success(self, mock_del, mock_stop, mock_start, mock_link, mock_create):
+    def test_two_phase_handover_success(self, mock_del, mock_rename, mock_stop, mock_start, mock_link, mock_create):
         # 1. Activate on NL
         activate_openflux_slot(self.conn, "test_user_123")
 
@@ -105,6 +106,7 @@ class TestOpenFluxManager(unittest.TestCase):
         # Verify old worker was stopped and old doc was deleted
         mock_stop.assert_called_with("nl", "openflux-worker-test_user_123")
         mock_del.assert_called_with("NL_test_user_123.docx")
+        mock_rename.assert_called_with("pl", "openflux-worker-test_user_123-pending", "openflux-worker-test_user_123")
 
     @patch("vpn_shop.openflux_manager.rclone_create_user_doc", return_value=True)
     @patch("vpn_shop.openflux_manager.rclone_get_public_link", return_value="https://cloud.mail.ru/public/NL/Doc")
