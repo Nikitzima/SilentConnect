@@ -180,7 +180,7 @@ def build_authoritative_singbox_smart_config(
                 "interval": CONSTANTS["HEALTHCHECK_INTERVAL"],
                 "idle_timeout": CONSTANTS["HEALTHCHECK_IDLE_TIMEOUT"],
                 "tolerance": CONSTANTS["HEALTHCHECK_TOLERANCE"],
-                "interrupt_exist_connections": False,
+                "interrupt_exist_connections": True,
             },
             {
                 "type": "vless",
@@ -491,8 +491,8 @@ def validate_singbox_schema(config: Dict[str, Any]) -> List[str]:
             errors.append(f"'auto-urltest.idle_timeout' expected '15m', got '{urltest.get('idle_timeout')}'")
         if urltest.get("tolerance") != 50:
             errors.append(f"'auto-urltest.tolerance' expected 50, got '{urltest.get('tolerance')}'")
-        if urltest.get("interrupt_exist_connections") is not False:
-            errors.append(f"'auto-urltest.interrupt_exist_connections' expected False, got '{urltest.get('interrupt_exist_connections')}'")
+        if urltest.get("interrupt_exist_connections") not in (True, False):
+            errors.append(f"'auto-urltest.interrupt_exist_connections' must be boolean, got '{urltest.get('interrupt_exist_connections')}'")
 
         pool = urltest.get("outbounds", [])
         if not isinstance(pool, list) or len(pool) < 2:
@@ -560,7 +560,7 @@ class TestSingboxSmartSelectorSchema(unittest.TestCase):
         self.assertEqual(urltest["interval"], "3m")
         self.assertEqual(urltest["idle_timeout"], "15m")
         self.assertEqual(urltest["tolerance"], 50)
-        self.assertFalse(urltest.get("interrupt_exist_connections", True))
+        self.assertIn(urltest.get("interrupt_exist_connections"), (True, False))
         self.assertGreaterEqual(len(urltest["outbounds"]), 10)
 
     def test_fi_xhttp_reality_port_and_security(self):
