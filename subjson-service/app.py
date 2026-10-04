@@ -2874,10 +2874,10 @@ def build_singbox_smart_config(
                 "fi-backup-grpc",
             ],
             "url": "https://cp.cloudflare.com/generate_204",
-            "interval": "3m",
-            "idle_timeout": "15m",
+            "interval": "1m",
+            "idle_timeout": "30m",
             "tolerance": 50,
-            "interrupt_exist_connections": False,
+            "interrupt_exist_connections": True,
         },
         # --- NL Protocol Nodes ---
         {
@@ -2923,7 +2923,7 @@ def build_singbox_smart_config(
             "tag": "nl-speed-hysteria2",
             "server": nl_edge,
             "server_ports": ["30000:40000"],
-            "hop_interval": "30s",
+            "hop_interval": "60s",
             "password": client_uuid,
             "tls": {
                 "enabled": True,
@@ -3005,7 +3005,7 @@ def build_singbox_smart_config(
             "tag": "fi-speed-hysteria2",
             "server": fi_edge,
             "server_ports": ["30000:40000"],
-            "hop_interval": "30s",
+            "hop_interval": "60s",
             "password": client_uuid,
             "tls": {
                 "enabled": True,
@@ -3204,7 +3204,7 @@ def build_singbox_smart_config(
                 "tag": "pl-speed-hysteria2",
                 "server": pl_edge,
                 "server_ports": ["30000:40000"],
-                "hop_interval": "30s",
+                "hop_interval": "60s",
                 "password": client_uuid,
                 "tls": {
                     "enabled": True,
@@ -3317,9 +3317,20 @@ def build_singbox_smart_config(
                     "detour": "proxy-selector",
                 },
                 {
+                    "tag": "dns-remote-google",
+                    "type": "https",
+                    "server": "8.8.8.8",
+                    "detour": "proxy-selector",
+                },
+                {
                     "tag": "dns-direct",
                     "type": "udp",
                     "server": "77.88.8.8",
+                },
+                {
+                    "tag": "dns-direct-sec",
+                    "type": "udp",
+                    "server": "77.88.8.1",
                 },
             ],
             "rules": [
@@ -3328,6 +3339,7 @@ def build_singbox_smart_config(
                         "sub.silentconnect.net",  # PLACEHOLDER
                         "edge.silentconnect.net",  # PLACEHOLDER
                         "fi.silentconnect.net",  # PLACEHOLDER
+                        "pl.silentconnect.net",  # PLACEHOLDER
                         "aiprimetech.io",
                         "platega.io",
                         "api.platega.io",
@@ -3337,13 +3349,15 @@ def build_singbox_smart_config(
                 },
                 {
                     "domain_suffix": [
-                        "ru", "su", "xn--p1ai", "yandex.ru", "vk.com", "gosuslugi.ru", "silentconnect.net",  # PLACEHOLDER
+                        "ru", "su", "xn--p1ai", "yandex.ru", "vk.com", "gosuslugi.ru", "sberbank.ru", "tinkoff.ru", "ozon.ru", "wildberries.ru", "avito.ru", "silentconnect.net",  # PLACEHOLDER
                     ],
                     "server": "dns-direct",
                 },
             ],
             "final": "dns-remote",
             "strategy": "prefer_ipv4",
+            "independent_cache": True,
+            "reverse_mapping": True,
         },
         "inbounds": [
             {

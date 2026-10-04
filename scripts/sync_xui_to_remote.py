@@ -68,11 +68,53 @@ def heal_local_xui_from_shop_db():
                 (exp_ms, email, exp_ms)
             )
 
-        if healed_count > 0:
+        # 4. Lifecycle: Expire past-due profiles in vpn_shop.db
+        exp_prof_res = s_cur.execute(
+            "UPDATE profiles SET status = 'expired' WHERE status = 'active' AND expires_at > 0 AND expires_at <= ?",
+            (now_s,)
+        )
+        if exp_prof_res.rowcount > 0:
+            s_conn.commit()
+            print(f"Lifecycle: Marked {exp_prof_res.rowcount} expired profiles in vpn_shop.db")
+        s_conn.close()
+
+        # 5. Lifecycle: Disable past-due clients in NL x-ui.db
+        exp_clients = x_cur.execute(
+            "SELECT email, uuid FROM clients WHERE enable = 1 AND expiry_time > 0 AND expiry_time <= ?",
+            (now_ms,)
+        ).fetchall()
+
+        if exp_clients:
+            exp_emails = {r[0] for r in exp_clients}
+            exp_uuids = {r[1] for r in exp_clients}
+            x_cur.execute(
+                "UPDATE clients SET enable = 0, updated_at = ? WHERE enable = 1 AND expiry_time > 0 AND expiry_time <= ?",
+                (now_ms, now_ms)
+            )
+            x_cur.execute(
+                "UPDATE client_traffics SET enable = 0 WHERE enable = 1 AND expiry_time > 0 AND expiry_time <= ?",
+                (now_ms,)
+            )
+            for ib_id, settings_raw in inbounds:
+                if not settings_raw:
+                    continue
+                try:
+                    st = json.loads(settings_raw)
+                    ib_changed = False
+                    for cl in st.get("clients", []):
+                        if (cl.get("email") in exp_emails or cl.get("id") in exp_uuids) and cl.get("enable") is not False:
+                            cl["enable"] = False
+                            ib_changed = True
+                    if ib_changed:
+                        x_cur.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(st, ensure_ascii=False), ib_id))
+                except Exception:
+                    pass
+            print(f"Lifecycle: Cleanly disabled {len(exp_clients)} expired clients in NL x-ui.db")
+
+        if healed_count > 0 or exp_clients:
             x_conn.commit()
-            print(f"Self-healed {healed_count} entries in local NL x-ui.db from active profiles in vpn_shop.db")
-            # Restart x-ui on NL if inbounds were healed
-            subprocess.run(["systemctl", "restart", "x-ui"], check=False)
+            if healed_count > 0:
+                print(f"Self-healed {healed_count} entries in local NL x-ui.db from active profiles in vpn_shop.db")
         x_conn.close()
     except Exception as e:
         print(f"heal_local_xui_from_shop_db error: {e}", file=sys.stderr)
