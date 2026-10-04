@@ -3356,7 +3356,6 @@ def build_singbox_smart_config(
             ],
             "final": "dns-remote",
             "strategy": "prefer_ipv4",
-            "independent_cache": True,
             "reverse_mapping": True,
         },
         "inbounds": [
