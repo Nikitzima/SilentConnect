@@ -22,7 +22,6 @@ def heal_local_xui_from_shop_db():
             "SELECT id, public_id, xui_email, xui_client_id, expires_at, status FROM profiles WHERE status = 'active' AND expires_at > ?",
             (now_s,)
         ).fetchall()
-        s_conn.close()
 
         x_conn = sqlite3.connect(xui_db)
         x_cur = x_conn.cursor()
