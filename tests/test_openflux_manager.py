@@ -152,6 +152,16 @@ class TestOpenFluxManager(unittest.TestCase):
         self.assertEqual(slot["status"], "active")
         self.assertIsNone(slot["pending_server"])
 
+    @patch("vpn_shop.openflux_manager.rclone_create_user_doc", return_value=True)
+    @patch("vpn_shop.openflux_manager.rclone_get_public_link", return_value="https://cloud.mail.ru/public/NL/Doc")
+    @patch("vpn_shop.openflux_manager.start_openflux_worker", return_value=True)
+    def test_confirm_server_switch_idempotent(self, mock_worker, mock_link, mock_create):
+        activate_openflux_slot(self.conn, "test_user_idemp")
+        # Already active, calling confirm_server_switch returns active slot cleanly without exception
+        slot = confirm_server_switch(self.conn, "test_user_idemp")
+        self.assertEqual(slot["status"], "active")
+        self.assertIsNone(slot["pending_server"])
+
 
 if __name__ == "__main__":
     unittest.main()

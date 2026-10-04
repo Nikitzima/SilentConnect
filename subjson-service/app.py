@@ -8468,15 +8468,37 @@ def setup_page_html(
       }
       try {
         const res = await fetch("/sub/openflux/__SUB_ID__/switch/confirm", { method: "POST" });
-        const data = await res.json();
-        closeWlConfirmModal();
-        if (data.ok && data.slot) {
+        let data = null;
+        try {
+          data = await res.json();
+        } catch (e) {}
+
+        if (data && data.ok && data.slot) {
           _wlSlot = data.slot;
+          closeWlConfirmModal();
           renderWlSlot();
-        } else {
-          alert("Ошибка финализации: " + (data.error || "Ошибка"));
+          return;
         }
+
+        // Double check live state in case of gateway timeout or double submission
+        await fetchWlState();
+        if (_wlSlot && _wlSlot.status === "active") {
+          closeWlConfirmModal();
+          renderWlSlot();
+          return;
+        }
+
+        closeWlConfirmModal();
+        const errMsg = (data && (data.error || data.message || data.errorMessage)) || "Не удалось завершить смену сервера";
+        alert("Ошибка финализации: " + errMsg);
       } catch (err) {
+        await fetchWlState();
+        if (_wlSlot && _wlSlot.status === "active") {
+          closeWlConfirmModal();
+          renderWlSlot();
+          return;
+        }
+        closeWlConfirmModal();
         alert("Ошибка связи при подтверждении: " + err);
       } finally {
         if (btn) {
