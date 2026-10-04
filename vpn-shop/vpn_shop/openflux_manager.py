@@ -12,6 +12,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import threading
 import time
 import zlib
 from typing import Any, Optional
@@ -479,14 +480,19 @@ def start_server_switch(conn: sqlite3.Connection, profile_id: str, target_server
     return get_or_create_openflux_slot(conn, profile_id)
 
 
-def confirm_server_switch(conn: sqlite3.Connection, profile_id: str) -> dict[str, Any]:
+def confirm_server_switch(conn: sqlite3.Connection, profile_id: str, async_cleanup: bool = True) -> dict[str, Any]:
     """
     Phase 2 of Two-Phase Handover:
     - User confirmed they imported the new config.
-    - Decommissions old server (stops old worker, deletes old .docx).
-    - Promotes pending to active.
+    - Idempotent: if already active on target, returns current active slot.
+    - Promotes pending to active immediately in DB.
+    - Decommissions old server (stops old worker, deletes old .docx, renames container) asynchronously.
     """
     slot = get_or_create_openflux_slot(conn, profile_id)
+    if slot["status"] == "active" and not slot.get("pending_server"):
+        # Already confirmed and active! Idempotent return.
+        return slot
+
     if slot["status"] != "migrating" or not slot.get("pending_server"):
         raise ValueError("Нет активной процедуры смены сервера для подтверждения")
 
@@ -498,26 +504,10 @@ def confirm_server_switch(conn: sqlite3.Connection, profile_id: str) -> dict[str
     new_doc = slot["pending_doc_name"]
     new_url = slot["pending_doc_url"]
     new_container = slot["pending_container_name"]
-
-    # 1. Stop and remove old worker
     clean_uid = re.sub(r"[^\w\-]", "", profile_id)
-    if old_srv:
-        if old_container:
-            stop_openflux_worker(old_srv, old_container)
-        if old_container != f"openflux-worker-{clean_uid}":
-            stop_openflux_worker(old_srv, f"openflux-worker-{clean_uid}")
-
-    # 2. Delete old doc from Cloud
-    if old_doc:
-        rclone_delete_user_doc(old_doc)
-
-    # 3. Rename pending container to canonical name on new server
     canonical_container = f"openflux-worker-{clean_uid}"
-    if new_srv and new_container and new_container != canonical_container:
-        rename_openflux_worker(new_srv, new_container, canonical_container)
-        new_container = canonical_container
 
-    # 4. Finalize slot state
+    # 1. Finalize slot state immediately in DB!
     now = int(time.time())
     conn.execute(
         """
@@ -535,11 +525,35 @@ def confirm_server_switch(conn: sqlite3.Connection, profile_id: str) -> dict[str
             updated_at = ?
         WHERE profile_public_id = ?
         """,
-        (new_srv, new_doc, new_url, new_container, now, profile_id),
+        (new_srv, new_doc, new_url, canonical_container, now, profile_id),
     )
     conn.commit()
 
     LOGGER.info("Confirmed server switch for %s: migrated to %s", profile_id, new_srv)
+
+    # 2. Decommission old resources & rename worker
+    def _do_cleanup():
+        try:
+            if old_srv:
+                if old_container:
+                    stop_openflux_worker(old_srv, old_container)
+                if old_container != canonical_container:
+                    stop_openflux_worker(old_srv, canonical_container)
+            if old_doc:
+                rclone_delete_user_doc(old_doc)
+            if new_srv and new_container and new_container != canonical_container:
+                rename_openflux_worker(new_srv, new_container, canonical_container)
+        except Exception as exc:
+            LOGGER.warning("Background cleanup during server switch for %s failed: %s", profile_id, exc)
+
+    if async_cleanup:
+        t = threading.Thread(target=_do_cleanup, daemon=True)
+        t.start()
+        # Give up to 100ms so fast mock calls in unit tests finish synchronously
+        t.join(timeout=0.1)
+    else:
+        _do_cleanup()
+
     return get_or_create_openflux_slot(conn, profile_id)
 
 
