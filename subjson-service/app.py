@@ -8240,6 +8240,7 @@ def setup_page_html(
     };
 
     let _wlSlot = __OPENFLUX_SLOT_JSON__;
+    const _wlNodes = __OPENFLUX_DATA_JSON__;
     let _wlTimerInterval = null;
     let currentWlCountry = "nl";
 
