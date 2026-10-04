@@ -305,3 +305,53 @@ class XuiDatabase:
         finally:
             conn.close()
 
+    def disable_expired_clients(self, now_ms: int | None = None) -> int:
+        if now_ms is None:
+            now_ms = int(time.time() * 1000)
+        conn = sqlite3.connect(self.path, timeout=30.0)
+        conn.execute("PRAGMA busy_timeout = 30000;")
+        try:
+            exp_clients = conn.execute(
+                "SELECT email, uuid FROM clients WHERE enable = 1 AND expiry_time > 0 AND expiry_time <= ?",
+                (now_ms,),
+            ).fetchall()
+            if not exp_clients:
+                return 0
+
+            exp_emails = {r[0] for r in exp_clients if r[0]}
+            exp_uuids = {r[1] for r in exp_clients if r[1]}
+
+            conn.execute(
+                "UPDATE clients SET enable = 0, updated_at = ? WHERE enable = 1 AND expiry_time > 0 AND expiry_time <= ?",
+                (now_ms, now_ms),
+            )
+            try:
+                conn.execute(
+                    "UPDATE client_traffics SET enable = 0 WHERE enable = 1 AND expiry_time > 0 AND expiry_time <= ?",
+                    (now_ms,),
+                )
+            except sqlite3.OperationalError:
+                pass
+
+            inbounds_rows = conn.execute("SELECT id, settings FROM inbounds").fetchall()
+            for ib_id, settings_raw in inbounds_rows:
+                if not settings_raw:
+                    continue
+                try:
+                    st = json.loads(settings_raw)
+                    ib_changed = False
+                    for cl in st.get("clients") or []:
+                        if (cl.get("email") in exp_emails or cl.get("id") in exp_uuids) and cl.get("enable") is not False:
+                            cl["enable"] = False
+                            ib_changed = True
+                    if ib_changed:
+                        conn.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(st, ensure_ascii=False), ib_id))
+                except Exception:
+                    pass
+
+            conn.commit()
+            self.invalidate_cache()
+            return len(exp_clients)
+        finally:
+            conn.close()
+
