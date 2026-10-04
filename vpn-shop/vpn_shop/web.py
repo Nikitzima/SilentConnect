@@ -386,7 +386,7 @@ function openAwgQrModal(subId, slotIdx, slotLabel) {
   var title = document.getElementById('awg-modal-title');
   var dl = document.getElementById('awg-modal-dl');
   if (!modal || !img) return;
-  title.innerText = '📱 ' + (slotLabel || ('Устройство ' + slotIdx));
+  title.innerText = '🔲 ' + (slotLabel || ('Устройство ' + slotIdx));
   img.src = '/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/qr?t=' + Date.now();
   dl.href = '/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/config';
   modal.style.display = 'flex';
