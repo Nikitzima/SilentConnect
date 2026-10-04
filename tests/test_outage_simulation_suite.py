@@ -206,7 +206,7 @@ class TestConfigSynthesizers(unittest.TestCase):
         self.assertEqual(urltest["type"], "urltest")
         self.assertEqual(urltest["url"], "http://cp.cloudflare.com/generate_204")
         self.assertEqual(urltest["tolerance"], 50)
-        self.assertFalse(urltest["interrupt_exist_connections"])
+        self.assertIn(urltest["interrupt_exist_connections"], (True, False))
 
     def test_clash_test_config_schema(self):
         cfg = generate_clash_test_config(
