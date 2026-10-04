@@ -2905,7 +2905,48 @@ class ShopBot:
 
         return results
 
+    def reap_expired_subscriptions(self) -> None:
+        now = now_ts()
+        expired_profiles = self.store.expire_past_due_profiles(now=now)
+        disabled_count = 0
+        xui_db = getattr(self, "xui_db", None) or getattr(self.provisioner, "xui_db", None)
+        if xui_db:
+            disabled_count = xui_db.disable_expired_clients(now_ms=now * 1000)
+
+        for profile in expired_profiles:
+            try:
+                self.store.record_admin_action(
+                    action_type="expire_subscription_lifecycle",
+                    target_type="profile",
+                    target_public_id=profile["public_id"],
+                    actor="system-lifecycle",
+                    meta={"xui_email": profile.get("xui_email"), "expires_at": profile.get("expires_at")},
+                )
+            except Exception:
+                pass
+            chat_id = profile.get("owner_chat_id")
+            if chat_id:
+                try:
+                    self.telegram.send_message(
+                        chat_id,
+                        f"⏳ Срок действия вашей подписки истёк.\n\n"
+                        f"Профиль: {profile.get('xui_email')}\n"
+                        f"Доступ к защищённому каналу приостановлен. Вы можете продлить подписку в меню бота.",
+                    )
+                except Exception:
+                    pass
+        if expired_profiles or disabled_count > 0:
+            LOGGER.info(
+                "Subscription reaper: marked %d profiles expired, disabled %d X-UI clients",
+                len(expired_profiles),
+                disabled_count,
+            )
+
     def _execute_periodic_tasks(self) -> None:
+        try:
+            self.reap_expired_subscriptions()
+        except Exception:
+            LOGGER.exception("Periodic subscription expiration reaper failed")
         try:
             self.cleanup_expired_test_profiles()
         except Exception:

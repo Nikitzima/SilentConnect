@@ -1952,6 +1952,42 @@ class Store:
             rows = conn.execute(query, params).fetchall()
         return [self._row_to_dict(row) or {} for row in rows]
 
+    def expire_past_due_profiles(self, now: int | None = None) -> list[dict[str, Any]]:
+        cutoff = now_ts() if now is None else int(now)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT p.*, po.chat_id AS owner_chat_id
+                FROM profiles p
+                LEFT JOIN profile_owners po ON po.profile_public_id = p.public_id
+                WHERE p.status = 'active' AND p.expires_at > 0 AND p.expires_at <= ?
+                ORDER BY p.expires_at ASC, p.id ASC
+                """,
+                (cutoff,),
+            ).fetchall()
+            if rows:
+                conn.execute(
+                    """
+                    UPDATE profiles
+                    SET status = 'expired', updated_at = ?
+                    WHERE status = 'active' AND expires_at > 0 AND expires_at <= ?
+                    """,
+                    (cutoff, cutoff),
+                )
+        return [self._row_to_dict(row) or {} for row in rows]
+
+    def mark_profile_expired(self, public_id_value: str) -> None:
+        now = now_ts()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE profiles
+                SET status = 'expired', updated_at = ?
+                WHERE public_id = ? AND status = 'active'
+                """,
+                (now, public_id_value),
+            )
+
     def list_profiles_due_for_reminder(
         self,
         *,
