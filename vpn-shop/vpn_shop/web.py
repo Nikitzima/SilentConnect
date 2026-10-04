@@ -1976,8 +1976,14 @@ class WebCheckout:
                 {status_html}
               </div>
               <div class="awg-slot-info">
-                <span>Сервер: <b>{srv_flag} {srv_name}</b></span>
-                <span>ID: <code>{client_ip}</code></span>
+                <div class="awg-info-col">
+                  <span class="awg-info-lbl">Сервер:</span>
+                  <span class="awg-info-val"><b>{srv_flag} {srv_name}</b></span>
+                </div>
+                <div class="awg-info-col right">
+                  <span class="awg-info-lbl">ID:</span>
+                  <span class="awg-info-val"><code>{client_ip}</code></span>
+                </div>
               </div>
               <div class="awg-slot-actions">
                 <div class="awg-action-row">
@@ -3213,6 +3219,23 @@ class WebCheckout:
       justify-content: space-between;
       font-size: 12px;
       color: var(--muted);
+      line-height: 1.4;
+    }}
+    .awg-info-col {{
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }}
+    .awg-info-col.right {{
+      text-align: right;
+    }}
+    .awg-info-lbl {{
+      font-size: 11px;
+      color: var(--muted);
+    }}
+    .awg-info-val b {{
+      color: #f1f5f9;
+      font-size: 12px;
     }}
     .awg-slot-info code {{
       font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;

@@ -6123,6 +6123,23 @@ def setup_page_html(
       justify-content: space-between;
       font-size: 12px;
       color: var(--muted);
+      line-height: 1.4;
+    }
+    .awg-info-col {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .awg-info-col.right {
+      text-align: right;
+    }
+    .awg-info-lbl {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .awg-info-val b {
+      color: #f1f5f9;
+      font-size: 12px;
     }
     .awg-slot-info code {
       font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
