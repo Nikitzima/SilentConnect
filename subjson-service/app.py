@@ -789,7 +789,7 @@ def render_subjson_awg_container(subscription_id: str, support_url: str) -> str:
             <h3>2. Добавление конфигурации устройства</h3>
             <p>Выберите нужный слот в блоке выше (например, «Устройство 1» для смартфона, «Устройство 2» для ПК):</p>
             <ul style="margin: 6px 0 10px 20px; padding: 0; font-size: 13.5px; color: #cbd5e1; line-height: 1.5;">
-              <li><b>На смартфоне:</b> Нажмите «📱 Показать QR-код» у слота, в Amnezia VPN нажмите <b>«+»</b> → <b>«Сканировать QR-код»</b>.</li>
+              <li><b>На смартфоне:</b> Нажмите «🔲 QR-код» у слота, в Amnezia VPN нажмите <b>«+»</b> → <b>«Сканировать QR-код»</b>.</li>
               <li><b>На компьютере:</b> Нажмите «📥 Скачать .conf», в Amnezia VPN выберите <b>«Файл с настройками»</b> и укажите файл.</li>
             </ul>
           </div>
@@ -7039,7 +7039,7 @@ def setup_page_html(
                 <span>📋</span> <span>Скопировать ключ</span>
               </button>
               <button type="button" class="button secondary" onclick="openWlQrModal('active')" style="min-height: 44px; padding: 10px 16px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 6px;">
-                <span>📱</span> <span>Показать QR-код</span>
+                <span>🔲</span> <span>Показать QR-код</span>
               </button>
             </div>
             <div style="margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.4;">
@@ -7073,7 +7073,7 @@ def setup_page_html(
                   <span>📋</span> <span>Скопировать новый ключ</span>
                 </button>
                 <button type="button" class="button secondary" onclick="openWlQrModal('pending')" style="min-height: 42px; padding: 8px 14px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px;">
-                  <span>📱</span> <span>Показать QR-код</span>
+                  <span>🔲</span> <span>Показать QR-код</span>
                 </button>
               </div>
 
@@ -7147,7 +7147,7 @@ def setup_page_html(
   <div id="awg-qr-modal" class="awg-modal-overlay" style="display: none;" onclick="if (event.target === this) closeAwgQrModal();">
     <div class="awg-modal-box">
       <div class="awg-modal-header">
-        <div id="awg-modal-title" style="font-weight: 700; font-size: 15px; color: #fff;">📱 AmneziaWG</div>
+        <div id="awg-modal-title" style="font-weight: 700; font-size: 15px; color: #fff;">🔲 AmneziaWG</div>
         <button type="button" class="awg-modal-close" onclick="closeAwgQrModal()" aria-label="Закрыть">&times;</button>
       </div>
       <div class="awg-modal-body">
@@ -7170,7 +7170,7 @@ def setup_page_html(
     <div class="awg-modal-box">
       <div class="awg-modal-header">
         <div id="wl-qr-modal-title" style="font-weight: 700; font-size: 15px; color: #fff; display: flex; align-items: center; gap: 8px;">
-          <span>📱</span> <span>OpenFlux · QR-код</span>
+          <span>🔲</span> <span>OpenFlux · QR-код</span>
         </div>
         <button type="button" class="awg-modal-close" onclick="closeWlQrModal()" aria-label="Закрыть">&times;</button>
       </div>
@@ -7892,7 +7892,7 @@ def setup_page_html(
       var title = document.getElementById('awg-modal-title');
       var dl = document.getElementById('awg-modal-dl');
       if (!modal || !img) return;
-      title.innerText = '📱 ' + (slotLabel || ('Устройство ' + slotIdx));
+      title.innerText = '🔲 ' + (slotLabel || ('Устройство ' + slotIdx));
       img.src = '/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/qr?t=' + Date.now();
       dl.href = '/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/config';
       modal.style.display = 'flex';
@@ -8546,7 +8546,7 @@ def setup_page_html(
       const link = isPending ? _wlSlot.pending_link : _wlSlot.active_link;
 
       if (title) {
-        title.innerHTML = '<span>📱</span> <span>OpenFlux · ' + srvFlag + ' ' + srvName + (isPending ? ' (Новый)' : '') + '</span>';
+        title.innerHTML = '<span>🔲</span> <span>OpenFlux · ' + srvFlag + ' ' + srvName + (isPending ? ' (Новый)' : '') + '</span>';
       }
       img.src = "/sub/openflux/__SUB_ID__/qr?target=" + (isPending ? "pending" : "active") + "&t=" + Date.now();
       modal.setAttribute("data-current-link", link || "");
@@ -8636,12 +8636,12 @@ def setup_page_html(
             <p>Добавьте узел в OpenFlux по скопированной ссылке или через QR-код:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
               <button type="button" class="button success" onclick="${copyFn}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ для OpenFlux</span></button>
-              <button type="button" class="button secondary" onclick="openWlQrModal('${qrTarget}')"><span>📱</span> <span>Показать QR-код</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal('${qrTarget}')"><span>🔲</span> <span>Показать QR-код</span></button>
               <a class="button secondary btn-wl-disabled" href="javascript:void(0)" onclick="event.preventDefault(); return false;" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;" title="Прямой переход openflux:// в разработке в TestFlight"><span>⚡</span> <span>1-Click импорт</span> <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(234, 179, 8, 0.18); color: #fde047; font-weight: 600; border: 1px solid rgba(234, 179, 8, 0.3);">Скоро</span></a>
             </div>
             <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
               ℹ️ <strong>Особенность iOS:</strong> кнопка прямого перехода пока не активна (в бета-версии TestFlight схема <code>openflux://</code> в разработке).<br>
-              👉 <strong>Способ подключения:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ключ для OpenFlux»</strong> выше, откройте приложение OpenFlux на iPhone и нажмите <strong>«Вставить из буфера»</strong> (или отсканируйте <strong>«📱 QR-код»</strong>).
+              👉 <strong>Способ подключения:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ключ для OpenFlux»</strong> выше, откройте приложение OpenFlux на iPhone и нажмите <strong>«Вставить из буфера»</strong> (или отсканируйте <strong>«🔲 QR-код»</strong>).
             </div>
           </div>
           <div class="step" data-num="3">
@@ -8673,7 +8673,7 @@ def setup_page_html(
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
               <a class="button success" href="${activeLink}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;" title="Прямое подключение в OpenFlux на Android"><span>⚡</span> <span>1-Click импорт</span></a>
               <button type="button" class="button secondary" onclick="${copyFn}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ</span></button>
-              <button type="button" class="button secondary" onclick="openWlQrModal('${qrTarget}')" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📱</span> <span>Показать QR-код</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal('${qrTarget}')" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>🔲</span> <span>Показать QR-код</span></button>
             </div>
             <p style="font-size: 12.5px; color: var(--muted); margin-top: 6px;">💡 Браузер автоматически откроет приложение OpenFlux и добавит конфигурацию узла.</p>
           </div>
@@ -8705,7 +8705,7 @@ def setup_page_html(
             <p>Скопируйте ссылку конфигурации для OpenFlux Desktop или используйте QR-код:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
               <button type="button" class="button success" onclick="${copyFn}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ для OpenFlux</span></button>
-              <button type="button" class="button secondary" onclick="openWlQrModal('${qrTarget}')"><span>📱</span> <span>Показать QR-код</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal('${qrTarget}')"><span>🔲</span> <span>Показать QR-код</span></button>
             </div>
             <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
               ℹ️ <strong>Инструкция для Windows:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ключ для OpenFlux»</strong>, откройте OpenFlux Desktop и нажмите <strong>«Профили» → «Импорт»</strong> (или <code>Ctrl+I</code>). Вставьте ключ и включите тумблер <strong>«Весь трафик»</strong> (Wintun).
@@ -8739,10 +8739,10 @@ def setup_page_html(
             <p>Скопируйте ссылку конфигурации или отсканируйте QR-код для добавления в OpenFlux:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
               <button type="button" class="button success" onclick="${copyFn}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ для OpenFlux</span></button>
-              <button type="button" class="button secondary" onclick="openWlQrModal('${qrTarget}')"><span>📱</span> <span>Показать QR-код</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal('${qrTarget}')"><span>🔲</span> <span>Показать QR-код</span></button>
             </div>
             <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
-              ℹ️ <strong>Инструкция для macOS:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ключ»</strong> выше, откройте OpenFlux и вставьте ссылку в меню импорта (или отсканируйте <strong>«📱 Показать QR-код»</strong>).
+              ℹ️ <strong>Инструкция для macOS:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ключ»</strong> выше, откройте OpenFlux и вставьте ссылку в меню импорта (или отсканируйте <strong>«🔲 QR-код»</strong>).
             </div>
           </div>
           <div class="step" data-num="3">
@@ -8772,7 +8772,7 @@ def setup_page_html(
             <p>Скопируйте ссылку конфигурации для OpenFlux Desktop:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
               <button type="button" class="button success" onclick="${copyFn}" style="min-height: 42px; display: inline-flex; align-items: center; gap: 8px;"><span>📋</span> <span>Скопировать ключ для OpenFlux</span></button>
-              <button type="button" class="button secondary" onclick="openWlQrModal('${qrTarget}')"><span>📱</span> <span>Показать QR-код</span></button>
+              <button type="button" class="button secondary" onclick="openWlQrModal('${qrTarget}')"><span>🔲</span> <span>Показать QR-код</span></button>
             </div>
             <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
               ℹ️ <strong>Инструкция для Linux:</strong> нажмите зелёную кнопку <strong>«📋 Скопировать ключ»</strong> для добавления в OpenFlux Desktop.
