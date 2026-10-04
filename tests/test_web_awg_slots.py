@@ -192,33 +192,35 @@ class TestWebAwgSlots(unittest.TestCase):
         self.assertEqual(slot2["slot_label"], "Рабочий Mac")
 
     def test_05b_post_slot_switch_country_and_verification_gate(self):
-        # 1. Switch slot 1 from NL to PL
-        payload = json.dumps({"country": "pl"}).encode("utf-8")
-        status, headers, body = self._http_request(
-            "POST",
-            f"/sub/awg/{self.sub_id}/slot/1/switch_country",
-            headers={"Content-Type": "application/json", "Content-Length": str(len(payload))},
-            body=payload,
-        )
-        self.assertEqual(status, HTTPStatus.OK)
-        data = json.loads(body.decode("utf-8"))
-        self.assertTrue(data.get("ok"))
-        self.assertEqual(data.get("server_code"), "pl")
-        self.assertIn("Локация успешно переключена на Польша", data.get("message", ""))
-        self.assertIn("приостановлено", data.get("message", ""))
+        from unittest.mock import patch
+        # 1. Switch slot 1 from NL to PL (mock remote SSH peer addition/removal)
+        with patch("vpn_shop.awg_manager.add_slot_peer", return_value=True), \
+             patch("vpn_shop.awg_manager.remove_slot_peer", return_value=True):
+            payload = json.dumps({"country": "pl"}).encode("utf-8")
+            status, headers, body = self._http_request(
+                "POST",
+                f"/sub/awg/{self.sub_id}/slot/1/switch_country",
+                headers={"Content-Type": "application/json", "Content-Length": str(len(payload))},
+                body=payload,
+            )
+            self.assertEqual(status, HTTPStatus.OK)
+            data = json.loads(body.decode("utf-8"))
+            self.assertTrue(data.get("ok"))
+            self.assertEqual(data.get("server_code"), "pl")
+            self.assertIn("Локация успешно переключена на Польша", data.get("message", ""))
+            self.assertIn("приостановлено", data.get("message", ""))
 
-        # Verify active in store
-        active_slot = self.store.get_awg_slot_by_index(self.profile["public_id"], 1)
-        self.assertEqual(active_slot["server_code"], "pl")
-        self.assertEqual(active_slot["enabled"], 1)
+            # Verify active in store
+            active_slot = self.store.get_awg_slot_by_index(self.profile["public_id"], 1)
+            self.assertEqual(active_slot["server_code"], "pl")
+            self.assertEqual(active_slot["enabled"], 1)
 
-        # Verify old NL slot config is preserved in DB (not deleted!)
-        nl_slot = self.store.get_awg_slot_by_index(self.profile["public_id"], 1, server_code="nl")
-        self.assertIsNotNone(nl_slot)
-        self.assertEqual(nl_slot["enabled"], 0)
+            # Verify old NL slot config is preserved in DB (not deleted!)
+            nl_slot = self.store.get_awg_slot_by_index(self.profile["public_id"], 1, server_code="nl")
+            self.assertIsNotNone(nl_slot)
+            self.assertEqual(nl_slot["enabled"], 0)
 
         # 2. Verification Gate Failure simulation: target server fails
-        from unittest.mock import patch
         with patch("vpn_shop.awg_manager.add_slot_peer", return_value=False):
             payload_fi = json.dumps({"country": "fi"}).encode("utf-8")
             status, headers, body = self._http_request(
