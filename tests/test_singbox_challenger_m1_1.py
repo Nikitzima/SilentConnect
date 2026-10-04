@@ -207,10 +207,10 @@ class SingboxChallengerM1Test(unittest.TestCase):
         self.assertEqual(urltest.get("type"), "urltest", "Outbound[1] must be of type 'urltest'")
         self.assertEqual(urltest.get("tag"), "auto-urltest", "Outbound[1] tag must be 'auto-urltest'")
         self.assertEqual(urltest.get("url"), "https://cp.cloudflare.com/generate_204", "Healthcheck URL must be cp.cloudflare.com/generate_204")
-        self.assertEqual(urltest.get("interval"), "3m", "Healthcheck interval must be '3m'")
-        self.assertEqual(urltest.get("idle_timeout"), "15m", "Healthcheck idle_timeout must be '15m'")
+        self.assertEqual(urltest.get("interval"), "1m", "Healthcheck interval must be '1m'")
+        self.assertEqual(urltest.get("idle_timeout"), "30m", "Healthcheck idle_timeout must be '30m'")
         self.assertEqual(urltest.get("tolerance"), 50, "Healthcheck latency tolerance must be 50ms")
-        self.assertFalse(urltest.get("interrupt_exist_connections"), "interrupt_exist_connections must be False")
+        self.assertTrue(urltest.get("interrupt_exist_connections"), "interrupt_exist_connections must be True")
 
     def test_03_all_10_nodes_present_in_urltest_pool(self):
         """Assert auto-urltest contains the primary protocol nodes."""
@@ -268,7 +268,7 @@ class SingboxChallengerM1Test(unittest.TestCase):
         self.assertEqual(ob.get("type"), "hysteria2")
         self.assertIn(ob.get("server"), ("sub.example.com", "edge.example.com"))
         self.assertEqual(ob.get("server_ports"), ["30000:40000"])
-        self.assertEqual(ob.get("hop_interval"), "30s")
+        self.assertEqual(ob.get("hop_interval"), "60s")
         self.assertEqual(ob["tls"].get("alpn"), ["h3"])
         self.assertIn(ob["tls"].get("server_name"), ("sub.example.com", "edge.example.com"))
         self.assertEqual(ob.get("obfs", {}).get("type"), "gecko")
@@ -321,7 +321,7 @@ class SingboxChallengerM1Test(unittest.TestCase):
         self.assertEqual(ob.get("type"), "hysteria2")
         self.assertEqual(ob.get("server"), "fi.example.com")
         self.assertEqual(ob.get("server_ports"), ["30000:40000"])
-        self.assertEqual(ob.get("hop_interval"), "30s")
+        self.assertEqual(ob.get("hop_interval"), "60s")
         self.assertEqual(ob["tls"].get("alpn"), ["h3"])
         self.assertEqual(ob["tls"].get("server_name"), "fi.example.com")
         self.assertEqual(ob.get("obfs", {}).get("type"), "gecko")
