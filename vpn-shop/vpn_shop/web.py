@@ -2316,9 +2316,23 @@ class WebCheckout:
         except ValueError as exc:
             return {"ok": False, "message": str(exc) or "Промокод не найден или у него истёк срок действия."}
 
-    def render_page(self, title: str, body: str, *, refresh_seconds: int | None = None) -> bytes:
+    def render_page(
+        self,
+        title: str,
+        body: str,
+        *,
+        refresh_seconds: int | None = None,
+        extra_css: str = "",
+        include_external_fonts: bool = True,
+    ) -> bytes:
         refresh = f'<meta http-equiv="refresh" content="{int(refresh_seconds)}">' if refresh_seconds else ""
         notice_html = f'<div class="notice site-alert" role="status">{html.escape(TEMP_NETWORK_NOTICE)}</div>' if TEMP_NETWORK_NOTICE else ""
+        font_links = (
+            '<link rel="preconnect" href="https://fonts.googleapis.com">\n'
+            '  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
+            '  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">'
+            if include_external_fonts else ""
+        )
         html_doc = f"""<!doctype html>
 <html lang="ru">
 <head>
@@ -2337,9 +2351,7 @@ class WebCheckout:
   {refresh}
   <title>{html.escape(title)} · SilentConnect</title>
   <link rel="icon" type="image/png" href="/assets/telegram/avatar.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  {font_links}
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   <style>
     :root {{
@@ -3427,6 +3439,7 @@ class WebCheckout:
         font-size: 13px;
       }}
     }}
+  {extra_css}
   </style>
   <script type="application/ld+json">
   {{
@@ -3463,7 +3476,7 @@ class WebCheckout:
   </script>
 </head>
 <body>
-  <header><nav class="wrap"><a href="/" class="brand"><img src="/assets/telegram/avatar.webp" alt="SilentConnect" class="brand-logo"><span>SilentConnect</span></a><div class="navlinks"><a href="/#tariffs" class="span-2">Тарифы</a><a href="/about" class="span-2"><span class="desktop-nav-txt">О сервисе</span><span class="mobile-nav-txt">О нас</span></a><a href="/contact" class="span-2">Контакты</a><a href="{html.escape(self.bot_url)}" class="span-3">Telegram-бот</a><a href="{html.escape(self.support_url)}" class="span-3">Поддержка</a><a href="#cabinet" class="span-6" onclick="openCabinetModal(); return false;" style="color: #2fbf71; font-weight: 600;">🔑 Личный кабинет</a></div></nav></header>
+  <header class="site-header"><nav class="wrap"><a href="/" class="brand"><img src="/assets/telegram/avatar.webp" alt="SilentConnect" class="brand-logo"><span>SilentConnect</span></a><div class="navlinks"><a href="/#tariffs" class="span-2">Тарифы</a><a href="/about" class="span-2"><span class="desktop-nav-txt">О сервисе</span><span class="mobile-nav-txt">О нас</span></a><a href="/contact" class="span-2">Контакты</a><a href="{html.escape(self.bot_url)}" class="span-3">Telegram-бот</a><a href="{html.escape(self.support_url)}" class="span-3">Поддержка</a><a href="#cabinet" class="span-6" onclick="openCabinetModal(); return false;" style="color: #2fbf71; font-weight: 600;">🔑 Личный кабинет</a></div></nav></header>
   <main class="wrap">{notice_html}{body}</main>
   <footer>
     <div class="wrap footer-wrap">
@@ -3480,16 +3493,16 @@ class WebCheckout:
 
   <div id="cabinetModal" class="modal-overlay" style="display: none;">
     <div class="modal-card">
-      <button type="button" onclick="closeCabinetModal()" style="position: absolute; top: 16px; right: 16px; width: 34px !important; height: 34px !important; min-height: 34px !important; max-height: 34px !important; padding: 0 !important; background: rgba(255,255,255,0.06) !important; border: 1px solid rgba(255,255,255,0.12) !important; border-radius: 50% !important; color: #8ea89a !important; cursor: pointer; display: flex !important; align-items: center !important; justify-content: center !important; outline: none; box-shadow: none !important; aspect-ratio: 1 / 1 !important; transition: all 0.2s;" onmouseover="this.style.borderColor='rgba(47,191,113,0.5)'; this.style.color='#fff';" onmouseout="this.style.borderColor='rgba(255,255,255,0.12)'; this.style.color='#8ea89a';"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
-      <div style="font-size: 40px; margin-bottom: 12px;">🔑</div>
-      <h2 style="margin: 0 0 8px; font-size: 24px; color: #fff; background: linear-gradient(to right, #fff, #2fbf71); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Личный кабинет</h2>
-      <p style="color: #8ea89a; font-size: 14px; margin: 0 0 22px; line-height: 1.5;">Укажите Email, указанный при покупке. Мы пришлем прямые ссылки доступа на вашу почту.</p>
+      <button type="button" class="modal-close" onclick="closeCabinetModal()" aria-label="Закрыть окно"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+      <div class="modal-key" aria-hidden="true">🔑</div>
+      <h2>Личный кабинет</h2>
+      <p>Укажите Email, указанный при покупке. Мы пришлем прямые ссылки доступа на вашу почту.</p>
       <form id="cabinetForm" onsubmit="submitCabinetForm(event)">
-        <input type="email" id="cabinetEmailInput" class="field" placeholder="yourname@gmail.com" required style="text-align: center; font-size: 16px; margin-bottom: 12px; height: 50px; background: rgba(0,0,0,0.4); border-color: rgba(255,255,255,0.12);">
+        <input type="email" id="cabinetEmailInput" class="field" placeholder="yourname@gmail.com" required>
         <div class="cf-turnstile" data-sitekey="{html.escape(self.settings.cf_turnstile_site_key)}" data-theme="dark" data-refresh-expired="auto" style="margin: 12px 0; display: flex; justify-content: center;"></div>
-        <button type="submit" id="cabinetSubmitBtn" class="btn" style="width: 100%; min-height: 48px; font-size: 15px;">Получить доступ на Email</button>
+        <button type="submit" id="cabinetSubmitBtn" class="btn">Получить доступ на Email</button>
       </form>
-      <div id="cabinetStatus" style="margin-top: 16px; font-size: 14px; display: none; line-height: 1.5;"></div>
+      <div id="cabinetStatus" style="display: none;"></div>
     </div>
   </div>
 
@@ -3898,6 +3911,54 @@ class WebCheckout:
                     }
         plans_json = json.dumps(plans, ensure_ascii=False)
         initial_price = int(plans["tcp_3_30"]["price"])
+
+        # The checked-in landing file is the shared visual source for the static deliverable
+        # and the live `/` route. Keep backend-owned values injected at render time.
+        landing_path = self.settings.root_dir / "index.html"
+        if landing_path.is_file():
+            landing_document = landing_path.read_text(encoding="utf-8")
+            stylesheet_match = re.search(r"<style>(.*?)</style>", landing_document, re.DOTALL)
+            main_match = re.search(r'<main class="wrap">(.*?)</main>', landing_document, re.DOTALL)
+            if stylesheet_match and main_match:
+                landing_css = stylesheet_match.group(1)
+                landing_body = main_match.group(1)
+                landing_body = landing_body.replace("<!-- RUNTIME_FLASH -->", flash_html, 1)
+                landing_body = landing_body.replace("<!-- RUNTIME_REFERRAL -->", ref_banner, 1)
+                landing_body = landing_body.replace("<!-- RUNTIME_ORDER_FIELDS -->", promo_hidden + ref_hidden, 1)
+                landing_body = landing_body.replace(
+                    'id="promo_code_input" name="promo_code" value=""',
+                    f'id="promo_code_input" name="promo_code" value="{escaped_promo_code}"',
+                    1,
+                )
+                landing_body = landing_body.replace(
+                    'data-sitekey=""',
+                    f'data-sitekey="{html.escape(self.settings.cf_turnstile_site_key, quote=True)}"',
+                )
+                landing_body = landing_body.replace(
+                    "https://t.me/SilentConnectVPNBot?start=open",
+                    html.escape(self.bot_url, quote=True),
+                )
+                landing_body, plans_replacements = re.subn(
+                    r"(const plans = )\{.*?\};",
+                    lambda match: match.group(1) + plans_json + ";",
+                    landing_body,
+                    count=1,
+                    flags=re.DOTALL,
+                )
+                landing_body, price_replacements = re.subn(
+                    r'(<div class="summary-price" id="builder-price">).*?(</div>)',
+                    lambda match: match.group(1) + f"{initial_price} ₽" + match.group(2),
+                    landing_body,
+                    count=1,
+                )
+                if plans_replacements == 1 and price_replacements == 1:
+                    return self.render_page(
+                        "Приватный доступ",
+                        landing_body,
+                        extra_css=landing_css,
+                        include_external_fonts=False,
+                    )
+            LOGGER.error("Landing template %s is invalid; rendering compatibility page", landing_path)
 
         body = f"""
         <section class="hero">
