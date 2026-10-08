@@ -1,0 +1,1028 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="SilentConnect">
+  <meta name="theme-color" content="#07100d">
+  <meta property="og:title" content="SilentConnect — Приватный и безопасный интернет">
+  <meta property="og:description" content="Сервис защищенного и приватного сетевого доступа для персонального использования. Без ограничений и без логирования активности.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://silentconnect.net"><!-- PLACEHOLDER -->
+  <meta property="og:site_name" content="SilentConnect">
+  <meta property="og:image" content="https://silentconnect.net/assets/telegram/avatar.png"><!-- PLACEHOLDER -->
+
+  <title>Приватный доступ · SilentConnect</title>
+  <link rel="icon" type="image/png" href="/assets/telegram/avatar.png">
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07100d;
+      --panel: rgba(13, 24, 19, .84);
+      --panel-raised: #101d17;
+      --line: rgba(221, 255, 238, .1);
+      --line-strong: rgba(221, 255, 238, .17);
+      --text: #f3f8f5;
+      --muted: #9aaca3;
+      --green: #10b981;
+      --green-light: #59e5aa;
+      --green-soft: rgba(16, 185, 129, .12);
+      --radius: 22px;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 94px; background: var(--bg); }
+    body {
+      min-width: 320px;
+      margin: 0;
+      overflow-x: hidden;
+      position: relative;
+      isolation: isolate;
+      color: var(--text);
+      background: transparent;
+      font: 15px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    body::before {
+      position: fixed; z-index: -2; inset: 0; content: ""; pointer-events: none;
+      background:
+        radial-gradient(ellipse at 78% 8%, rgba(16,185,129,.14), transparent 29%),
+        radial-gradient(ellipse at 5% 48%, rgba(16,185,129,.055), transparent 25%),
+        radial-gradient(ellipse at 55% 100%, rgba(16,185,129,.055), transparent 32%),
+        linear-gradient(180deg, #07100d 0%, #08110e 50%, #070d0b 100%);
+    }
+    body::after {
+      position: fixed; z-index: -1; inset: 0; content: ""; pointer-events: none; opacity: .15;
+      background-image: linear-gradient(rgba(206,255,232,.055) 1px, transparent 1px), linear-gradient(90deg, rgba(206,255,232,.055) 1px, transparent 1px);
+      background-size: 52px 52px;
+      mask-image: linear-gradient(to bottom, #000, transparent 82%);
+    }
+    ::selection { color: #031b12; background: rgba(76,224,168,.78); }
+    a { color: inherit; text-decoration: none; }
+    button, input { font: inherit; }
+    button, a, input, summary { -webkit-tap-highlight-color: transparent; }
+    button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--green-light); outline-offset: 3px; }
+    .wrap { width: min(1180px, calc(100% - 48px)); margin-inline: auto; }
+
+    header.site-header {
+      position: sticky; z-index: 30; top: 0;
+      border-bottom: 1px solid rgba(226,255,242,.075);
+      background: rgba(7,15,12,.76);
+      backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+    }
+    header.site-header nav { display: flex; min-height: 76px; align-items: center; gap: 28px; }
+    .brand { display: inline-flex; min-height: 44px; flex: 0 0 auto; align-items: center; gap: 11px; color: #f5fbf7; font-size: 16px; font-weight: 690; letter-spacing: -.04em; }
+    .brand-logo {
+      display: grid; width: 36px; height: 36px; place-items: center;
+      border: 1px solid rgba(103,241,185,.29); border-radius: 12px;
+      color: #06271a; background: linear-gradient(145deg,#69edb9,#10b981 70%);
+      box-shadow: 0 0 26px rgba(16,185,129,.23), inset 0 1px rgba(255,255,255,.52);
+    }
+    .brand-logo svg { width: 21px; height: 21px; }
+    .navlinks { display: flex; align-items: center; justify-content: flex-end; gap: clamp(13px,1.7vw,23px); margin-left: auto; }
+    .navlinks a { display: inline-flex; min-height: 44px; align-items: center; color: #a9b9b0; font-size: 12px; font-weight: 540; white-space: nowrap; transition: color .18s ease, background .18s ease, border-color .18s ease; }
+    .navlinks a:hover { color: #fff; }
+    .navlinks a:last-child { min-height: 44px; padding: 0 14px; border: 1px solid rgba(16,185,129,.27); border-radius: 12px; color: #93edc4 !important; background: rgba(16,185,129,.085); }
+    .navlinks a:last-child:hover { border-color: rgba(16,185,129,.56); background: rgba(16,185,129,.15); }
+    .mobile-nav-txt { display: none; }
+    main { position: relative; }
+
+    .hero {
+      position: relative; display: grid; min-height: 650px;
+      grid-template-columns: minmax(0,1.02fr) minmax(400px,.98fr);
+      align-items: center; gap: 30px; padding: 72px 0 75px;
+    }
+    .hero > div:first-child { position: relative; z-index: 2; max-width: 590px; padding: 12px 0; }
+    .eyebrow {
+      display: inline-flex; align-items: center; gap: 9px; margin: 0 0 21px;
+      color: #9beac5; font-size: 10px; font-weight: 720; letter-spacing: .15em; line-height: 1.35; text-transform: uppercase;
+    }
+    .live-dot, .state-dot {
+      position: relative; display: inline-block; width: 7px; height: 7px; flex: 0 0 auto;
+      border-radius: 50%; background: var(--green-light); box-shadow: 0 0 13px rgba(76,224,168,.8);
+    }
+    .live-dot::after, .state-dot::after { position: absolute; inset: -4px; border: 1px solid rgba(76,224,168,.38); border-radius: 50%; content: ""; animation: pulse-ring 2.4s ease-out infinite; }
+    @keyframes pulse-ring { 0% { transform: scale(.55); opacity: .8; } 100% { transform: scale(1.8); opacity: 0; } }
+    .hero h1 {
+      max-width: 650px; margin: 0; color: #f3f8f5;
+      font-size: clamp(48px,5.7vw,74px); font-weight: 640; letter-spacing: -.068em; line-height: 1.015; text-wrap: balance;
+    }
+    .hero h1 span {
+      display: block; color: #94edc1;
+      background: linear-gradient(108deg,#e1fff0 0%,#72e7b2 42%,#10b981 100%);
+      -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .lead { max-width: 520px; margin: 24px 0 0; color: #a5b5ac; font-size: clamp(15px,1.45vw,17px); line-height: 1.72; text-wrap: pretty; }
+    .hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 11px; margin-top: 28px; }
+    .btn, .hero-actions > a, .promo-form button, .summary-box button[type="submit"] {
+      display: inline-flex; min-height: 50px; align-items: center; justify-content: center; gap: 9px; padding: 0 19px;
+      border: 1px solid transparent; border-radius: 14px; cursor: pointer; font-size: 13px; font-weight: 700; line-height: 1.2; text-align: center;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease, border-color .18s ease, opacity .18s ease;
+    }
+    .btn.primary, .hero-actions .primary, .summary-box button[type="submit"] {
+      color: #032418; background: linear-gradient(135deg,#5be6ad 0%,#10b981 50%,#0caa76 100%);
+      box-shadow: 0 10px 32px rgba(16,185,129,.19), inset 0 1px rgba(255,255,255,.38), inset 0 -1px rgba(0,57,37,.2);
+    }
+    .hero-actions .primary:hover, .summary-box button[type="submit"]:hover { transform: translateY(-2px); box-shadow: 0 14px 38px rgba(16,185,129,.29), inset 0 1px rgba(255,255,255,.42); }
+    .hero-actions .primary svg { width: 16px; height: 16px; }
+    .hero-actions .quiet-link { border-color: rgba(225,255,239,.13); color: #d4e2da; background: rgba(255,255,255,.035); }
+    .hero-actions .quiet-link:hover { border-color: rgba(225,255,239,.25); background: rgba(255,255,255,.07); }
+    .notice {
+      display: flex; max-width: 490px; align-items: flex-start; gap: 10px; margin-top: 22px; padding: 10px 12px;
+      border: 1px solid rgba(146,238,192,.12); border-radius: 12px; color: #a4b8ac; background: rgba(16,185,129,.055); font-size: 11px; line-height: 1.55;
+    }
+    .notice::before {
+      display: grid; width: 17px; height: 17px; flex: 0 0 auto; place-items: center; margin-top: 1px;
+      border-radius: 50%; color: #071d13; background: #5fe5ad; content: "✓"; font-size: 10px; font-weight: 900;
+    }
+    .hero-visual { position: relative; display: grid; min-width: 0; min-height: 490px; place-items: center; isolation: isolate; }
+    .hero-visual::before {
+      position: absolute; z-index: -2; width: min(100%,480px); aspect-ratio: 1; border: 1px solid rgba(101,234,175,.13); border-radius: 50%;
+      background: radial-gradient(circle,rgba(16,185,129,.15),rgba(16,185,129,.025) 40%,transparent 66%), repeating-radial-gradient(circle,transparent 0 56px,rgba(193,255,225,.075) 57px,transparent 58px);
+      box-shadow: 0 0 100px rgba(16,185,129,.08), inset 0 0 75px rgba(16,185,129,.055);
+    }
+    .hero-visual::after { position: absolute; z-index: -1; top: 4%; right: -1%; width: 70%; height: 75%; border-radius: 50%; content: ""; background: radial-gradient(ellipse,rgba(16,185,129,.12),transparent 66%); filter: blur(14px); pointer-events: none; }
+    .secure-card {
+      position: relative; width: min(100%,438px); overflow: hidden; padding: 24px 25px 19px;
+      border: 1px solid rgba(223,255,239,.17); border-radius: 25px;
+      background: linear-gradient(148deg,rgba(25,42,34,.96),rgba(12,22,17,.97) 58%,rgba(9,18,14,.99));
+      box-shadow: 0 36px 85px rgba(0,0,0,.48),0 0 70px rgba(16,185,129,.11),inset 0 1px rgba(255,255,255,.09);
+      backdrop-filter: blur(18px); transform: perspective(1200px) rotateY(-3deg) rotateX(1deg); animation: card-arrive .8s cubic-bezier(.2,.8,.2,1) both;
+    }
+    .secure-card::before { position: absolute; top: 0; right: 12%; left: 12%; height: 1px; content: ""; background: linear-gradient(90deg,transparent,rgba(212,255,233,.5),transparent); }
+    @keyframes card-arrive { from { opacity: 0; transform: perspective(1200px) translateY(16px) rotateY(-3deg) rotateX(1deg); } to { opacity: 1; transform: perspective(1200px) translateY(0) rotateY(-3deg) rotateX(1deg); } }
+    .secure-card-head, .secure-brand, .secure-status, .connection-state, .secure-card-footer { display: flex; align-items: center; }
+    .secure-card-head { justify-content: space-between; gap: 12px; }
+    .secure-brand { gap: 10px; }
+    .secure-brand-mark { display: grid; width: 35px; height: 35px; place-items: center; border: 1px solid rgba(92,231,173,.31); border-radius: 11px; color: #94f1c4; background: rgba(16,185,129,.13); box-shadow: inset 0 1px rgba(255,255,255,.11); }
+    .secure-brand-mark svg { width: 19px; height: 19px; }
+    .secure-brand strong, .secure-brand small, .connection-copy b, .connection-copy small, .floating-note strong, .floating-note small { display: block; }
+    .secure-brand strong { font-size: 12px; font-weight: 670; letter-spacing: -.02em; }
+    .secure-brand small { margin-top: 2px; color: #81968a; font-size: 8px; font-weight: 700; letter-spacing: .13em; }
+    .secure-status { min-height: 25px; gap: 7px; padding: 0 9px; border: 1px solid rgba(71,219,155,.18); border-radius: 99px; color: #9cedc2; background: rgba(16,185,129,.075); font-size: 8px; font-weight: 730; letter-spacing: .1em; }
+    .secure-status .live-dot { width: 5px; height: 5px; }
+    .network-map { position: relative; display: grid; grid-template-columns: 1fr .56fr 1fr .56fr 1fr; align-items: center; margin: 43px 0 38px; }
+    .network-node { position: relative; z-index: 2; display: grid; justify-items: center; gap: 10px; min-width: 0; color: #9cad9f; font-size: 9px; font-weight: 550; text-align: center; }
+    .node-icon { display: grid; width: 50px; height: 50px; place-items: center; border: 1px solid rgba(223,255,239,.14); border-radius: 16px; color: #cde9d9; background: linear-gradient(145deg,rgba(36,54,44,.88),rgba(15,27,20,.88)); box-shadow: inset 0 1px rgba(255,255,255,.08),0 8px 22px rgba(0,0,0,.2); }
+    .node-icon svg { width: 21px; height: 21px; }
+    .node-icon.secure-node { width: 58px; height: 58px; border-color: rgba(62,225,158,.5); border-radius: 19px; color: #7ee9b5; background: radial-gradient(circle at 40% 24%,rgba(52,216,150,.3),rgba(16,72,49,.72)); box-shadow: 0 0 31px rgba(16,185,129,.22),inset 0 1px rgba(255,255,255,.19); }
+    .route-line { position: relative; height: 1px; margin-top: -19px; background: linear-gradient(90deg,rgba(92,131,109,.13),rgba(76,224,168,.77),rgba(92,131,109,.13)); }
+    .route-line::after { position: absolute; top: -2px; left: 0; width: 5px; height: 5px; border-radius: 50%; content: ""; background: #9af2c6; box-shadow: 0 0 11px rgba(76,224,168,.9); animation: route-travel 2.5s ease-in-out infinite; }
+    .route-line:nth-of-type(2)::after { animation-delay: .8s; }
+    @keyframes route-travel { 0% { left: 0; opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { left: calc(100% - 5px); opacity: 0; } }
+    .connection-state { justify-content: space-between; gap: 12px; padding: 13px 14px; border: 1px solid rgba(113,236,179,.11); border-radius: 14px; background: linear-gradient(100deg,rgba(16,185,129,.1),rgba(16,185,129,.035)); }
+    .connection-copy { position: relative; padding-left: 17px; }
+    .connection-copy .state-dot { position: absolute; top: 6px; left: 0; width: 6px; height: 6px; }
+    .connection-copy .state-dot::after { inset: -3px; }
+    .connection-copy b { color: #dff9e9; font-size: 10px; font-weight: 650; }
+    .connection-copy small { margin-top: 3px; color: #82968a; font-size: 8.5px; }
+    .shield-seal { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid rgba(90,226,166,.18); border-radius: 11px; color: #72e9b1; background: rgba(16,185,129,.08); }
+    .shield-seal svg { width: 17px; height: 17px; }
+    .secure-card-footer { justify-content: space-between; gap: 10px; padding-top: 15px; color: #65786e; font-size: 8px; font-weight: 650; letter-spacing: .07em; }
+    .secure-card-footer span:last-child { color: #8bdcb2; letter-spacing: 0; }
+    .floating-note { position: absolute; z-index: 3; display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid rgba(225,255,239,.15); border-radius: 15px; color: #dcebe1; background: rgba(13,24,18,.89); box-shadow: 0 16px 35px rgba(0,0,0,.3),inset 0 1px rgba(255,255,255,.055); backdrop-filter: blur(16px); animation: float-note 5s ease-in-out infinite; }
+    .floating-note-top { top: 11%; right: -2%; }
+    .floating-note-bottom { bottom: 10%; left: -1%; animation-delay: -2.3s; }
+    .floating-note-icon { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; border: 1px solid rgba(92,231,173,.19); border-radius: 9px; color: #93edc1; background: rgba(16,185,129,.12); font-size: 13px; }
+    .floating-note strong { font-size: 10px; font-weight: 650; }
+    .floating-note small { margin-top: 2px; color: #8da196; font-size: 8.5px; }
+    @keyframes float-note { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+
+    .section { padding: 61px 0; }
+    .advantage-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); overflow: hidden; border: 1px solid rgba(222,255,240,.1); border-radius: 21px; background: linear-gradient(115deg,rgba(17,30,24,.82),rgba(10,19,15,.76)); box-shadow: 0 20px 55px rgba(0,0,0,.16),inset 0 1px rgba(255,255,255,.035); }
+    .advantage { position: relative; display: grid; grid-template-columns: 36px minmax(0,1fr); align-content: start; column-gap: 12px; min-width: 0; padding: 22px 18px; }
+    .advantage + .advantage { border-left: 1px solid rgba(226,255,242,.075); }
+    .advantage::before { display: grid; width: 34px; height: 34px; grid-row: span 2; place-items: center; border: 1px solid rgba(105,231,174,.15); border-radius: 11px; color: #82e6b7; background: rgba(16,185,129,.08); content: "↗"; font-size: 15px; font-weight: 650; }
+    .advantage:nth-child(2)::before { content: "⌁"; }
+    .advantage:nth-child(3)::before { content: "✉"; font-size: 13px; }
+    .advantage:nth-child(4)::before { content: "?"; }
+    .advantage-icon { display: grid; width: 34px; height: 34px; grid-row: span 2; place-items: center; border: 1px solid rgba(105,231,174,.15); border-radius: 11px; color: #82e6b7; background: rgba(16,185,129,.08); }
+    .advantage-icon svg { width: 17px; height: 17px; }
+    .advantage b { align-self: center; margin: 1px 0 5px; color: #eaf4ed; font-size: 11.5px; font-weight: 650; letter-spacing: -.01em; }
+    .advantage > span:last-child { grid-column: 2; color: #8c9f94; font-size: 10px; line-height: 1.5; }
+    .order { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding-top: 28px; }
+    .card { position: relative; border: 1px solid var(--line); border-radius: var(--radius); background: linear-gradient(145deg,rgba(17,29,23,.91),rgba(10,19,15,.89)); box-shadow: 0 16px 48px rgba(0,0,0,.2),inset 0 1px rgba(255,255,255,.035); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+    .order .card { display: flex; min-width: 0; flex-direction: column; justify-content: space-between; gap: 12px; padding: 22px; }
+    .order .card strong { color: #edf5ef; font-size: 14px; font-weight: 670; letter-spacing: -.025em; }
+    .order .card p { margin-top: 6px; color: #8e9f95; font-size: 11px; line-height: 1.6; }
+    #promo-status { margin-bottom: 8px !important; color: #9aaca3; font-size: 11px !important; }
+    .order .card form { display: flex !important; flex-direction: row !important; gap: 9px !important; margin-top: auto !important; }
+    .order .card form .field { flex: 1 1 auto; min-height: 46px; }
+    .order .card button, .order .card .btn { min-height: 46px !important; flex: 0 0 auto; padding: 0 15px; border: 1px solid rgba(224,255,240,.14); border-radius: 12px; color: #d9e8df; background: rgba(255,255,255,.055); font-size: 11px !important; text-decoration: none; }
+    .order .card button:hover, .order .card .btn:hover { border-color: rgba(86,228,169,.45); color: #a3f2ca; background: rgba(16,185,129,.1); }
+    .order .card:nth-child(2) > div:last-child { margin-top: auto !important; }
+
+    .section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin: 0 0 26px; }
+    .section-head h2 { margin: 0; color: #f0f7f2; font-size: clamp(27px,3.3vw,39px); font-weight: 620; letter-spacing: -.055em; line-height: 1.15; text-wrap: balance; }
+    .section-head > .muted { max-width: 480px; margin: 10px 0 0; color: #92a49a; font-size: 12px; line-height: 1.65; }
+    #tariffs { scroll-margin-top: 98px; padding-top: 65px; }
+    .builder { display: grid; grid-template-columns: minmax(0,1.05fr) minmax(340px,.84fr); align-items: start; gap: 16px; }
+    .builder > .card { min-width: 0; padding: 27px; }
+    .choice-section + .choice-section { margin-top: 27px; padding-top: 24px; border-top: 1px solid rgba(222,255,240,.08); }
+    .choice-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 14px; color: #e6f1e9; font-size: 13px; font-weight: 660; }
+    .choice-title::after { color: #65796e; content: "ВЫБЕРИТЕ ОДИН"; font-size: 8px; font-weight: 680; letter-spacing: .1em; }
+    .choice-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 9px; }
+    .choice-grid-durations { grid-template-columns: repeat(4,minmax(0,1fr)); }
+    .choice { position: relative; display: flex; min-width: 0; min-height: 74px; flex-direction: column; align-items: flex-start; justify-content: center; gap: 5px; padding: 11px 12px; border: 1px solid rgba(224,255,241,.11); border-radius: 14px; color: #e0ebe4; background: rgba(255,255,255,.025); cursor: pointer; font-size: 12px; font-weight: 640; text-align: left; transition: transform .17s ease,border-color .17s ease,background .17s ease,box-shadow .17s ease; }
+    .choice:hover { transform: translateY(-1px); border-color: rgba(122,235,184,.32); background: rgba(255,255,255,.045); }
+    .choice.active { border-color: rgba(46,216,148,.66); color: #f1fff6; background: linear-gradient(145deg,rgba(16,185,129,.16),rgba(16,185,129,.07)); box-shadow: inset 0 0 0 1px rgba(16,185,129,.12),0 8px 24px rgba(16,185,129,.075); }
+    .choice.active::after { position: absolute; top: 11px; right: 11px; width: 6px; height: 6px; border-radius: 50%; content: ""; background: #4ce0a8; box-shadow: 0 0 10px rgba(76,224,168,.8); }
+    .choice > span:not(.badge) { color: #85988d; font-size: 9px; font-weight: 500; line-height: 1.3; }
+    .choice .badge { position: absolute !important; top: -7px !important; right: 4px !important; z-index: 2; padding: 2px 6px !important; border: 1px solid rgba(74,220,158,.2); border-radius: 99px; color: #a2f0c7; background: #123626; font-size: 8px !important; font-weight: 720; }
+    .summary-box { position: sticky; top: 96px; display: flex; flex-direction: column; gap: 0; border-color: rgba(111,227,174,.21); background: radial-gradient(ellipse at 100% 0%,rgba(16,185,129,.12),transparent 40%),linear-gradient(145deg,rgba(17,31,24,.98),rgba(9,17,13,.98)); box-shadow: 0 22px 62px rgba(0,0,0,.31),0 0 42px rgba(16,185,129,.055),inset 0 1px rgba(255,255,255,.055); }
+    #builder-title { display: block; color: #f1f8f3; font-size: 21px; font-weight: 670; letter-spacing: -.045em; line-height: 1.2; }
+    .summary-note { margin: 5px 0 19px; color: #8ea196; font-size: 11px; }
+    .summary-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid rgba(222,255,240,.065); color: #82958a; font-size: 11px; }
+    .summary-row b { color: #dbe8df; font-size: 11px; font-weight: 600; }
+    .summary-price { margin: 14px 0 18px; color: #a8f1ca; font-size: clamp(35px,3.6vw,44px); font-weight: 650; letter-spacing: -.065em; line-height: 1.12; overflow-wrap: anywhere; text-shadow: 0 0 28px rgba(16,185,129,.12); }
+    .summary-box > div[style*="margin-bottom"] { margin-bottom: 10px !important; }
+    .summary-box > div > label { display: block; margin-bottom: 7px; color: #95a99e !important; font-size: 10px !important; font-weight: 580 !important; line-height: 1.45; }
+    .summary-box .field { min-height: 50px; }
+    .summary-box > div[style*="font-size:12px"] { display: flex; min-height: 44px; align-items: flex-start; gap: 8px; margin: 0 0 4px !important; color: #96a89e !important; font-size: 10px !important; line-height: 1.55; }
+    .summary-box input[type="checkbox"] { width: 17px; height: 17px; flex: 0 0 auto; margin: 1px 0 0 !important; accent-color: var(--green); cursor: pointer; }
+    .summary-box > div[style*="font-size:12px"] label { display: block; padding-bottom: 5px; color: #96a89e; cursor: pointer; }
+    .summary-box > div[style*="font-size:12px"] a { color: #78e3b2 !important; text-decoration: underline !important; text-underline-offset: 2px; }
+    .cf-turnstile { max-width: 100%; overflow: hidden; }
+    .summary-box .cf-turnstile { margin: 11px 0 13px !important; }
+    .summary-box button[type="submit"] { width: 100%; min-height: 54px; margin-top: 2px; font-size: 13px; }
+    #orderFormStatus { color: #ef6464 !important; font-size: 11px !important; }
+
+    .grid:not(.choice-grid) { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; }
+    .grid:not(.choice-grid) .card { min-height: 204px; padding: 23px; transition: transform .18s ease,border-color .18s ease; }
+    .grid:not(.choice-grid) .card:hover { transform: translateY(-3px); border-color: rgba(110,232,177,.2); }
+    .grid:not(.choice-grid) .card > strong:first-child { display: block; margin-bottom: 17px !important; color: #69e2ad !important; font-size: 26px !important; line-height: 1; }
+    .grid:not(.choice-grid) .card > strong:nth-child(2) { display: block; color: #ebf3ed; font-size: 13px; line-height: 1.4; }
+    .grid:not(.choice-grid) .card p { margin: 9px 0 0; color: #8d9f95; font-size: 11px !important; line-height: 1.65; }
+    .faq-card { overflow: hidden; padding: 0 !important; border-radius: 16px; transition: border-color .18s ease; }
+    .faq-card:hover, .faq-card.is-open { border-color: rgba(127,231,182,.2); }
+    .faq-card summary { display: flex !important; min-height: 60px; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 19px !important; color: #e7f1ea !important; cursor: pointer; font-family: inherit !important; font-size: 13px !important; font-weight: 620 !important; line-height: 1.45; list-style: none !important; }
+    .faq-card summary::-webkit-details-marker { display: none; }
+    .faq-card summary::marker { content: ""; }
+    .faq-arrow { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; border: 1px solid rgba(222,255,240,.1); border-radius: 9px; color: #8da297; background: rgba(255,255,255,.035); font-size: 9px; transition: transform .23s ease,color .23s ease,border-color .23s ease; }
+    .faq-card.is-open .faq-arrow { transform: rotate(180deg); border-color: rgba(16,185,129,.25); color: #73e2ae; }
+    .faq-content { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 320ms cubic-bezier(.2,.7,.2,1); }
+    .faq-content-inner { min-height: 0; overflow: hidden; }
+    .faq-content p { margin: 0 20px 18px !important; color: #91a298 !important; font-size: 11px !important; line-height: 1.7 !important; opacity: 0; transform: translateY(-6px); transition: opacity .25s ease,transform .25s ease; }
+    .faq-card.is-open .faq-content p { opacity: 1; transform: translateY(0); }
+
+    footer { margin-top: 34px; border-top: 1px solid rgba(226,255,242,.075); background: rgba(5,11,8,.38); }
+    .footer-wrap { display: flex; align-items: center; justify-content: space-between; gap: 22px; padding-block: 27px 32px; }
+    .footer-links { display: flex; flex-wrap: wrap; gap: 9px 20px; }
+    .footer-links a, .footer-copy { color: #778980; font-size: 10px; line-height: 1.6; }
+    .footer-links a { display: inline-flex; min-height: 44px; align-items: center; }
+    .footer-links a:hover { color: #c3d6ca; }
+    .footer-copy { text-align: right; }
+
+    .modal-overlay { position: fixed; z-index: 100; inset: 0; align-items: center; justify-content: center; padding: 20px; background: rgba(2,8,5,.76); opacity: 0; visibility: hidden; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); transition: opacity .28s ease,visibility .28s ease; }
+    .modal-overlay.active { opacity: 1; visibility: visible; }
+    .modal-card { position: relative; width: min(100%,440px); max-height: min(90vh,760px); overflow-y: auto; padding: 34px; border: 1px solid rgba(131,237,188,.22); border-radius: 25px; background: radial-gradient(ellipse at 100% 0%,rgba(16,185,129,.14),transparent 42%),linear-gradient(145deg,#13221a,#0b1510 68%); box-shadow: 0 36px 110px rgba(0,0,0,.61),0 0 60px rgba(16,185,129,.1),inset 0 1px rgba(255,255,255,.065); opacity: 0; transform: translateY(14px) scale(.98); transition: opacity .28s ease,transform .32s cubic-bezier(.2,.75,.2,1); }
+    .modal-overlay.active .modal-card { opacity: 1; transform: translateY(0) scale(1); }
+    .modal-close { position: absolute; top: 14px; right: 14px; display: grid; width: 44px; height: 44px; min-height: 44px; place-items: center; padding: 0; border: 1px solid rgba(225,255,239,.13); border-radius: 50%; color: #a4b5ab; background: rgba(255,255,255,.045); cursor: pointer; transition: color .18s ease,border-color .18s ease,background .18s ease; }
+    .modal-close:hover { border-color: rgba(16,185,129,.45); color: #eaf7ef; background: rgba(16,185,129,.1); }
+    .modal-key { display: grid; width: 52px; height: 52px; place-items: center; margin-bottom: 20px; border: 1px solid rgba(89,231,171,.24); border-radius: 17px; color: #92efc1; background: linear-gradient(145deg,rgba(16,185,129,.19),rgba(16,185,129,.05)); box-shadow: inset 0 1px rgba(255,255,255,.12),0 10px 30px rgba(16,185,129,.1); font-size: 23px; }
+    .modal-card h2 { margin: 0 50px 9px 0 !important; color: #f1f8f3 !important; font-size: 26px !important; font-weight: 640 !important; letter-spacing: -.05em; line-height: 1.18; background: none !important; -webkit-text-fill-color: currentColor !important; }
+    .modal-card > p { margin: 0 0 22px !important; color: #9aaca2 !important; font-size: 12px !important; line-height: 1.65 !important; }
+    .modal-card .field { min-height: 52px; margin-bottom: 8px; text-align: left !important; font-size: 14px !important; }
+    .modal-card .cf-turnstile { margin: 12px 0 !important; }
+    .modal-card button[type="submit"] { width: 100% !important; min-height: 52px !important; margin-top: 4px; border: 0; border-radius: 13px !important; color: #032418; background: linear-gradient(135deg,#5be6ad,#10b981 62%,#0ca878); box-shadow: 0 10px 30px rgba(16,185,129,.18),inset 0 1px rgba(255,255,255,.38); cursor: pointer; font-size: 12px !important; font-weight: 720; }
+    #cabinetStatus { display: none; color: #99ada2; font-size: 12px !important; overflow-wrap: anywhere; }
+
+    @media (max-width: 1080px) {
+      .wrap { width: min(calc(100% - 40px),980px); }
+      header.site-header nav { gap: 20px; }
+      .navlinks { gap: 13px; }
+      .navlinks a { font-size: 11px; }
+      .hero { grid-template-columns: minmax(0,1fr) minmax(360px,.92fr); gap: 16px; }
+      .hero h1 { font-size: clamp(46px,6vw,66px); }
+      .advantage { padding: 20px 13px; column-gap: 9px; }
+      .builder { grid-template-columns: minmax(0,1fr) minmax(320px,.9fr); }
+      .builder > .card { padding: 23px; }
+      .choice { padding-inline: 9px; }
+    }
+    @media (max-width: 820px) {
+      header.site-header nav { min-height: 68px; }
+      .navlinks .span-2:nth-child(2), .navlinks .span-2:nth-child(3), .navlinks .span-3 { display: none; }
+      .hero { min-height: 0; grid-template-columns: minmax(0,1fr) minmax(310px,.86fr); gap: 12px; padding: 62px 0 54px; }
+      .hero h1 { font-size: clamp(43px,6.7vw,59px); }
+      .hero-visual { min-height: 430px; }
+      .secure-card { padding: 21px 18px 17px; }
+      .floating-note-top { right: -3%; }
+      .floating-note-bottom { left: -3%; }
+      .advantage-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .advantage:nth-child(3) { border-left: 0; border-top: 1px solid rgba(226,255,242,.075); }
+      .advantage:nth-child(4) { border-top: 1px solid rgba(226,255,242,.075); }
+      .builder { grid-template-columns: minmax(0,1fr) minmax(300px,.9fr); }
+      .builder > .card { padding: 20px; }
+      .choice-grid-durations { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .choice-grid-durations .choice { min-height: 68px; }
+      .section { padding: 52px 0; }
+    }
+    @media (max-width: 640px) {
+      .wrap { width: calc(100% - 32px); }
+      header.site-header nav { min-height: 64px; gap: 12px; }
+      .brand { gap: 9px; font-size: 15px; }
+      .brand-logo { width: 34px; height: 34px; }
+      .navlinks { gap: 0; }
+      .navlinks .span-2, .navlinks .span-3 { display: none; }
+      .navlinks a:last-child { min-height: 44px; padding: 0 11px; font-size: 11px; }
+      .hero { display: flex; flex-direction: column; align-items: stretch; gap: 15px; padding: 51px 0 29px; }
+      .hero > div:first-child { padding: 0; }
+      .eyebrow { gap: 8px; margin-bottom: 16px; font-size: 9px; letter-spacing: .12em; }
+      .hero h1 { max-width: 540px; font-size: clamp(42px,12vw,58px); line-height: 1.03; }
+      .lead { max-width: 530px; margin-top: 17px; font-size: 14px; line-height: 1.67; }
+      .hero-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 20px; }
+      .hero-actions > a { min-height: 48px; padding-inline: 10px; border-radius: 13px; font-size: 11px; }
+      .hero-actions .primary { grid-column: 1 / -1; }
+      .notice { margin-top: 13px; padding: 9px 10px; font-size: 10px; }
+      .hero-visual { min-height: 365px; margin: 2px -5px 0; }
+      .hero-visual::before { width: min(100%,380px); }
+      .secure-card { width: min(100%,408px); padding: 19px 16px 15px; border-radius: 21px; transform: none; }
+      .secure-card-head { gap: 8px; }
+      .network-map { margin: 33px 0 28px; }
+      .node-icon { width: 43px; height: 43px; border-radius: 14px; }
+      .node-icon.secure-node { width: 51px; height: 51px; border-radius: 16px; }
+      .network-node { font-size: 8px; }
+      .route-line { margin-top: -18px; }
+      .floating-note { padding: 9px 10px; border-radius: 12px; }
+      .floating-note-top { top: 1%; right: 0; }
+      .floating-note-bottom { bottom: 0; left: 0; }
+      .floating-note-icon { width: 25px; height: 25px; }
+      .floating-note strong { font-size: 9px; }
+      .floating-note small { font-size: 7.5px; }
+      .section { padding: 38px 0; }
+      .advantage-grid { border-radius: 17px; }
+      .advantage { grid-template-columns: 30px minmax(0,1fr); padding: 16px 12px; column-gap: 8px; }
+      .advantage-icon { width: 29px; height: 29px; border-radius: 9px; }
+      .advantage-icon svg { width: 15px; height: 15px; }
+      .advantage b { font-size: 10px; }
+      .advantage > span:last-child { font-size: 9px; line-height: 1.45; }
+      .order { grid-template-columns: 1fr; gap: 10px; padding-top: 4px; }
+      .order .card { gap: 10px; padding: 17px; border-radius: 18px; }
+      .order .card strong { font-size: 12px; }
+      .order .card p { font-size: 10px; }
+      .order .card form { gap: 7px !important; }
+      .order .card form .field { min-height: 44px; padding-inline: 10px; font-size: 10px; }
+      .order .card button, .order .card .btn { min-height: 44px !important; padding-inline: 11px; font-size: 10px !important; }
+      .section-head { display: block; margin-bottom: 19px; }
+      .section-head h2 { font-size: 28px; }
+      .section-head > .muted { font-size: 11px; }
+      #tariffs { padding-top: 43px; }
+      .builder { grid-template-columns: minmax(0,1fr); gap: 12px; }
+      .builder > .card { padding: 18px; border-radius: 19px; }
+      .choice-section + .choice-section { margin-top: 22px; padding-top: 20px; }
+      .choice-title { margin-bottom: 12px; font-size: 11px; }
+      .choice-title::after { font-size: 7px; }
+      .choice-grid { gap: 7px; }
+      .choice-grid-durations { grid-template-columns: repeat(2,minmax(0,1fr)); column-gap: 8px; row-gap: 12px; }
+      .choice { min-height: 67px; gap: 4px; padding: 9px 8px; border-radius: 12px; font-size: 11px; }
+      .choice > span:not(.badge) { font-size: 8.5px; }
+      .choice.active::after { top: 8px; right: 8px; width: 5px; height: 5px; }
+      .choice-grid-durations .choice { min-height: 62px; }
+      .summary-box { position: static; }
+      #builder-title { font-size: 20px; }
+      .summary-price { margin: 11px 0 14px; font-size: 39px; }
+      .grid:not(.choice-grid) { grid-template-columns: 1fr; gap: 9px; }
+      .grid:not(.choice-grid) .card { min-height: 0; padding: 18px; border-radius: 17px; }
+      .grid:not(.choice-grid) .card > strong:first-child { margin-bottom: 14px !important; }
+      .grid:not(.choice-grid) .card p { font-size: 10px !important; }
+      .faq-card summary { min-height: 56px; padding: 12px 14px !important; font-size: 11px !important; }
+      .faq-arrow { width: 25px; height: 25px; }
+      .faq-content p { margin-inline: 14px !important; font-size: 10px !important; }
+      .footer-wrap { display: block; padding-block: 23px 26px; }
+      .footer-links { gap: 7px 14px; }
+      .footer-links a { font-size: 9px; }
+      .footer-copy { margin-top: 16px; text-align: left; }
+      .modal-card { padding: 30px 22px 24px; border-radius: 21px; }
+      .modal-card h2 { font-size: 23px !important; }
+    }
+    @media (max-width: 380px) {
+      .wrap { width: calc(100% - 28px); }
+      .brand { font-size: 14px; }
+      .navlinks a:last-child { padding-inline: 9px; font-size: 10px; }
+      .hero h1 { font-size: 40px; }
+      .hero-visual { min-height: 345px; }
+      .secure-card { padding-inline: 13px; }
+      .secure-status { padding-inline: 7px; font-size: 7px; }
+      .network-map { grid-template-columns: 1fr .38fr 1fr .38fr 1fr; }
+      .network-node { font-size: 7px; }
+      .node-icon { width: 39px; height: 39px; }
+      .node-icon.secure-node { width: 47px; height: 47px; }
+      .advantage { padding-inline: 9px; }
+      .advantage b { font-size: 9px; }
+      .order .card button { padding-inline: 8px; font-size: 9px !important; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
+  </style>
+<script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://silentconnect.net/#organization", "placeholder": "PLACEHOLDER",
+        "name": "SilentConnect",
+        "url": "https://silentconnect.net", "comment": "PLACEHOLDER",
+        "description": "Сервис приватного сетевого доступа для персонального использования без логирования активности",
+        "contactPoint": {
+          "@type": "ContactPoint",
+          "url": "https://t.me/silentconnect_bot",
+          "description": "Служба поддержки через Telegram-бот"
+        }
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://silentconnect.net/#software", "placeholder": "PLACEHOLDER",
+        "name": "SilentConnect",
+        "applicationCategory": "SecurityApplication",
+        "operatingSystem": "iOS, Android, Windows, macOS, Linux",
+        "offers": {
+          "@type": "Offer",
+          "price": "149",
+          "priceCurrency": "RUB",
+          "description": "Тарифы от 149 RUB/месяц для защищенного доступа к интернету"
+        },
+        "url": "https://silentconnect.net", "comment": "PLACEHOLDER"
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <header class="site-header"><nav class="wrap"><a href="/" class="brand"><span class="brand-logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 19 6v5.2c0 4.4-2.7 7.8-7 9.6-4.3-1.8-7-5.2-7-9.6V6l7-2.8Z"/><path d="m9 12 2 2 4-4"/></svg></span><span>SilentConnect</span></a><div class="navlinks"><a href="/#tariffs" class="span-2">Тарифы</a><a href="/about" class="span-2"><span class="desktop-nav-txt">О сервисе</span><span class="mobile-nav-txt">О нас</span></a><a href="/contact" class="span-2">Контакты</a><a href="https://t.me/SilentConnectVPNBot?start=open" class="span-3">Telegram-бот</a><a href="https://t.me/your_support" class="span-3">Поддержка</a><a href="#cabinet" class="span-6" onclick="openCabinetModal(); return false;">🔑 Личный кабинет</a></div></nav></header>
+  <main class="wrap">
+        <section class="hero">
+          <div>
+            <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span>Приватный доступ · без лишнего шума</p>
+            <h1>Приватный доступ, <span>который просто работает</span></h1>
+            <p class="lead">Включили один раз — и забыли. Выберите тариф, получите готовую ссылку для приложения на почту и пользуйтесь открытым интернетом.</p>
+            <div class="hero-actions">
+              <a class="btn primary" href="#tariffs">Подобрать тариф <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 10h12M10.5 5l5 5-5 5"/></svg></a>
+              <a class="btn quiet-link" href="#how-it-works">Как это работает</a>
+            </div>
+            <div class="notice">Ссылка на подписку придёт на электронную почту и появится на сайте сразу после оплаты.</div>
+          </div>
+          <div class="hero-visual" aria-hidden="true">
+            <div class="secure-card">
+              <div class="secure-card-head">
+                <div class="secure-brand"><span class="secure-brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 19 6v5.2c0 4.4-2.7 7.8-7 9.6-4.3-1.8-7-5.2-7-9.6V6l7-2.8Z"/><path d="m9 12 2 2 4-4"/></svg></span><span><strong>SilentConnect</strong><small>PRIVATE NETWORK</small></span></div>
+                <span class="secure-status"><i class="live-dot"></i>ЗАЩИЩЕНО</span>
+              </div>
+              <div class="network-map">
+                <div class="network-node"><span class="node-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.8" width="12" height="18.4" rx="2.3"/><path d="M10 18h4"/></svg></span><span>Ваше устройство</span></div>
+                <span class="route-line"></span>
+                <div class="network-node"><span class="node-icon secure-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5M12 14.3v2.3"/></svg></span><span>Шифрование</span></div>
+                <span class="route-line"></span>
+                <div class="network-node"><span class="node-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.2"/><path d="M2.9 12h18.2M12 2.8c2.5 2.5 3.6 5.6 3.6 9.2s-1.1 6.7-3.6 9.2c-2.5-2.5-3.6-5.6-3.6-9.2S9.5 5.3 12 2.8Z"/></svg></span><span>Интернет</span></div>
+              </div>
+              <div class="connection-state"><div class="connection-copy"><i class="state-dot"></i><b>Туннель активен</b><small>Ваш трафик зашифрован</small></div><span class="shield-seal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 19 6v5.2c0 4.4-2.7 7.8-7 9.6-4.3-1.8-7-5.2-7-9.6V6l7-2.8Z"/><path d="m9 12 2 2 4-4"/></svg></span></div>
+              <div class="secure-card-footer"><span>ПРИВАТНОСТЬ ПО УМОЛЧАНИЮ</span><span>● &nbsp;Без логирования активности</span></div>
+            </div>
+            <div class="floating-note floating-note-top"><span class="floating-note-icon">✓</span><span><strong>Настройка за 2 минуты</strong><small>Без сложных инструкций</small></span></div>
+            <div class="floating-note floating-note-bottom"><span class="floating-note-icon">↗</span><span><strong>Одна подписка</strong><small>Телефон · планшет · компьютер</small></span></div>
+          </div>
+        </section>
+        <section class="section" style="padding-top: 0;">
+          <div class="advantage-grid">
+            <div class="advantage">
+              <b>Готовая подписка</b>
+              <span>Одна ссылка для телефона и ПК с автообновлением профилей.</span>
+            </div>
+            <div class="advantage">
+              <b>Устойчивые режимы</b>
+              <span>Стандартный и универсальный доступ обеспечивают высокую стабильность соединения.</span>
+            </div>
+            <div class="advantage">
+              <b>Доставка на Email</b>
+              <span>Ваши ссылки никогда не потеряются и останутся в ящике.</span>
+            </div>
+            <div class="advantage">
+              <b>Живая поддержка</b>
+              <span>Помогаем с настройкой на iOS, Android и Windows 24/7.</span>
+            </div>
+          </div>
+        </section>
+        <section class="section order">
+          <div class="card">
+            <div>
+              <strong>Есть промокод?</strong>
+              <p class="muted" style="margin-bottom: 14px;">Введите код здесь. Скидочный код пересчитает тарифы, а подарочный зафиксирует подписку.</p>
+              <div id="promo-status" style="margin-bottom: 12px; font-size: 13.5px; display: none; line-height: 1.4;"></div>
+            </div>
+            <form onsubmit="submitPromoAjax(event);" style="display: flex; flex-direction: column; gap: 10px; margin-top: auto;">
+              <input class="field" id="promo_code_input" name="promo_code" value="" placeholder="PROMO-XXXX-XXXX" autocomplete="off" style="text-transform: uppercase;">
+              <button type="submit" id="promo_submit_btn" style="min-height: 44px; font-size: 14.5px;">Применить промокод</button>
+            </form>
+          </div>
+          <div class="card">
+            <div>
+              <strong>Поддержка и Telegram-бот</strong>
+              <p class="muted" style="margin-bottom: 14px;">Вы можете привязать подписку в Telegram-боте для удобного продления и уведомлений.</p>
+            </div>
+            <div style="margin-top: auto;">
+              <a class="btn secondary" href="https://t.me/SilentConnectVPNBot?start=open" style="min-height: 44px; font-size: 14.5px;">Открыть Telegram-бота</a>
+            </div>
+          </div>
+        </section>
+        <section id="tariffs" class="section">
+          <div class="section-head">
+            <h2>Выберите тариф</h2>
+            <p class="muted">Выберите количество устройств и срок доступа.</p>
+          </div>
+          <div class="builder">
+            <div class="card">
+              <div class="choice-section">
+                <div class="choice-title">Количество устройств</div>
+                <div class="choice-grid">
+                  <button type="button" class="choice active" data-choice data-group="device" data-value="3">Личный<span>до 3 устройств</span></button>
+                  <button type="button" class="choice" data-choice data-group="device" data-value="6">Домашний<span>до 6 устройств</span></button>
+                  <button type="button" class="choice" data-choice data-group="device" data-value="9">Расширенный<span>до 9 устройств</span></button>
+                </div>
+              </div>
+              <div class="choice-section">
+                <div class="choice-title">Срок доступа</div>
+                <div class="choice-grid choice-grid-durations">
+                  <button type="button" class="choice active" data-choice data-group="duration" data-value="30">1 месяц<span>помесячно</span></button>
+                  <button type="button" class="choice" data-choice data-group="duration" data-value="90"><span class="badge" style="position: absolute; top: -7px; right: 2px; font-size: 9px; padding: 1px 5px; z-index: 2;">−10%</span>3 месяца<span>экономия</span></button>
+                  <button type="button" class="choice" data-choice data-group="duration" data-value="180"><span class="badge" style="position: absolute; top: -7px; right: 2px; font-size: 9px; padding: 1px 5px; z-index: 2;">−20%</span>6 месяцев<span>выгодно</span></button>
+                  <button type="button" class="choice" data-choice data-group="duration" data-value="360"><span class="badge" style="position: absolute; top: -7px; right: 2px; font-size: 9px; padding: 1px 5px; z-index: 2;">−30%</span>12 месяцев<span>максимум</span></button>
+                </div>
+              </div>
+            </div>
+            <form class="card summary-box" method="post" action="/order" onsubmit="return handleOrderSubmit(event);">
+              <strong id="builder-title">Личный</strong>
+              <p class="summary-note" id="builder-subtitle">До 3 устройств · 1 месяц</p>
+              <div class="summary-row"><span>Устройства</span><b id="builder-devices">до 3</b></div>
+              <div class="summary-row"><span>Срок</span><b id="builder-duration">1 месяц</b></div>
+              <div class="summary-price" id="builder-price">149 ₽</div>
+
+              <div style="margin-bottom: 14px;">
+                <label style="color:var(--muted); font-size:13px; font-weight:600; display:block; margin-bottom:6px;">Электронная почта (для отправки ссылки подписки)</label>
+                <input class="field" type="email" name="customer_email" placeholder="pochta@gmail.com" required autocomplete="email">
+              </div>
+
+              <div style="font-size:12px; color:var(--muted); margin-bottom:14px;">
+                <input type="checkbox" name="terms_ack" id="terms_ack" checked required style="margin-right:6px;">
+                <label for="terms_ack">Согласен с <a href="/legal/privacy" target="_blank" style="color:var(--green); text-decoration:underline;">политикой конфиденциальности</a> и <a href="/legal/terms" target="_blank" style="color:var(--green); text-decoration:underline;">офертой</a></label>
+              </div>
+
+              <div style="font-size:12px; color:var(--muted); margin-bottom:14px;">
+                <input type="checkbox" name="email_reminders" id="email_reminders" value="1" checked style="margin-right:6px;">
+                <label for="email_reminders">Напоминать об окончании подписки за 24ч и 1ч на почту</label>
+              </div>
+
+              <input id="builder-offer" type="hidden" name="offer" value="tcp_3_30">
+
+
+              <div class="cf-turnstile" data-sitekey="" data-theme="dark" data-refresh-expired="auto" style="margin: 14px 0; display: flex; justify-content: center;"></div>
+              <div id="orderFormStatus" style="margin: -6px 0 10px; font-size: 13px; color: #ef4444; display: none; text-align: center; line-height: 1.4;"></div>
+              <button type="submit">Перейти к оплате</button>
+            </form>
+          </div>
+        </section>
+        <section class="section" id="how-it-works">
+          <div class="section-head">
+            <h2>3 простых шага к свободному интернету</h2>
+            <p class="muted">Всё настраивается за 2 минуты.</p>
+          </div>
+          <div class="grid">
+            <div class="card">
+              <strong style="color: var(--green); font-size: 32px; margin-bottom: 12px;">01</strong>
+              <strong>Выберите тариф и укажите почту</strong>
+              <p class="muted" style="font-size: 15px;">Выберите количество устройств, срок подписки и укажите ваш Email. На него мы отправим готовые ссылки доступа.</p>
+            </div>
+            <div class="card">
+              <strong style="color: var(--green); font-size: 32px; margin-bottom: 12px;">02</strong>
+              <strong>Скачайте приложение</strong>
+              <p class="muted" style="font-size: 15px;">Страница заказа и письмо на почте определят ваше устройство и покажут кнопку скачивания Happ / Streisand / v2rayN.</p>
+            </div>
+            <div class="card">
+              <strong style="color: var(--green); font-size: 32px; margin-bottom: 12px;">03</strong>
+              <strong>Импортируйте ссылку</strong>
+              <p class="muted" style="font-size: 15px;">Нажмите кнопку «Импортировать» или скопируйте ссылку подписки из письма. Всё готово!</p>
+            </div>
+          </div>
+        </section>
+        <section class="section">
+          <div class="section-head">
+            <h2>Ответы на вопросы (FAQ)</h2>
+            <p class="muted">Простые ответы для всех пользователей.</p>
+          </div>
+          <div style="display: grid; gap: 12px;">
+            <details class="card faq-card" style="padding: 16px 20px; cursor: pointer;">
+              <summary style="font-weight: 700; font-size: 16px; color: #fff; list-style: none; display: flex; justify-content: space-between; align-items: center; font-family: 'Outfit', sans-serif;">
+                Действительно ли трафик безлимитный?
+                <span class="faq-arrow">▼</span>
+              </summary>
+              <div class="faq-content">
+                <div class="faq-content-inner">
+                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">Да, мы не ограничиваем гигабайты и скорость передачи данных. Действует прозрачная политика добросовестного использования (Fair Use Policy) — сервис рассчитан на комфортное личное и семейное применение (браузинг, просмотр 4K-видео, игры, стриминг, повседневная загрузка файлов). Не допускается использование инфраструктуры для коммерческого парсинга, спам-рассылок, непрерывных торрент-ферм и иных сценариев, создающих паразитную перегрузку каналов связи.</p>
+                </div>
+              </div>
+            </details>
+            <details class="card faq-card" style="padding: 16px 20px; cursor: pointer;">
+              <summary style="font-weight: 700; font-size: 16px; color: #fff; list-style: none; display: flex; justify-content: space-between; align-items: center; font-family: 'Outfit', sans-serif;">
+                Будут ли работать нужные мне сайты?
+                <span class="faq-arrow">▼</span>
+              </summary>
+              <div class="faq-content">
+                <div class="faq-content-inner">
+                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">Да! Наш сервис использует современное защищенное шифрование. Все популярные ресурсы будут открываться мгновенно и стабильно.</p>
+                </div>
+              </div>
+            </details>
+            <details class="card faq-card" style="padding: 16px 20px; cursor: pointer;">
+              <summary style="font-weight: 700; font-size: 16px; color: #fff; list-style: none; display: flex; justify-content: space-between; align-items: center; font-family: 'Outfit', sans-serif;">
+                На каких устройствах работает SilentConnect?
+                <span class="faq-arrow">▼</span>
+              </summary>
+              <div class="faq-content">
+                <div class="faq-content-inner">
+                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">На любых! Вы можете настроить подключение на iPhone, iPad, Android-смартфоны, планшеты, а также на компьютеры Windows, macOS и Linux.</p>
+                </div>
+              </div>
+            </details>
+            <details class="card faq-card" style="padding: 16px 20px; cursor: pointer;">
+              <summary style="font-weight: 700; font-size: 16px; color: #fff; list-style: none; display: flex; justify-content: space-between; align-items: center; font-family: 'Outfit', sans-serif;">
+                Зачем указывать почту?
+                <span class="faq-arrow">▼</span>
+              </summary>
+              <div class="faq-content">
+                <div class="faq-content-inner">
+                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">Мы отправляем ссылки доступа на вашу электронную почту, чтобы вы могли легко найти их с любого нового устройства и не потеряли доступ.</p>
+                </div>
+              </div>
+            </details>
+            <details class="card faq-card" style="padding: 16px 20px; cursor: pointer;">
+              <summary style="font-weight: 700; font-size: 16px; color: #fff; list-style: none; display: flex; justify-content: space-between; align-items: center; font-family: 'Outfit', sans-serif;">
+                Сколько устройств можно подключить одновременно?
+                <span class="faq-arrow">▼</span>
+              </summary>
+              <div class="faq-content">
+                <div class="faq-content-inner">
+                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">В зависимости от вашего тарифа — от 3 до 9 устройств одновременно (смартфоны, планшеты, ПК, Smart TV). Каждое устройство получит персональный высокоскоростной тоннель.</p>
+                </div>
+              </div>
+            </details>
+            <details class="card faq-card" style="padding: 16px 20px; cursor: pointer;">
+              <summary style="font-weight: 700; font-size: 16px; color: #fff; list-style: none; display: flex; justify-content: space-between; align-items: center; font-family: 'Outfit', sans-serif;">
+                Сохранится ли подписка при смене или сбросе телефона?
+                <span class="faq-arrow">▼</span>
+              </summary>
+              <div class="faq-content">
+                <div class="faq-content-inner">
+                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">Да! Ваша подписка привязана к вашему e-mail и Telegram-аккаунту. Достаточно открыть письмо или зайти в Telegram-бота с нового устройства и нажать «Добавить подписку».</p>
+                </div>
+              </div>
+            </details>
+            <details class="card faq-card" style="padding: 16px 20px; cursor: pointer;">
+              <summary style="font-weight: 700; font-size: 16px; color: #fff; list-style: none; display: flex; justify-content: space-between; align-items: center; font-family: 'Outfit', sans-serif;">
+                Почему у SilentConnect высокая скорость и стабильное соединение?
+                <span class="faq-arrow">▼</span>
+              </summary>
+              <div class="faq-content">
+                <div class="faq-content-inner">
+                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">Мы используем современный оптимизированный стек протоколов REALITY и XHTTP со сквозным шифрованием TLS. Трафик направляется по выделенным скоростным каналам европейских дата-центров, обеспечивая максимальную отзывчивость без потери пакетов.</p>
+                </div>
+              </div>
+            </details>
+            <details class="card faq-card" style="padding: 16px 20px; cursor: pointer;">
+              <summary style="font-weight: 700; font-size: 16px; color: #fff; list-style: none; display: flex; justify-content: space-between; align-items: center; font-family: 'Outfit', sans-serif;">
+                Что делать, если возникнут трудности?
+                <span class="faq-arrow">▼</span>
+              </summary>
+              <div class="faq-content">
+                <div class="faq-content-inner">
+                  <p class="muted" style="font-size: 14.5px; margin-top: 10px; margin-bottom: 0; line-height: 1.55;">Нажмите кнопку «Поддержка» или напишите нам в Telegram. Наша команда поможет вам настроить подключение на любом устройстве.</p>
+                </div>
+              </div>
+            </details>
+          </div>
+        </section>
+<script>
+        window.addEventListener("pageshow", function(event) {
+          if (window.turnstile) {
+            try { window.turnstile.reset(); } catch(err) {}
+          }
+        });
+
+        function handleOrderSubmit(e) {
+          const form = e.target;
+          const tokenInput = form.querySelector('[name="cf-turnstile-response"]');
+          const turnstileToken = (tokenInput && tokenInput.value) || (window.turnstile ? window.turnstile.getResponse() : "");
+          const statusDiv = document.getElementById("orderFormStatus");
+          if (!turnstileToken) {
+            e.preventDefault();
+            if (window.turnstile) {
+              try { window.turnstile.reset(); } catch(err) {}
+            }
+            if (statusDiv) {
+              statusDiv.style.display = "block";
+              statusDiv.textContent = "Пожалуйста, подтвердите, что вы человек (поставьте галочку Cloudflare).";
+            }
+            return false;
+          }
+          if (statusDiv) statusDiv.style.display = "none";
+          return true;
+        }
+        async function submitPromoAjax(e) {
+          e.preventDefault();
+          const inp = document.getElementById("promo_code_input");
+          const btn = document.getElementById("promo_submit_btn");
+          const statusDiv = document.getElementById("promo-status");
+          const code = (inp ? inp.value : "").trim();
+          if (!code) return;
+
+          btn.disabled = true;
+          btn.textContent = "Проверка...";
+          statusDiv.style.display = "block";
+          statusDiv.style.color = "#8ea89a";
+          statusDiv.textContent = "Проверяем промокод...";
+
+          try {
+            const res = await fetch("/api/check-promo", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ code: code })
+            });
+            const data = await res.json();
+            if (data.ok) {
+              statusDiv.style.color = "#2fbf71";
+              statusDiv.innerHTML = data.message;
+              
+              if (data.type === "gift") {
+                const submitBtn = document.querySelector('.summary-box button[type="submit"]');
+                if (submitBtn) submitBtn.textContent = "Активировать подписку 🎁";
+                const priceBox = document.getElementById("builder-price");
+                if (priceBox) priceBox.textContent = "0 ₽ (Подарок)";
+                const offerInput = document.getElementById("builder-offer");
+                if (offerInput) offerInput.value = "tcp_3_30";
+                let promoHiddenInp = document.getElementById("builder-promo-hidden");
+                if (!promoHiddenInp) {
+                  promoHiddenInp = document.createElement("input");
+                  promoHiddenInp.type = "hidden";
+                  promoHiddenInp.name = "promo_code";
+                  promoHiddenInp.id = "builder-promo-hidden";
+                  const form = document.querySelector('.summary-box');
+                  if (form) form.appendChild(promoHiddenInp);
+                }
+                promoHiddenInp.value = data.code;
+              } else if (data.type === "discount") {
+                let promoHiddenInp = document.getElementById("builder-promo-hidden");
+                if (!promoHiddenInp) {
+                  promoHiddenInp = document.createElement("input");
+                  promoHiddenInp.type = "hidden";
+                  promoHiddenInp.name = "promo_code";
+                  promoHiddenInp.id = "builder-promo-hidden";
+                  const form = document.querySelector('.summary-box');
+                  if (form) form.appendChild(promoHiddenInp);
+                }
+                promoHiddenInp.value = data.code;
+                
+                if (window.applyDiscountToPlans) {
+                  window.applyDiscountToPlans(data.discount_percent);
+                }
+              }
+              const builderSec = document.querySelector('.builder');
+              if (builderSec) builderSec.scrollIntoView({ behavior: "smooth" });
+            } else {
+              statusDiv.style.color = "#ef4444";
+              statusDiv.textContent = data.message || "Промокод не найден.";
+            }
+          } catch (err) {
+            statusDiv.style.color = "#ef4444";
+            statusDiv.textContent = "Ошибка соединения. Попробуйте снова.";
+          } finally {
+            btn.disabled = false;
+            btn.textContent = "Применить промокод";
+          }
+        }
+        (() => {
+          const plans = {"tcp_3_30": {"code": "tcp_3_30", "title": "Стандартный", "deviceTitle": "Личный", "deviceLimit": 3, "duration": "1 месяц", "price": 149, "basePrice": 149, "discount": 0}, "hybrid_3_30": {"code": "hybrid_3_30", "title": "Универсальный", "deviceTitle": "Личный", "deviceLimit": 3, "duration": "1 месяц", "price": 149, "basePrice": 149, "discount": 0}, "tcp_3_90": {"code": "tcp_3_90", "title": "Стандартный", "deviceTitle": "Личный", "deviceLimit": 3, "duration": "3 месяца", "price": 399, "basePrice": 399, "discount": 0}, "hybrid_3_90": {"code": "hybrid_3_90", "title": "Универсальный", "deviceTitle": "Личный", "deviceLimit": 3, "duration": "3 месяца", "price": 399, "basePrice": 399, "discount": 0}, "tcp_3_180": {"code": "tcp_3_180", "title": "Стандартный", "deviceTitle": "Личный", "deviceLimit": 3, "duration": "6 месяцев", "price": 719, "basePrice": 719, "discount": 0}, "hybrid_3_180": {"code": "hybrid_3_180", "title": "Универсальный", "deviceTitle": "Личный", "deviceLimit": 3, "duration": "6 месяцев", "price": 719, "basePrice": 719, "discount": 0}, "tcp_3_360": {"code": "tcp_3_360", "title": "Стандартный", "deviceTitle": "Личный", "deviceLimit": 3, "duration": "12 месяцев", "price": 1249, "basePrice": 1249, "discount": 0}, "hybrid_3_360": {"code": "hybrid_3_360", "title": "Универсальный", "deviceTitle": "Личный", "deviceLimit": 3, "duration": "12 месяцев", "price": 1249, "basePrice": 1249, "discount": 0}, "tcp_6_30": {"code": "tcp_6_30", "title": "Стандартный", "deviceTitle": "Домашний", "deviceLimit": 6, "duration": "1 месяц", "price": 199, "basePrice": 199, "discount": 0}, "hybrid_6_30": {"code": "hybrid_6_30", "title": "Универсальный", "deviceTitle": "Домашний", "deviceLimit": 6, "duration": "1 месяц", "price": 199, "basePrice": 199, "discount": 0}, "tcp_6_90": {"code": "tcp_6_90", "title": "Стандартный", "deviceTitle": "Домашний", "deviceLimit": 6, "duration": "3 месяца", "price": 539, "basePrice": 539, "discount": 0}, "hybrid_6_90": {"code": "hybrid_6_90", "title": "Универсальный", "deviceTitle": "Домашний", "deviceLimit": 6, "duration": "3 месяца", "price": 539, "basePrice": 539, "discount": 0}, "tcp_6_180": {"code": "tcp_6_180", "title": "Стандартный", "deviceTitle": "Домашний", "deviceLimit": 6, "duration": "6 месяцев", "price": 959, "basePrice": 959, "discount": 0}, "hybrid_6_180": {"code": "hybrid_6_180", "title": "Универсальный", "deviceTitle": "Домашний", "deviceLimit": 6, "duration": "6 месяцев", "price": 959, "basePrice": 959, "discount": 0}, "tcp_6_360": {"code": "tcp_6_360", "title": "Стандартный", "deviceTitle": "Домашний", "deviceLimit": 6, "duration": "12 месяцев", "price": 1669, "basePrice": 1669, "discount": 0}, "hybrid_6_360": {"code": "hybrid_6_360", "title": "Универсальный", "deviceTitle": "Домашний", "deviceLimit": 6, "duration": "12 месяцев", "price": 1669, "basePrice": 1669, "discount": 0}, "tcp_9_30": {"code": "tcp_9_30", "title": "Стандартный", "deviceTitle": "Расширенный", "deviceLimit": 9, "duration": "1 месяц", "price": 239, "basePrice": 239, "discount": 0}, "hybrid_9_30": {"code": "hybrid_9_30", "title": "Универсальный", "deviceTitle": "Расширенный", "deviceLimit": 9, "duration": "1 месяц", "price": 239, "basePrice": 239, "discount": 0}, "tcp_9_90": {"code": "tcp_9_90", "title": "Стандартный", "deviceTitle": "Расширенный", "deviceLimit": 9, "duration": "3 месяца", "price": 629, "basePrice": 629, "discount": 0}, "hybrid_9_90": {"code": "hybrid_9_90", "title": "Универсальный", "deviceTitle": "Расширенный", "deviceLimit": 9, "duration": "3 месяца", "price": 629, "basePrice": 629, "discount": 0}, "tcp_9_180": {"code": "tcp_9_180", "title": "Стандартный", "deviceTitle": "Расширенный", "deviceLimit": 9, "duration": "6 месяцев", "price": 1129, "basePrice": 1129, "discount": 0}, "hybrid_9_180": {"code": "hybrid_9_180", "title": "Универсальный", "deviceTitle": "Расширенный", "deviceLimit": 9, "duration": "6 месяцев", "price": 1129, "basePrice": 1129, "discount": 0}, "tcp_9_360": {"code": "tcp_9_360", "title": "Стандартный", "deviceTitle": "Расширенный", "deviceLimit": 9, "duration": "12 месяцев", "price": 1969, "basePrice": 1969, "discount": 0}, "hybrid_9_360": {"code": "hybrid_9_360", "title": "Универсальный", "deviceTitle": "Расширенный", "deviceLimit": 9, "duration": "12 месяцев", "price": 1969, "basePrice": 1969, "discount": 0}};
+          const state = { device: "3", duration: "30", mode: "tcp" };
+          const rub = new Intl.NumberFormat("ru-RU").format;
+          const el = (id) => document.getElementById(id);
+
+          window.applyDiscountToPlans = function(discountPct) {
+            for (const key in plans) {
+              const base = plans[key].basePrice || plans[key].price;
+              plans[key].basePrice = base;
+              plans[key].price = Math.max(Math.floor(base * (100 - discountPct) / 100), 0);
+              plans[key].discount = discountPct;
+            }
+            update();
+          };
+
+          function setActive(group, value) {
+            document.querySelectorAll('[data-choice][data-group="' + group + '"]').forEach((button) => {
+              button.classList.toggle("active", button.dataset.value === value);
+            });
+          }
+
+          function update() {
+            const code = state.mode + "_" + state.device + "_" + state.duration;
+            const plan = plans[code];
+            if (!plan) return;
+            el("builder-title").textContent = plan.deviceTitle;
+            el("builder-subtitle").textContent = "До " + plan.deviceLimit + " устройств · " + plan.duration;
+            el("builder-devices").textContent = "до " + plan.deviceLimit;
+            el("builder-duration").textContent = plan.duration;
+            el("builder-offer").value = plan.code;
+            el("builder-price").textContent = rub(plan.price) + " ₽";
+            if (plan.discount) {
+              el("builder-price").textContent = rub(plan.price) + " ₽ вместо " + rub(plan.basePrice) + " ₽";
+            }
+          }
+
+          document.querySelectorAll("[data-choice]").forEach((button) => {
+            button.addEventListener("click", () => {
+              state[button.dataset.group] = button.dataset.value;
+              setActive(button.dataset.group, button.dataset.value);
+              update();
+            });
+          });
+          update();
+        })();
+        </script>
+        </main>
+  <footer>
+    <div class="wrap footer-wrap">
+      <div class="footer-links">
+        <a href="/about">О сервисе</a>
+        <a href="/contact">Контакты &amp; Поддержка</a>
+        <a href="/legal/privacy">Политика конфиденциальности</a>
+        <a href="/legal/terms">Пользовательское соглашение</a>
+            <a href="/legal/refund">Политика возвратов</a>
+      </div>
+      <div class="footer-copy">© 2026 SilentConnect. Все права защищены. [code: mekbuda]</div>
+    </div>
+  </footer>
+
+  <div id="cabinetModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <button type="button" class="modal-close" onclick="closeCabinetModal()" aria-label="Закрыть окно"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+      <div class="modal-key" aria-hidden="true">🔑</div>
+      <h2>Личный кабинет</h2>
+      <p>Укажите Email, указанный при покупке. Мы пришлем прямые ссылки доступа на вашу почту.</p>
+      <form id="cabinetForm" onsubmit="submitCabinetForm(event)">
+        <input type="email" id="cabinetEmailInput" class="field" placeholder="yourname@gmail.com" required>
+        <div class="cf-turnstile" data-sitekey="" data-theme="dark" data-refresh-expired="auto" style="margin: 12px 0; display: flex; justify-content: center;"></div>
+        <button type="submit" id="cabinetSubmitBtn" class="btn">Получить доступ на Email</button>
+      </form>
+      <div id="cabinetStatus"></div>
+    </div>
+  </div>
+
+<script>
+    async function copyText(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      await navigator.clipboard.writeText(el.value || el.textContent);
+    }
+    function openCabinetModal() {
+      const modal = document.getElementById("cabinetModal");
+      const statusDiv = document.getElementById("cabinetStatus");
+      if (modal) {
+        modal.style.display = "flex";
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            modal.classList.add("active");
+          });
+        });
+      }
+      if (statusDiv) statusDiv.style.display = "none";
+      const inp = document.getElementById("cabinetEmailInput");
+      if (inp) setTimeout(() => inp.focus(), 150);
+    }
+    function closeCabinetModal() {
+      const modal = document.getElementById("cabinetModal");
+      if (modal) {
+        modal.classList.remove("active");
+        setTimeout(() => {
+          modal.style.display = "none";
+        }, 300);
+      }
+    }
+    document.addEventListener("keydown", function(e) {
+      if (e.key === "Escape") closeCabinetModal();
+    });
+    document.addEventListener("click", function(e) {
+      const modal = document.getElementById("cabinetModal");
+      if (modal && e.target === modal) closeCabinetModal();
+    });
+    async function submitCabinetForm(e) {
+      e.preventDefault();
+      const emailInp = document.getElementById("cabinetEmailInput");
+      const btn = document.getElementById("cabinetSubmitBtn");
+      const statusDiv = document.getElementById("cabinetStatus");
+      const email = (emailInp ? emailInp.value : "").trim();
+      if (!email) return;
+      const turnstileToken = (document.querySelector('[name="cf-turnstile-response"]') || {}).value || (window.turnstile ? window.turnstile.getResponse() : "");
+      if (!turnstileToken) {
+        statusDiv.style.display = "block";
+        statusDiv.style.color = "#ef4444";
+        statusDiv.textContent = "Пожалуйста, подтвердите, что вы человек (поставьте галочку Cloudflare).";
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = "Ищем подписки...";
+      statusDiv.style.display = "block";
+      statusDiv.style.color = "#8ea89a";
+      statusDiv.textContent = "Отправка запроса...";
+      try {
+        const res = await fetch("/api/cabinet/request-link", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: email, turnstile_token: turnstileToken })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          statusDiv.style.color = "#2fbf71";
+          statusDiv.innerHTML = "<b>Отлично! 📩</b><br>" + data.message;
+          if (emailInp) emailInp.value = "";
+          if (window.turnstile) window.turnstile.reset();
+          let cd = 30;
+          btn.disabled = true;
+          const cdInterval = setInterval(() => {
+            btn.textContent = `Повторный запрос через ${cd} сек...`;
+            cd--;
+            if (cd < 0) {
+              clearInterval(cdInterval);
+              btn.disabled = false;
+              btn.textContent = "Получить доступ на Email";
+            }
+          }, 1000);
+          return;
+        } else {
+          statusDiv.style.color = "#ef4444";
+          statusDiv.textContent = data.message || "Подписок на этот Email не найдено.";
+          if (window.turnstile) window.turnstile.reset();
+        }
+      } catch (err) {
+        statusDiv.style.color = "#ef4444";
+        statusDiv.textContent = "Ошибка соединения. Попробуйте снова.";
+      } finally {
+        if (!btn.disabled) {
+          btn.disabled = false;
+          btn.textContent = "Получить доступ на Email";
+        }
+      }
+    }
+
+    // Global smooth accordion handler for details.faq-card
+    document.addEventListener("DOMContentLoaded", function() {
+      document.querySelectorAll("details.faq-card").forEach(function(el) {
+        const summary = el.querySelector("summary");
+        const content = el.querySelector(".faq-content");
+        if (!summary || !content) return;
+        let isAnimating = false;
+        let closeTimer = null;
+        summary.addEventListener("click", function(e) {
+          e.preventDefault();
+          if (isAnimating) return;
+          const isOpen = el.hasAttribute("open") && !el.classList.contains("is-closing");
+          if (isOpen) {
+            isAnimating = true;
+            clearTimeout(closeTimer);
+            el.classList.remove("is-open");
+            el.classList.add("is-closing");
+            content.style.gridTemplateRows = "0fr";
+            const p = content.querySelector("p");
+            if (p) { p.style.opacity = "0"; p.style.transform = "translateY(-6px)"; }
+            closeTimer = setTimeout(function() {
+              el.removeAttribute("open");
+              el.classList.remove("is-closing");
+              isAnimating = false;
+            }, 320);
+          } else {
+            isAnimating = true;
+            clearTimeout(closeTimer);
+            el.classList.remove("is-closing");
+            el.setAttribute("open", "");
+            content.style.gridTemplateRows = "0fr";
+            const p = content.querySelector("p");
+            if (p) { p.style.opacity = "0"; p.style.transform = "translateY(-6px)"; }
+            requestAnimationFrame(function() {
+              requestAnimationFrame(function() {
+                el.classList.add("is-open");
+                content.style.gridTemplateRows = "1fr";
+                if (p) { p.style.opacity = "1"; p.style.transform = "translateY(0)"; }
+                setTimeout(function() {
+                  isAnimating = false;
+                }, 320);
+              });
+            });
+          }
+        });
+      });
+    });
+  </script>
+</body>
+</html>
