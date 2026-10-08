@@ -104,6 +104,42 @@ class TestRenewalAndRedesign(unittest.TestCase):
         self.assertIn("SilentConnectSupport", html)
         self.assertIn("Отменить заказ ✖", html)
 
+    def test_live_home_uses_shared_landing_template_and_runtime_values(self):
+        from dataclasses import replace
+        import re
+
+        runtime_root = Path(__file__).resolve().parent.parent / "vpn-shop"
+        settings = replace(
+            self.settings,
+            root_dir=runtime_root,
+            telegram_bot_username="PreviewBot",
+            support_tg_url="https://t.me/PreviewSupport",
+            cf_turnstile_site_key="turnstile-test-key",
+        )
+        checkout = WebCheckout(settings, store=self.store)
+        referrer = self.store.ensure_referrer(user_id=987654, chat_id=987654, commission_percent=10)
+        landing_html = checkout.render_home(
+            active_discount={"discount_percent": 10},
+            promo_code="WELCOME10",
+            ref_code=referrer["code"],
+        ).decode("utf-8")
+
+        self.assertIn('class="hero-visual"', landing_html)
+        self.assertIn('id="builder-price">134 ₽</div>', landing_html)
+        self.assertIn('value="WELCOME10"', landing_html)
+        self.assertIn(f'value="{referrer["code"]}"', landing_html)
+        self.assertIn("https://t.me/PreviewBot?start=open", landing_html)
+        self.assertIn("https://t.me/PreviewSupport", landing_html)
+        self.assertIn('data-sitekey="turnstile-test-key"', landing_html)
+        self.assertNotIn("fonts.googleapis.com", landing_html)
+        self.assertNotIn("<!-- RUNTIME_", landing_html)
+
+        plans_match = re.search(r"const plans = (\{.*?\});", landing_html, re.DOTALL)
+        self.assertIsNotNone(plans_match)
+        plans = json.loads(plans_match.group(1))
+        self.assertEqual(plans["tcp_3_30"]["price"], 134)
+        self.assertEqual(plans["tcp_3_30"]["discount"], 10)
+
     def test_bot_order_messages_commission_notice(self):
         order = self.checkout.create_order("tcp_3_30")
         meta = dict(order.get("meta_json") or {})
