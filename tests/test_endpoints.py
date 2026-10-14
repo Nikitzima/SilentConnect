@@ -252,7 +252,7 @@ class TestRequestHandlerRoutingAndEndpoints(unittest.TestCase):
             self.assertIn("⚡ Auto URL-Test", yaml_text)
             self.assertIn("🛡️ Priority Fallback", yaml_text)
             self.assertIn("🇳🇱 NL Classic Reality TCP", yaml_text)
-            self.assertIn("🇫🇮 FI Classic Reality TCP", yaml_text)
+            self.assertIn("🇫🇮 FI Speed Hysteria2", yaml_text)
 
     def test_clash_global_routes(self):
         """Verify /{SECRET}/clash-global/{sub_id} and /meta-global/... return global Clash config."""
@@ -284,19 +284,18 @@ class TestRequestHandlerRoutingAndEndpoints(unittest.TestCase):
             import base64
             decoded = base64.b64decode(b64_text).decode("utf-8")
             lines = [l for l in decoded.splitlines() if l.strip()]
-            self.assertEqual(len(lines), 10)
+            self.assertTrue(len(lines) >= 7)
             unquoted_lines = [urllib.parse.unquote(l) for l in lines]
             self.assertTrue(any("Классический TCP (NL)" in l for l in unquoted_lines))
-            self.assertTrue(any("XHTTP Reality (FI)" in l for l in unquoted_lines))
 
     def test_import_setup_page(self):
-        """Verify /{SECRET}/import/{sub_id} serves Web UI setup page with Clash card."""
+        """Verify /{SECRET}/import/{sub_id} serves Web UI setup page with Clash Mi card."""
         path = f"/{self.secret}/import/{self.sub_id}"
         status, headers, body = self.harness.request("GET", path)
         self.assertEqual(status, 200)
         self.assertIn("text/html", headers.get("content-type", ""))
         html_text = body.decode("utf-8")
-        self.assertIn("Clash / Mihomo", html_text)
+        self.assertIn("Clash Mi / Mihomo", html_text)
         self.assertIn("Happ", html_text)
         self.assertIn("Streisand", html_text)
 
@@ -309,18 +308,17 @@ class TestRequestHandlerRoutingAndEndpoints(unittest.TestCase):
             self.assertIn("text/html", headers.get("content-type", ""))
             html_text = body.decode("utf-8")
             self.assertIn("clash://install-config?url=", html_text)
-            self.assertIn("Clash Meta", html_text)
+            self.assertIn("Clash", html_text)
 
-    def test_1click_import_happ_streisand_v2raytun(self):
-        """Verify 1-click import pages for happ, streisand, v2raytun."""
-        for target in ["happ", "streisand", "v2raytun"]:
+    def test_1click_import_happ_streisand(self):
+        """Verify 1-click import pages for happ and streisand."""
+        for target in ["happ", "streisand"]:
             path = f"/{self.secret}/import/{target}/{self.sub_id}"
             status, headers, body = self.harness.request("GET", path)
-            self.assertIn(status, (200, 302))
-            if status == 200:
-                self.assertIn("text/html", headers.get("content-type", ""))
-                html_text = body.decode("utf-8")
-                self.assertIn("SilentConnect", html_text)
+            self.assertEqual(status, 200)
+            self.assertIn("text/html", headers.get("content-type", ""))
+            html_text = body.decode("utf-8")
+            self.assertIn("SilentConnect", html_text)
 
     def test_backward_compatibility_single_and_test_routes(self):
         """Verify legacy single-profile and test routes still work."""

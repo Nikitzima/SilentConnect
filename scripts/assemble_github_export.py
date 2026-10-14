@@ -84,6 +84,12 @@ def is_file_allowed(path: Path) -> bool:
     if name in FORBIDDEN_EXACT_FILENAMES:
         return False
 
+    if name.startswith(("deploy_", "verify_", "inspect_", "investigate_", "step", "audit_", "check_")) or "playwright" in name:
+        return False
+
+    if name in {"remote_exec.py", "sync_primary_to_standbys.sh"}:
+        return False
+
     if (name.startswith(".env") or name.endswith(".env")) and name not in ALLOWED_EXEMPT_NAMES and not name.endswith(".example"):
         return False
 

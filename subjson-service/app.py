@@ -907,7 +907,7 @@ def bind_subscription_email(
             expiry_ms = int(found_client["client"].get("expiryTime") or 0)
             expires_at = expiry_ms // 1000 if expiry_ms > 0 else (now + 30 * 86400)
             client_id = str(found_client["client"].get("id") or xui_email)
-            mode = "family" if not xui_email.startswith("anon-") else "anonymous"
+            mode = "family" if not (xui_email.startswith("anon-") or xui_email.startswith("ord_")) else "anonymous"
             conn_shop.execute(
                 """
                 INSERT INTO profiles(
@@ -1245,7 +1245,7 @@ def create_inline_renewal_order(
             expiry_ms = int(found_client["client"].get("expiryTime") or 0)
             expires_at = expiry_ms // 1000 if expiry_ms > 0 else (now + 30 * 86400)
             client_id = str(found_client["client"].get("id") or email)
-            mode = "family" if not email.startswith("anon-") else "anonymous"
+            mode = "family" if not (email.startswith("anon-") or email.startswith("ord_")) else "anonymous"
             conn_shop.execute(
                 """
                 INSERT INTO profiles(
@@ -5314,7 +5314,10 @@ def subscription_summary(subscription_id: str) -> dict[str, Any]:
     device_label = f"до {device_limit} устройств" if device_limit else "без лимита"
 
     email = str(clients[0].get("email") or "")
-    identifier = email or (subscription_id[:10] + ("..." if len(subscription_id) > 10 else ""))
+    if email.startswith("ord_"):
+        identifier = f"anon-{email.removeprefix('ord_')}"
+    else:
+        identifier = email or (subscription_id[:10] + ("..." if len(subscription_id) > 10 else ""))
     return {
         "found": True,
         "title": "Подписка активна" if status_kind == "active" else "Подписка неактивна",
@@ -5468,7 +5471,7 @@ def setup_page_html(
         },
         {
             "id": "clash",
-            "name": "Clash / Mihomo",
+            "name": "Clash Mi / Mihomo",
             "badge": "авто-выбор",
             "iconUrl": OFFICIAL_CLASH_ICON,
             "iosIconUrl": OFFICIAL_CLASH_MI_ICON,
@@ -8401,8 +8404,7 @@ def setup_page_html(
       const activeSrv = (_wlSlot && _wlSlot.active_server ? _wlSlot.active_server : "nl").toLowerCase();
       const allSrvs = [
         { code: "nl", name: "Нидерланды", flag: "🇳🇱" },
-        { code: "pl", name: "Польша", flag: "🇵🇱" },
-        { code: "fi", name: "Финляндия", flag: "🇫🇮" }
+        { code: "pl", name: "Польша", flag: "🇵🇱" }
       ];
 
       list.innerHTML = "";
@@ -10156,8 +10158,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                         link = str(slot.get("active_link") or "").strip()
 
                     if not link:
-                        fallback_c = country_override if country_override in {"nl", "pl", "fi"} else (str(slot.get("active_server") or "nl").lower())
-                        if fallback_c not in {"nl", "pl", "fi"}:
+                        fallback_c = country_override if country_override in {"nl", "pl"} else (str(slot.get("active_server") or "nl").lower())
+                        if fallback_c not in {"nl", "pl"}:
                             fallback_c = "nl"
                         link, _, _ = build_openflux_v1_link(fallback_c, pid)
 

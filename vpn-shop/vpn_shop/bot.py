@@ -21,7 +21,7 @@ from .config import REFERRAL_INVITEE_DISCOUNT_PERCENT, Settings
 from .mailer import send_subscription_email_async
 from .platega import PlategaClient
 from .provisioning import ADMIN_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES, TEST_PROFILE_NOTES, Provisioner
-from .security import days_from_now, normalize_username, now_ts
+from .security import days_from_now, normalize_username, now_ts, order_to_profile_alias
 from .store import OrderStateError, Store
 from .telegram_api import TelegramApiError, TelegramBotClient
 from .web import subscription_setup_url
@@ -2857,16 +2857,21 @@ class ShopBot:
                     continue
 
                 # 2. Check if client exists in X-UI (or store by email)
-                alias = str(order["public_id"])
                 is_hybrid = str(order.get("transport")) == "hybrid"
-                check_alias = f"{public_id}-tcp" if is_hybrid else alias
+                alias_primary = order_to_profile_alias(public_id, "tcp" if is_hybrid else "")
+                alias_legacy = f"{public_id}-tcp" if is_hybrid else str(order["public_id"])
+                check_candidates = [alias_primary, alias_legacy] if alias_primary != alias_legacy else [alias_primary]
 
-                existing_profile = self.store.get_profile_by_xui_email(check_alias)
+                existing_profile = None
                 xui_client = None
-                if not existing_profile:
-                    found = self.provisioner.xui_db.find_client_by_email(check_alias)
+                for cand in check_candidates:
+                    existing_profile = self.store.get_profile_by_xui_email(cand)
+                    if existing_profile:
+                        break
+                    found = self.provisioner.xui_db.find_client_by_email(cand)
                     if found and found.get("client"):
                         xui_client = found
+                        break
 
                 if existing_profile:
                     final_order = self.store.finalize_order_delivered(

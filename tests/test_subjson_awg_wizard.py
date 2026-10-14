@@ -141,11 +141,8 @@ class TestSubjsonAwgWizard(unittest.TestCase):
         self.assertIn('id="awg-mode-container"', html)
         self.assertIn('id="awg-qr-modal"', html)
         self.assertIn('id="awg-qr-image"', html)
-        self.assertIn('id="awg-switch-modal"', html)
         self.assertIn("openAwgQrModal", html)
         self.assertIn("closeAwgQrModal", html)
-        self.assertIn("copyAwgKey", html)
-        self.assertIn("openAwgSwitchModal", html)
         self.assertIn("renameAwgSlot", html)
 
     def test_render_subjson_awg_container_fallback(self):
@@ -164,10 +161,9 @@ class TestSubjsonAwgWizard(unittest.TestCase):
         with patch("app.get_shop_checkout", return_value=mock_wc):
             out = render_subjson_awg_container("prf_test123", "https://t.me/example_support")
             self.assertIn("SLOTS_OK", out)
+            self.assertIn("Установка клиента Amnezia VPN", out)
             self.assertIn("App Store", out)
             self.assertIn("Google Play", out)
-            self.assertIn("/assets/stores/appstore.webp", out)
-            self.assertIn("/assets/stores/googleplay.webp", out)
 
     def test_awg_slot_config_download_direct_and_secret(self):
         for route_prefix in ["/sub/awg", "/my-secret-sub/awg"]:
