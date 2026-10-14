@@ -58,12 +58,6 @@ SERVERS: dict[str, dict[str, Any]] = {
         "flag": "🇵🇱",
         "ip": PL_IP,
     },
-    "fi": {
-        "code": "fi",
-        "name": "Финляндия",
-        "flag": "🇫🇮",
-        "ip": FI_IP,
-    },
 }
 
 MIGRATION_TIMEOUT_SECONDS = 300  # 5 minutes
@@ -338,8 +332,8 @@ def get_or_create_openflux_slot(conn: sqlite3.Connection, profile_id: str) -> di
 
 
 def choose_least_loaded_server(conn: sqlite3.Connection) -> str:
-    """Smart Balancer: Select least loaded server among NL, PL, FI."""
-    counts = {"nl": 0, "pl": 0, "fi": 0}
+    """Smart Balancer: Select least loaded server between NL and PL."""
+    counts = {"nl": 0, "pl": 0}
     rows = conn.execute(
         """
         SELECT active_server, count(*) as cnt
@@ -353,9 +347,9 @@ def choose_least_loaded_server(conn: sqlite3.Connection) -> str:
         if srv in counts:
             counts[srv] = int(r[1])
 
-    # Select lowest count with priority nl -> pl -> fi on tie
+    # Select lowest count with priority nl -> pl on tie
     min_count = min(counts.values())
-    for srv in ("nl", "pl", "fi"):
+    for srv in ("nl", "pl"):
         if counts[srv] == min_count:
             return srv
     return "nl"

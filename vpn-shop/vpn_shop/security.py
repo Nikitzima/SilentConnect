@@ -151,12 +151,19 @@ def masked_code(code: str) -> str:
     return f"{code[:3]}..."
 
 
-def public_id(prefix: str, size: int = 10) -> str:
+def public_id(prefix: str, size: int = 12) -> str:
     token = "".join(secrets.choice(ALPHABET_LOWER) for _ in range(size))
     return f"{prefix}_{token}"
 
 
-def random_alias(prefix: str = "anon", size: int = 10) -> str:
+def order_to_profile_alias(order_pub_id: str, suffix: str = "") -> str:
+    """Deterministically convert an order public_id into an anonymous client alias."""
+    clean_id = order_pub_id.removeprefix("ord_") if order_pub_id.startswith("ord_") else order_pub_id
+    base = f"anon-{clean_id}"
+    return f"{base}-{suffix}" if suffix else base
+
+
+def random_alias(prefix: str = "anon", size: int = 12) -> str:
     token = "".join(secrets.choice(ALPHABET_LOWER) for _ in range(size))
     return f"{prefix}-{token}"
 

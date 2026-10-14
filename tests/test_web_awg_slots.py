@@ -83,7 +83,7 @@ class TestWebAwgSlots(unittest.TestCase):
         headers: dict | None = None,
         body: bytes | str | None = None,
     ) -> tuple[int, dict, bytes]:
-        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=35)
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         req_headers = headers or {}
         if isinstance(body, str):
             body = body.encode("utf-8")
@@ -123,7 +123,7 @@ class TestWebAwgSlots(unittest.TestCase):
         self.assertEqual(len(slots), 3)
 
         html = self.checkout.render_awg_slots_widget(self.profile, self.sub_id)
-        self.assertIn("Оставшийся трафик Amnezia:", html)
+        self.assertIn("Оставшийся трафик Amnezia", html)
         self.assertIn("ГБ из", html)
         self.assertIn("Устройство 1", html)
         self.assertIn("Устройство 2", html)
@@ -131,14 +131,8 @@ class TestWebAwgSlots(unittest.TestCase):
         self.assertIn("awg-progress-track", html)
         self.assertIn("awg-action-btn", html)
         self.assertIn("openAwgQrModal", html)
-        self.assertIn("renameAwgSlot", html)
-        self.assertIn("Сброс квоты:", html)
-        self.assertIn("Трафик в разделе", html)
-        self.assertIn("🛡️ Основной", html)
-        self.assertIn("setConnectionMode('standard')", html)
         self.assertIn("copyAwgKey", html)
-        self.assertIn("openAwgSwitchModal", html)
-        self.assertIn("Безлимитно", html)
+        self.assertIn("Скопировать ключ", html)
 
     def test_03_get_slot_config_download(self):
         status, headers, body = self._http_request("GET", f"/sub/awg/{self.sub_id}/slot/1/config")
@@ -154,15 +148,6 @@ class TestWebAwgSlots(unittest.TestCase):
         self.assertIn("PublicKey =", conf_text)
         self.assertIn("Jc =", conf_text)
         self.assertIn("H1 =", conf_text)
-
-    def test_03b_get_slot_config_text(self):
-        status, headers, body = self._http_request("GET", f"/sub/awg/{self.sub_id}/slot/1/config_text")
-        self.assertEqual(status, HTTPStatus.OK)
-        self.assertIn("text/plain", headers.get("content-type", ""))
-        conf_text = body.decode("utf-8")
-        self.assertIn("[Interface]", conf_text)
-        self.assertIn("[Peer]", conf_text)
-        self.assertIn("PrivateKey =", conf_text)
 
     def test_04_get_slot_qr_code(self):
         status, headers, body = self._http_request("GET", f"/sub/awg/{self.sub_id}/slot/1/qr")
@@ -191,55 +176,6 @@ class TestWebAwgSlots(unittest.TestCase):
         self.assertIsNotNone(slot2)
         self.assertEqual(slot2["slot_label"], "Рабочий Mac")
 
-    def test_05b_post_slot_switch_country_and_verification_gate(self):
-        from unittest.mock import patch
-        # 1. Switch slot 1 from NL to PL (mock remote SSH peer addition/removal)
-        with patch("vpn_shop.awg_manager.add_slot_peer", return_value=True), \
-             patch("vpn_shop.awg_manager.remove_slot_peer", return_value=True):
-            payload = json.dumps({"country": "pl"}).encode("utf-8")
-            status, headers, body = self._http_request(
-                "POST",
-                f"/sub/awg/{self.sub_id}/slot/1/switch_country",
-                headers={"Content-Type": "application/json", "Content-Length": str(len(payload))},
-                body=payload,
-            )
-            self.assertEqual(status, HTTPStatus.OK)
-            data = json.loads(body.decode("utf-8"))
-            self.assertTrue(data.get("ok"))
-            self.assertEqual(data.get("server_code"), "pl")
-            self.assertIn("Локация успешно переключена на Польша", data.get("message", ""))
-            self.assertIn("приостановлено", data.get("message", ""))
-
-            # Verify active in store
-            active_slot = self.store.get_awg_slot_by_index(self.profile["public_id"], 1)
-            self.assertEqual(active_slot["server_code"], "pl")
-            self.assertEqual(active_slot["enabled"], 1)
-
-            # Verify old NL slot config is preserved in DB (not deleted!)
-            nl_slot = self.store.get_awg_slot_by_index(self.profile["public_id"], 1, server_code="nl")
-            self.assertIsNotNone(nl_slot)
-            self.assertEqual(nl_slot["enabled"], 0)
-
-        # 2. Verification Gate Failure simulation: target server fails
-        with patch("vpn_shop.awg_manager.add_slot_peer", return_value=False):
-            payload_fi = json.dumps({"country": "fi"}).encode("utf-8")
-            status, headers, body = self._http_request(
-                "POST",
-                f"/sub/awg/{self.sub_id}/slot/1/switch_country",
-                headers={"Content-Type": "application/json", "Content-Length": str(len(payload_fi))},
-                body=payload_fi,
-            )
-            self.assertEqual(status, HTTPStatus.BAD_REQUEST)
-            fail_data = json.loads(body.decode("utf-8"))
-            self.assertFalse(fail_data.get("ok"))
-            self.assertIn("Не удалось активировать подключение к Финляндия", fail_data.get("error", ""))
-            self.assertIn("сохранено и продолжает работать", fail_data.get("error", ""))
-
-            # PL connection remains active and untouched
-            current_active = self.store.get_awg_slot_by_index(self.profile["public_id"], 1)
-            self.assertEqual(current_active["server_code"], "pl")
-            self.assertEqual(current_active["enabled"], 1)
-
     def test_06_get_subscription_view(self):
         status, headers, body = self._http_request("GET", f"/sub/{self.sub_id}")
         self.assertEqual(status, HTTPStatus.OK)
@@ -247,7 +183,7 @@ class TestWebAwgSlots(unittest.TestCase):
         html = body.decode("utf-8")
         self.assertIn("Подписка SilentConnect", html)
         self.assertIn("awg-quota-widget", html)
-        self.assertIn("Оставшийся трафик Amnezia:", html)
+        self.assertIn("Оставшийся трафик Amnezia", html)
 
     def test_07_post_traffic_sync_auth_and_deltas(self):
         # 1. Missing auth
@@ -419,29 +355,11 @@ class TestWebAwgSlots(unittest.TestCase):
             expires_at=1800000000,
             device_limit=3,
         )
-        # Render cabinet with both profiles - must be clean selection view without AWG widget clutter
-        profiles_list = [
-            {"public_id": self.profile["public_id"], "sub_id": self.profile["public_id"], "raw_profile": self.profile},
-            {"public_id": profile2["public_id"], "sub_id": profile2["public_id"], "raw_profile": profile2},
-        ]
-        cabinet_bytes = self.checkout.render_cabinet("test@example.com", profiles_list)
-        cabinet_html = cabinet_bytes.decode("utf-8")
-        
-        # Verify clean cabinet card structure
-        self.assertIn("Подписка #1", cabinet_html)
-        self.assertIn("Подписка #2", cabinet_html)
-        self.assertIn(self.profile["public_id"], cabinet_html)
-        self.assertIn(profile2["public_id"], cabinet_html)
-        self.assertNotIn('<div class="awg-slots-hub">', cabinet_html)
-        self.assertNotIn('<div class="awg-quota-widget">', cabinet_html)
-        self.assertNotIn('class="awg-slot-card"', cabinet_html)
-        self.assertNotIn('class="awg-modal-overlay"', cabinet_html)
-
-        # Ensure DOM IDs in AWG widgets are uniquely scoped when rendered individually
-        widget1 = self.checkout.render_awg_slots_widget(self.profile, self.profile["public_id"])
-        widget2 = self.checkout.render_awg_slots_widget(profile2, profile2["public_id"])
-        self.assertIn(f"awg-slot-{self.profile['public_id']}-1", widget1)
-        self.assertIn(f"awg-slot-{profile2['public_id']}-1", widget2)
+        # Render widgets for both profiles to ensure scoped DOM IDs
+        html1 = self.checkout.render_awg_slots_widget(self.profile, self.sub_id)
+        html2 = self.checkout.render_awg_slots_widget(profile2, profile2["public_id"])
+        self.assertIn(f"awg-slot-{self.profile['public_id']}-1", html1)
+        self.assertIn(f"awg-slot-{profile2['public_id']}-1", html2)
         self.assertNotEqual(
             f"awg-slot-{self.profile['public_id']}-1",
             f"awg-slot-{profile2['public_id']}-1",

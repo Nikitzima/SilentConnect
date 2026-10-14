@@ -398,7 +398,6 @@ class Store:
                 table_sql = str(table_sql_row["sql"] or "") if table_sql_row else ""
                 if "UNIQUE(profile_public_id, slot_index)" in table_sql:
                     # Migrate awg_slots table to UNIQUE(profile_public_id, slot_index, server_code)
-                    conn.execute("PRAGMA foreign_keys = OFF;")
                     conn.execute("ALTER TABLE awg_slots RENAME TO awg_slots_migration_old;")
                     conn.execute("""
                     CREATE TABLE awg_slots (
@@ -428,31 +427,6 @@ class Store:
                     conn.execute("CREATE INDEX IF NOT EXISTS ix_awg_slots_public_key ON awg_slots(public_key);")
                     conn.execute("CREATE INDEX IF NOT EXISTS ix_awg_slots_client_ip ON awg_slots(client_ip);")
                     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_awg_slots_server_ip ON awg_slots(server_code, client_ip);")
-
-            if "awg_traffic_ledger" in existing_tables:
-                ledger_sql_row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='awg_traffic_ledger'").fetchone()
-                ledger_sql = str(ledger_sql_row["sql"] or "") if ledger_sql_row else ""
-                if "migration_old" in ledger_sql:
-                    conn.execute("PRAGMA foreign_keys = OFF;")
-                    conn.execute("""
-                    CREATE TABLE awg_traffic_ledger_fix (
-                      id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      node_id TEXT NOT NULL,
-                      slot_id INTEGER,
-                      profile_public_id TEXT NOT NULL,
-                      delta_rx_bytes INTEGER NOT NULL DEFAULT 0,
-                      delta_tx_bytes INTEGER NOT NULL DEFAULT 0,
-                      collected_at INTEGER NOT NULL,
-                      FOREIGN KEY (slot_id) REFERENCES awg_slots(id) ON DELETE SET NULL,
-                      FOREIGN KEY (profile_public_id) REFERENCES profiles(public_id) ON DELETE CASCADE
-                    );
-                    """)
-                    conn.execute("INSERT INTO awg_traffic_ledger_fix SELECT * FROM awg_traffic_ledger;")
-                    conn.execute("DROP TABLE awg_traffic_ledger;")
-                    conn.execute("ALTER TABLE awg_traffic_ledger_fix RENAME TO awg_traffic_ledger;")
-                    conn.execute("CREATE INDEX IF NOT EXISTS ix_awg_traffic_ledger_profile ON awg_traffic_ledger(profile_public_id, collected_at);")
-                    conn.execute("CREATE INDEX IF NOT EXISTS ix_awg_traffic_ledger_slot ON awg_traffic_ledger(slot_id);")
-                    conn.execute("CREATE INDEX IF NOT EXISTS ix_awg_traffic_ledger_node ON awg_traffic_ledger(node_id, collected_at);")
             conn.executescript(SCHEMA)
             self._ensure_column(conn, "promo_codes", "promo_type", "TEXT NOT NULL DEFAULT 'fixed'")
             self._ensure_column(conn, "promo_codes", "device_limit", "INTEGER NOT NULL DEFAULT 3")
@@ -1309,45 +1283,52 @@ class Store:
         meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         now = now_ts()
-        public = public_id("ord")
         merged_meta = dict(meta or {})
         if customer_email:
             merged_meta["customer_email"] = customer_email
         payload = json.dumps(merged_meta, ensure_ascii=False, separators=(",", ":"))
-        with self._connect() as conn:
-            cursor = conn.execute(
-                """
-                INSERT INTO orders(
-                  public_id, kind, status, transport, duration_days, profile_mode, family_label,
-                  base_price_rub, final_price_rub, promo_id, invite_id, customer_chat_id,
-                  privacy_ack, loss_policy_ack, terms_version, customer_email, created_at, updated_at, meta_json
-                )
-                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    public,
-                    kind,
-                    status,
-                    transport,
-                    duration_days,
-                    profile_mode,
-                    family_label,
-                    base_price_rub,
-                    final_price_rub,
-                    promo_id,
-                    invite_id,
-                    str(customer_chat_id) if customer_chat_id is not None else None,
-                    int(privacy_ack),
-                    int(loss_policy_ack),
-                    terms_version,
-                    customer_email,
-                    now,
-                    now,
-                    payload,
-                ),
-            )
-            row = conn.execute("SELECT * FROM orders WHERE id = ?", (cursor.lastrowid,)).fetchone()
-        return self._row_to_dict(row) or {}
+        for attempt in range(5):
+            public = public_id("ord", size=12)
+            try:
+                with self._connect() as conn:
+                    cursor = conn.execute(
+                        """
+                        INSERT INTO orders(
+                          public_id, kind, status, transport, duration_days, profile_mode, family_label,
+                          base_price_rub, final_price_rub, promo_id, invite_id, customer_chat_id,
+                          privacy_ack, loss_policy_ack, terms_version, customer_email, created_at, updated_at, meta_json
+                        )
+                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            public,
+                            kind,
+                            status,
+                            transport,
+                            duration_days,
+                            profile_mode,
+                            family_label,
+                            base_price_rub,
+                            final_price_rub,
+                            promo_id,
+                            invite_id,
+                            str(customer_chat_id) if customer_chat_id is not None else None,
+                            int(privacy_ack),
+                            int(loss_policy_ack),
+                            terms_version,
+                            customer_email,
+                            now,
+                            now,
+                            payload,
+                        ),
+                    )
+                    row = conn.execute("SELECT * FROM orders WHERE id = ?", (cursor.lastrowid,)).fetchone()
+                    return self._row_to_dict(row) or {}
+            except sqlite3.IntegrityError as err:
+                if "orders.public_id" in str(err) and attempt < 4:
+                    continue
+                raise
+        return {}
 
     def update_order_meta(self, public_id_value: str, meta: dict[str, Any]) -> None:
         meta = dict(meta)
@@ -1541,22 +1522,16 @@ class Store:
         now = now_ts()
         public_ids = [str(order["public_id"]) for order in orders]
         placeholders = ",".join("?" for _ in public_ids)
-        status_placeholders = ",".join("?" for _ in statuses)
         with self._connect() as conn:
             conn.execute(
                 f"""
                 UPDATE orders
                 SET status = 'cancelled', updated_at = ?, closed_at = ?
                 WHERE public_id IN ({placeholders})
-                  AND status IN ({status_placeholders})
                 """,
-                [now, now, *public_ids, *statuses],
+                [now, now, *public_ids],
             )
-            rows = conn.execute(
-                f"SELECT * FROM orders WHERE public_id IN ({placeholders}) AND status = 'cancelled'",
-                public_ids,
-            ).fetchall()
-        return [self._row_to_dict(r) or {} for r in rows]
+        return orders
 
     def expire_waiting_payment_orders_for_chat(
         self,
@@ -1580,15 +1555,10 @@ class Store:
                 UPDATE orders
                 SET status = 'cancelled', updated_at = ?, closed_at = ?
                 WHERE public_id IN ({placeholders})
-                  AND status = 'waiting_payment'
                 """,
                 [now, now, *public_ids],
             )
-            rows = conn.execute(
-                f"SELECT * FROM orders WHERE public_id IN ({placeholders}) AND status = 'cancelled'",
-                public_ids,
-            ).fetchall()
-        return [self._row_to_dict(r) or {} for r in rows]
+        return expired_orders
 
     def get_order_by_manager_message(self, manager_chat_id: int | str, manager_message_id: int) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -1816,7 +1786,7 @@ class Store:
         expiry_ms = int(client.get("expiryTime") or 0)
         expires_at = expiry_ms // 1000 if expiry_ms > 0 else (now_ts() + 30 * 86400)
         client_id = str(client.get("id") or client.get("password") or email)
-        mode = "family" if not email.startswith("anon-") else "anonymous"
+        mode = "family" if not (email.startswith("anon-") or email.startswith("ord_")) else "anonymous"
 
         return self.create_profile(
             xui_inbound_id=int(xui_inbound_id),

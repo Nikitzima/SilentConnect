@@ -175,9 +175,13 @@ class TestOpenFluxEndpoints(unittest.TestCase):
             self.assertEqual(body["slot"]["active_server"], "nl")
             self.assertIsNone(body["slot"]["pending_server"])
 
-            # 7. Prepare switch to FI and Confirm
-            with patch("vpn_shop.openflux_manager.rclone_get_public_link", return_value="https://cloud.mail.ru/public/FI/doc3"):
-                status, body, _ = self.request("POST", "/sub/openflux/user123/switch/prepare", {"target": "fi"})
+            # 7. Verify FI is excluded and rejected with 400
+            status, body, _ = self.request("POST", "/sub/openflux/user123/switch/prepare", {"target": "fi"})
+            self.assertEqual(status, HTTPStatus.BAD_REQUEST)
+
+            # 8. Prepare switch to PL and Confirm
+            with patch("vpn_shop.openflux_manager.rclone_get_public_link", return_value="https://cloud.mail.ru/public/PL/doc3"):
+                status, body, _ = self.request("POST", "/sub/openflux/user123/switch/prepare", {"target": "pl"})
                 self.assertEqual(status, HTTPStatus.OK)
                 self.assertEqual(body["slot"]["status"], "migrating")
 
@@ -185,7 +189,7 @@ class TestOpenFluxEndpoints(unittest.TestCase):
             self.assertEqual(status, HTTPStatus.OK)
             self.assertTrue(body["ok"])
             self.assertEqual(body["slot"]["status"], "active")
-            self.assertEqual(body["slot"]["active_server"], "fi")
+            self.assertEqual(body["slot"]["active_server"], "pl")
             self.assertIsNone(body["slot"]["pending_server"])
 
 

@@ -8,7 +8,15 @@ import uuid
 from typing import Any
 
 from .config import Settings
-from .security import days_from_now, normalize_username, now_ts, random_alias, random_subscription_id, to_xui_ms
+from .security import (
+    days_from_now,
+    normalize_username,
+    now_ts,
+    order_to_profile_alias,
+    random_alias,
+    random_subscription_id,
+    to_xui_ms,
+)
 from .store import Store
 from .xui_api import XuiApiClient
 from .xui_db import XuiDatabase
@@ -216,12 +224,13 @@ class Provisioner:
         device_limit = int(self.settings.default_device_limit if raw_device_limit is None else raw_device_limit)
         if str(order["transport"]) == "hybrid":
             return self.create_hybrid_profile_for_order(order, device_limit=device_limit)
+        alias = order_to_profile_alias(str(order["public_id"]))
         result = self._provision_profile(
             transport=order["transport"],
             duration_days=int(order["duration_days"]),
             profile_mode=order["profile_mode"],
             family_label=order["family_label"],
-            alias=str(order["public_id"]),
+            alias=alias,
             device_limit=device_limit,
         )
         self.store.link_order_profile(order["public_id"], result["profile"]["public_id"])
@@ -229,6 +238,8 @@ class Provisioner:
 
     def create_hybrid_profile_for_order(self, order: dict[str, Any], *, device_limit: int) -> dict[str, Any]:
         order_pub_id = str(order["public_id"])
+        tcp_alias = order_to_profile_alias(order_pub_id, suffix="tcp")
+        xhttp_alias = order_to_profile_alias(order_pub_id, suffix="xhttp")
         tcp_result: dict[str, Any] | None = None
         try:
             tcp_result = self._provision_profile(
@@ -236,7 +247,7 @@ class Provisioner:
                 duration_days=int(order["duration_days"]),
                 profile_mode=str(order["profile_mode"]),
                 family_label=None,
-                alias=f"{order_pub_id}-tcp",
+                alias=tcp_alias,
                 device_limit=device_limit,
             )
             xhttp_result = self._provision_profile(
@@ -244,7 +255,7 @@ class Provisioner:
                 duration_days=int(order["duration_days"]),
                 profile_mode=str(order["profile_mode"]),
                 family_label=None,
-                alias=f"{order_pub_id}-xhttp",
+                alias=xhttp_alias,
                 device_limit=device_limit,
             )
         except Exception as exc:

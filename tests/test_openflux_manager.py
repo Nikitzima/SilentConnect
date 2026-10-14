@@ -63,7 +63,7 @@ class TestOpenFluxManager(unittest.TestCase):
         self.conn.commit()
 
         srv = choose_least_loaded_server(self.conn)
-        self.assertEqual(srv, "fi")
+        self.assertEqual(srv, "pl")
 
     @patch("vpn_shop.openflux_manager.rclone_create_user_doc", return_value=True)
     @patch("vpn_shop.openflux_manager.rclone_get_public_link", return_value="https://cloud.mail.ru/public/NL/Doc")
@@ -115,14 +115,22 @@ class TestOpenFluxManager(unittest.TestCase):
     @patch("vpn_shop.openflux_manager.rclone_delete_user_doc", return_value=True)
     def test_two_phase_handover_cancel(self, mock_del, mock_stop, mock_start, mock_link, mock_create):
         activate_openflux_slot(self.conn, "test_user_123")
-        start_server_switch(self.conn, "test_user_123", "fi")
+        start_server_switch(self.conn, "test_user_123", "pl")
 
         slot = cancel_server_switch(self.conn, "test_user_123")
         self.assertEqual(slot["status"], "active")
         self.assertEqual(slot["active_server"], "nl")
         self.assertIsNone(slot["pending_server"])
-        mock_stop.assert_called_with("fi", "openflux-worker-test_user_123-pending")
-        mock_del.assert_called_with("FI_test_user_123_pending.docx")
+        mock_stop.assert_called_with("pl", "openflux-worker-test_user_123-pending")
+        mock_del.assert_called_with("PL_test_user_123_pending.docx")
+
+    @patch("vpn_shop.openflux_manager.rclone_create_user_doc", return_value=True)
+    @patch("vpn_shop.openflux_manager.rclone_get_public_link", return_value="https://cloud.mail.ru/public/NL/Doc")
+    @patch("vpn_shop.openflux_manager.start_openflux_worker", return_value=True)
+    def test_fi_server_rejected(self, mock_worker, mock_link, mock_create):
+        activate_openflux_slot(self.conn, "test_user_123")
+        with self.assertRaises(ValueError):
+            start_server_switch(self.conn, "test_user_123", "fi")
 
     @patch("vpn_shop.openflux_manager.stop_openflux_worker", return_value=True)
     @patch("vpn_shop.openflux_manager.rclone_delete_user_doc", return_value=True)

@@ -161,9 +161,6 @@ class SingboxChallengerM1Test(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.temp_dir, ignore_errors=True)
 
-    def setUp(self):
-        os.environ["PUBLIC_HOST"] = "sub.example.com"
-
     # =========================================================================
     # 1. OUTBOUND SCHEMA & HIERARCHY TESTS
     # =========================================================================
@@ -190,16 +187,13 @@ class SingboxChallengerM1Test(unittest.TestCase):
             "fi-backup-grpc",
             "nl-ws443",
             "fi-ws443",
-            "nl-openflux-socks",
-            "pl-openflux-socks",
-            "fi-openflux-socks",
             "direct",
         ]
         for tag in expected_selector_outbounds:
             self.assertIn(tag, selector.get("outbounds", []), f"Selector missing outbound '{tag}'")
 
     def test_02_auto_urltest_pool_parameters(self):
-        """Assert Tier 2 auto-urltest group has exact HTTP 204 endpoint and 3m interval."""
+        """Assert Tier 2 auto-urltest group has exact HTTP 204 endpoint and 1m interval."""
         cfg = subjson_app.build_singbox_smart_config(self.active_sub_id)
         outbounds = cfg.get("outbounds", [])
         urltest = outbounds[1]
@@ -212,13 +206,13 @@ class SingboxChallengerM1Test(unittest.TestCase):
         self.assertEqual(urltest.get("tolerance"), 50, "Healthcheck latency tolerance must be 50ms")
         self.assertTrue(urltest.get("interrupt_exist_connections"), "interrupt_exist_connections must be True")
 
-    def test_03_all_10_nodes_present_in_urltest_pool(self):
-        """Assert auto-urltest contains the primary protocol nodes."""
+    def test_03_all_8_nodes_present_in_urltest_pool(self):
+        """Assert auto-urltest contains exactly the 8 target protocol nodes (4 NL + 4 FI)."""
         cfg = subjson_app.build_singbox_smart_config(self.active_sub_id)
         urltest = cfg["outbounds"][1]
         pooled_tags = urltest.get("outbounds", [])
 
-        expected_nodes = [
+        expected_8_nodes = [
             "nl-classic-tcp",
             "nl-fast-tcp",
             "nl-speed-hysteria2",
@@ -229,7 +223,7 @@ class SingboxChallengerM1Test(unittest.TestCase):
             "fi-backup-grpc",
         ]
         self.assertEqual(len(pooled_tags), 8, f"Expected exactly 8 pooled nodes in urltest, found {len(pooled_tags)}")
-        for expected in expected_nodes:
+        for expected in expected_8_nodes:
             self.assertIn(expected, pooled_tags, f"Pooled node '{expected}' missing from auto-urltest")
 
     # =========================================================================
@@ -266,13 +260,13 @@ class SingboxChallengerM1Test(unittest.TestCase):
         cfg = subjson_app.build_singbox_smart_config(self.active_sub_id)
         ob = next(o for o in cfg["outbounds"] if o.get("tag") == "nl-speed-hysteria2")
         self.assertEqual(ob.get("type"), "hysteria2")
-        self.assertIn(ob.get("server"), ("sub.example.com", "edge.example.com"))
+        self.assertEqual(ob.get("server"), "edge.example.com")
         self.assertEqual(ob.get("server_ports"), ["30000:40000"])
         self.assertEqual(ob.get("hop_interval"), "60s")
         self.assertEqual(ob["tls"].get("alpn"), ["h3"])
-        self.assertIn(ob["tls"].get("server_name"), ("sub.example.com", "edge.example.com"))
+        self.assertEqual(ob["tls"].get("server_name"), "edge.example.com")
         self.assertEqual(ob.get("obfs", {}).get("type"), "gecko")
-        self.assertEqual(ob.get("obfs", {}).get("password"), "485a96779d1ad79d0fa80ca0")
+        self.assertEqual(ob.get("obfs", {}).get("password"), subjson_app.HYSTERIA_SALAMANDER_PASSWORD)
         self.assertEqual(ob.get("obfs", {}).get("min_packet_size"), 512)
         self.assertEqual(ob.get("obfs", {}).get("max_packet_size"), 1000)
         self.assertTrue(UUID_REGEX.match(ob.get("password", "")))
@@ -289,10 +283,6 @@ class SingboxChallengerM1Test(unittest.TestCase):
         self.assertEqual(ob["tls"].get("server_name"), "vk.com")
         self.assertEqual(ob["tls"].get("reality", {}).get("public_key"), subjson_app.GRPC_REALITY_PUBLIC_KEY)
         self.assertTrue(UUID_REGEX.match(ob.get("uuid", "")))
-
-    def test_08_nl_xhttp_properties(self):
-        """Verify NL XHTTP Caddy TLS configuration (superseded in Phase 3)."""
-        self.skipTest("XHTTP Sing-box outbounds superseded in Phase 3")
 
     def test_09_fi_classic_tcp_properties(self):
         """Verify FI Classic TCP Reality configuration."""
@@ -325,7 +315,7 @@ class SingboxChallengerM1Test(unittest.TestCase):
         self.assertEqual(ob["tls"].get("alpn"), ["h3"])
         self.assertEqual(ob["tls"].get("server_name"), "fi.example.com")
         self.assertEqual(ob.get("obfs", {}).get("type"), "gecko")
-        self.assertEqual(ob.get("obfs", {}).get("password"), "485a96779d1ad79d0fa80ca0")
+        self.assertEqual(ob.get("obfs", {}).get("password"), subjson_app.HYSTERIA_SALAMANDER_PASSWORD)
         self.assertEqual(ob.get("obfs", {}).get("min_packet_size"), 512)
         self.assertEqual(ob.get("obfs", {}).get("max_packet_size"), 1000)
         self.assertTrue(UUID_REGEX.match(ob.get("password", "")))
@@ -340,10 +330,6 @@ class SingboxChallengerM1Test(unittest.TestCase):
         self.assertEqual(ob["transport"].get("service_name"), "grpc-maxru")
         self.assertEqual(ob["tls"].get("server_name"), subjson_app.FI_GRPC_REALITY_SNI)
         self.assertTrue(UUID_REGEX.match(ob.get("uuid", "")))
-
-    def test_13_fi_xhttp_reality_properties(self):
-        """Verify FI XHTTP Reality on Port 443 (superseded in Phase 3)."""
-        self.skipTest("XHTTP Sing-box outbounds superseded in Phase 3")
 
     # =========================================================================
     # 3. SING-BOX BINARY CHECK EMPIRICAL VALIDATION

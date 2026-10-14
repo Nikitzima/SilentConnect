@@ -1,5 +1,10 @@
 # SilentConnect High-Availability, Disaster Recovery & Emergency Fallback Architecture
 
+> [!NOTE] Historical Drill Report & Living Edge Proxy Architecture
+> **Разделы 1–2 и 5** фиксируют результаты учений катастрофоустойчивости от 01.09.2026 (исторический прогон восстановления Litestream, запуск `/usr/local/bin/promote_fi.sh` / `demote_fi.sh` на ноде FI, 3-way слияние `failback_merge.py`).
+> **Раздел 4** фиксирует **утверждённую и действующую архитектуру Vercel Emergency Reverse Proxy**, используемую для аварийного Anycast-проксирования веб- и подписочных запросов (`sub.<домен>`) с нулевой задержкой распространения DNS.
+> Актуальная боевая архитектура кластера (shell-push репликация SQLite раз в 3 минуты и оркестратор `switch_primary.py`) зафиксирована в [ARCHITECTURE.md](../ARCHITECTURE.md) и [EDGE_FAILOVER_ARCHITECTURE.md](EDGE_FAILOVER_ARCHITECTURE.md).
+
 Документ фиксирует результаты проектирования, внедрения и боевого тестирования инфраструктуры катастрофоустойчивости SilentConnect, проведённого 1 сентября 2026 года, а также утверждённую архитектуру аварийного буфера **Vercel Emergency Reverse Proxy**.
 
 ---
