@@ -183,22 +183,23 @@ def main() -> int:
     if args.command == "pin-key":
         return run_pin_key(args.node_code, force_confirm=args.yes, custom_known_hosts=args.known_hosts_file)
     elif args.command == "reconcile":
-        # Placeholder for Step 4 reconcile
         dry_run = not args.apply
-        print(f"[*] Reconcile invoked for node '{args.node}' (dry_run={dry_run})")
+        mode_str = "DRY-RUN" if dry_run else "LIVE APPLY"
+        print(f"[*] Reconcile invoked for node '{args.node}' ({mode_str})")
         from vpn_shop import awg_manager
-        if hasattr(awg_manager, "reconcile_awg_peers"):
+        try:
             res = awg_manager.reconcile_awg_peers(
                 server_code=args.node,
                 dry_run=dry_run,
                 allow_empty=args.allow_empty,
                 force_mass_delete=args.force_mass_delete,
             )
-            print(f"[RECONCILE RESULT]: {res}")
+            import json
+            print(f"[RECONCILE RESULT]:\n{json.dumps(res, indent=2, ensure_ascii=False)}")
             return 0
-        else:
-            print("[INFO] reconcile_awg_peers will be enabled in Step 4.")
-            return 0
+        except Exception as exc:
+            print(f"[ERROR] Reconciliation failed or aborted: {exc}")
+            return 1
 
     return 0
 

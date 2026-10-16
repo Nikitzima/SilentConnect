@@ -371,6 +371,10 @@ class OrderStateError(RuntimeError):
     """Raised when an order transition violates the FSM or a precondition."""
 
 
+class DatabaseQueryError(RuntimeError):
+    """Raised when a database query execution or connection fails."""
+
+
 class Store:
     def __init__(self, database_path: Path):
         self.database_path = Path(database_path)
@@ -2876,6 +2880,26 @@ class Store:
                     (profile_public_id,),
                 ).fetchall()
         return [self._row_to_dict(r) for r in rows if r]
+
+    def list_active_awg_slots(self, server_code: str | None = None) -> list[dict[str, Any]]:
+        """List all active (enabled=1) AWG slots, optionally filtered by server_code.
+        Does NOT mask exceptions: on failure raises DatabaseQueryError.
+        """
+        try:
+            with self._connect() as conn:
+                if server_code:
+                    code = server_code.lower().strip()
+                    rows = conn.execute(
+                        "SELECT * FROM awg_slots WHERE enabled = 1 AND LOWER(server_code) = ? ORDER BY id ASC",
+                        (code,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM awg_slots WHERE enabled = 1 ORDER BY id ASC"
+                    ).fetchall()
+            return [self._row_to_dict(r) for r in rows if r]
+        except Exception as exc:
+            raise DatabaseQueryError(f"Database query failed in list_active_awg_slots: {exc}") from exc
 
     def list_all_awg_slot_configs(self, profile_public_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
