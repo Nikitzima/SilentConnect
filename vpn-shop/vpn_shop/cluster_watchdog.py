@@ -28,6 +28,32 @@ except ImportError:
 
 LOGGER = logging.getLogger("vpn_shop.cluster_watchdog")
 
+
+def load_cluster_env() -> None:
+    """Load cluster environment variables from standard locations if present."""
+    candidates = [
+        Path("/root/vpn-shop/.env.silentconnect"),
+        Path("/etc/silentconnect/.env.silentconnect"),
+    ]
+    for p in candidates:
+        if p.is_file():
+            try:
+                for line in p.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    if k not in os.environ:
+                        os.environ[k] = v
+            except Exception:
+                pass
+            break
+
+
+load_cluster_env()
+
 DEFAULT_LEADER_LOCK = "/tmp/silentconnect_watchdog.leader.lock"
 DEFAULT_HEALTH_CACHE = "/tmp/silentconnect_cluster_health.json"
 MAX_STALE_SECONDS = 180
