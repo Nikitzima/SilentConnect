@@ -1705,14 +1705,20 @@ class WebCheckout:
             return prof
         return None
 
-    def ensure_awg_slot(self, profile_public_id: str, slot_index: int, default_label: str = "", server_code: str = "nl", enabled: bool = True) -> dict[str, Any]:
+    def ensure_awg_slot(self, profile_public_id: str, slot_index: int, default_label: str = "", server_code: str | None = None, enabled: bool = True) -> dict[str, Any]:
         idx = int(slot_index)
         if idx < 1:
             raise ValueError(f"Slot index must be at least 1 (got {idx})")
-        target_srv = (server_code or "nl").lower().strip()
-        slot = self.store.get_awg_slot_by_index(profile_public_id, idx, server_code=target_srv)
-        if slot:
-            return slot
+        if server_code is None:
+            existing = self.store.get_awg_slot_by_index(profile_public_id, idx)
+            if existing:
+                return existing
+            target_srv = "nl"
+        else:
+            target_srv = str(server_code).lower().strip()
+            slot = self.store.get_awg_slot_by_index(profile_public_id, idx, server_code=target_srv)
+            if slot:
+                return slot
 
         prof = self.store.get_profile(profile_public_id)
         if not prof:

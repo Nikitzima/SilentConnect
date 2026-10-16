@@ -9673,7 +9673,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid_label"}, True)
                     return
                 try:
-                    wc.ensure_awg_slot(prof["public_id"], slot_idx)
+                    slot = wc.store.get_awg_slot_by_index(prof["public_id"], slot_idx)
+                    if not slot:
+                        wc.ensure_awg_slot(prof["public_id"], slot_idx)
                 except Exception as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)}, True)
                     return
@@ -10588,7 +10590,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid_slot_index"}, include_body)
                     return
                 try:
-                    slot = wc.ensure_awg_slot(prof["public_id"], slot_idx)
+                    slot = wc.store.get_awg_slot_by_index(prof["public_id"], slot_idx)
+                    if not slot:
+                        slot = wc.ensure_awg_slot(prof["public_id"], slot_idx)
                 except Exception as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)}, include_body)
                     return
@@ -10632,7 +10636,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid_slot_index"}, include_body)
                     return
                 try:
-                    slot = wc.ensure_awg_slot(prof["public_id"], slot_idx)
+                    slot = wc.store.get_awg_slot_by_index(prof["public_id"], slot_idx)
+                    if not slot:
+                        slot = wc.ensure_awg_slot(prof["public_id"], slot_idx)
                 except Exception as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)}, include_body)
                     return
