@@ -62,6 +62,13 @@ def generate_wg_keypair() -> tuple[str, str]:
         return base64.b64encode(bytes(raw_priv)).decode("ascii"), base64.b64encode(bytes(raw_pub)).decode("ascii")
 
 
+WG_KEY_REGEX = re.compile(r"^[A-Za-z0-9+/]{43}=$")
+
+
+class AwgNodeUnavailableError(RuntimeError):
+    """Raised when AmneziaWG node or server public key is unavailable or invalid."""
+
+
 def generate_wg_psk() -> str:
     return base64.b64encode(os.urandom(32)).decode("ascii")
 
@@ -78,7 +85,11 @@ def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool 
         or os.environ.get("AWG_ENDPOINT_PORT")
         or "44121"
     )
-    server_pub = os.environ.get("AWG_SERVER_PUBLIC_KEY") or os.environ.get(f"AWG_{srv_code.upper()}_SERVER_PUBKEY") or "1111111111111111111111111111111111111111111="
+    server_pub = (
+        os.environ.get(f"AWG_{srv_code.upper()}_SERVER_PUBKEY")
+        or os.environ.get("AWG_SERVER_PUBLIC_KEY")
+        or ""
+    )
     client_dns = "1.1.1.1, 1.0.0.1"
     client_mtu = "1280"
     allowed_ips = "0.0.0.0/0"
@@ -116,8 +127,11 @@ def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool 
             sp = awg_manager._server_public_key(conf, server_code=srv_code)
             if sp:
                 server_pub = sp
-    except Exception:
-        pass
+    except Exception as exc:
+        LOGGER.warning("Could not fetch server conf from %s: %s", srv_code, exc)
+
+    if not server_pub or not WG_KEY_REGEX.match(server_pub) or server_pub.startswith("11111111"):
+        raise AwgNodeUnavailableError(f"Получен невалидный публичный ключ сервера {srv_code.upper()}")
 
     client_ip = str(slot.get("client_ip") or "10.8.1.10")
     priv_key = str(slot.get("private_key_enc") or "")
@@ -4530,6 +4544,20 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _send_json(self, status: HTTPStatus, body: bytes) -> None:
         self._send(status, body, "application/json; charset=utf-8")
 
+    def _send_503_unavailable(self, exc: Exception) -> None:
+        LOGGER.error("AWG node unavailable: %s", exc)
+        payload = json.dumps({
+            "ok": False,
+            "error": "service_temporarily_unavailable",
+            "message": "Сервис временно недоступен в данной локации. Попробуйте сменить страну подключения в личном кабинете или повторить через несколько минут."
+        }, ensure_ascii=False).encode("utf-8")
+        self._send(
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            payload,
+            content_type="application/json; charset=utf-8",
+            extra_headers=[("Retry-After", "30"), ("Access-Control-Allow-Origin", "*")],
+        )
+
     def _redirect(self, location: str, extra_headers: list[tuple[str, str]] | None = None) -> None:
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", location)
@@ -4753,7 +4781,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.BAD_REQUEST, json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
                     return
 
-                conf_text = build_slot_conf(slot, server_code=slot.get("server_code", "nl"))
+                try:
+                    conf_text = build_slot_conf(slot, server_code=slot.get("server_code", "nl"))
+                except AwgNodeUnavailableError as exc:
+                    self._send_503_unavailable(exc)
+                    return
                 conf_bytes = conf_text.encode("utf-8")
                 slot_label = str(slot.get("slot_label") or f"device_{slot_idx}")
                 safe_label = re.sub(r"[^\w\-]", "_", slot_label, flags=re.ASCII).strip("_") or f"device_{slot_idx}"
@@ -4799,7 +4831,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.BAD_REQUEST, json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
                     return
 
-                conf_text = build_slot_conf(slot, server_code=slot.get("server_code", "nl"))
+                try:
+                    conf_text = build_slot_conf(slot, server_code=slot.get("server_code", "nl"))
+                except AwgNodeUnavailableError as exc:
+                    self._send_503_unavailable(exc)
+                    return
                 qr_bytes = b""
                 content_type = "image/png"
                 try:
@@ -4849,6 +4885,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                     return
                 try:
                     conf_text = self.checkout.get_awg_slot_conf_text(prof["public_id"], slot_idx)
+                except AwgNodeUnavailableError as exc:
+                    self._send_503_unavailable(exc)
+                    return
                 except Exception as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
                     return

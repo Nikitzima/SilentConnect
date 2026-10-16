@@ -31,6 +31,7 @@ os.environ["PUBLIC_HOST"] = "sub.example.com"
 os.environ["WS443_PUBLIC_HOST"] = "edge.example.com"
 os.environ["FI_STANDBY_HOST"] = "fi.example.com"
 os.environ["PUBLIC_SUBSCRIPTION_ORIGIN"] = "https://sub.example.com"
+os.environ.setdefault("AWG_SERVER_PUBLIC_KEY", "OAxzJl7ocbkYzVx0Hh0aKKAnjH1inPt6YQyUi0iorVQ=")
 
 import app
 from app import setup_page_html, render_subjson_awg_container
