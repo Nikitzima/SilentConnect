@@ -4906,6 +4906,34 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(text_bytes)
                 return
 
+            # GET /api/internal/cluster/health
+            if path == ["api", "internal", "cluster", "health"]:
+                from . import cluster_watchdog
+                configured_secret = (self.checkout.settings.cluster_sync_secret or "").strip()
+                health_secret = os.environ.get("CLUSTER_HEALTH_TOKEN", configured_secret).strip()
+
+                auth_header = self.headers.get("Authorization", "").strip()
+                token = ""
+                if auth_header.lower().startswith("bearer "):
+                    token = auth_header[7:].strip()
+                if not token:
+                    token = (
+                        self.headers.get("X-Cluster-Health-Token", "").strip()
+                        or self.headers.get("X-Sync-Secret", "").strip()
+                        or self.headers.get("X-Cluster-Sync-Secret", "").strip()
+                    )
+
+                if not token or not cluster_watchdog.verify_health_token(token, health_secret):
+                    LOGGER.warning("Unauthorized cluster health endpoint access from %s", self.client_address)
+                    self._send_json(HTTPStatus.UNAUTHORIZED, b'{"ok":false,"error":"unauthorized"}')
+                    return
+
+                code, data = cluster_watchdog.get_health_status()
+                status = HTTPStatus.OK if code == 200 else HTTPStatus.SERVICE_UNAVAILABLE
+                body_bytes = json.dumps(data, ensure_ascii=False).encode("utf-8")
+                self._send_json(status, body_bytes)
+                return
+
             # Subscription view: /sub/<sub_id> or /sub/view/<sub_id>
             if (len(path) == 2 and path[0] == "sub" and path[1] != "awg") or \
                (len(path) == 3 and path[0] == "sub" and path[1] == "view"):

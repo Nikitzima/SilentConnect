@@ -378,6 +378,137 @@ class TestAwgClusterResilienceStep4(unittest.TestCase):
         self.assertIn("tail -n +21 | xargs -r rm -f", cmd)
 
 
+
+class TestAwgClusterResilienceStep5(unittest.TestCase):
+    def test_watchdog_stale_returns_503(self):
+        """When health cache is missing or older than 180s, HTTP 503 is returned with watchdog_stale."""
+        from vpn_shop import cluster_watchdog
+        import time
+
+        tmp_cache = Path(tempfile.mktemp())
+        try:
+            # 1. Missing cache -> 503
+            code, data = cluster_watchdog.get_health_status(max_age_seconds=180, cache_path=tmp_cache)
+            self.assertEqual(code, 503)
+            self.assertTrue(data["stale"])
+            self.assertEqual(data["error"], "watchdog_stale")
+
+            # 2. Fresh cache (10s old) -> 200
+            fresh_data = {
+                "ok": True,
+                "checked_at": time.time() - 10,
+                "nodes": {"nl": {"healthy": True}},
+            }
+            tmp_cache.write_text(json.dumps(fresh_data), encoding="utf-8")
+            code, data = cluster_watchdog.get_health_status(max_age_seconds=180, cache_path=tmp_cache)
+            self.assertEqual(code, 200)
+            self.assertFalse(data["stale"])
+            self.assertTrue(data["ok"])
+
+            # 3. Stale cache (200s old > 180s) -> 503
+            stale_data = {
+                "ok": True,
+                "checked_at": time.time() - 200,
+                "nodes": {"nl": {"healthy": True}},
+            }
+            tmp_cache.write_text(json.dumps(stale_data), encoding="utf-8")
+            code, data = cluster_watchdog.get_health_status(max_age_seconds=180, cache_path=tmp_cache)
+            self.assertEqual(code, 503)
+            self.assertTrue(data["stale"])
+            self.assertEqual(data["error"], "watchdog_stale")
+            self.assertGreater(data["age_seconds"], 180)
+        finally:
+            if tmp_cache.exists():
+                tmp_cache.unlink()
+
+    def test_health_token_hmac_compare_digest(self):
+        """Token verification uses constant-time comparison and rejects invalid/empty tokens."""
+        from vpn_shop.cluster_watchdog import verify_health_token
+
+        secret = "cluster-secret-key-12345678"
+        # Valid matching token
+        self.assertTrue(verify_health_token(secret, secret))
+        self.assertTrue(verify_health_token(f"  {secret}  ", secret))
+
+        # Invalid token
+        self.assertFalse(verify_health_token("wrong-secret-key", secret))
+
+        # Empty / None tokens -> fail-closed
+        self.assertFalse(verify_health_token("", secret))
+        self.assertFalse(verify_health_token(None, secret))
+        self.assertFalse(verify_health_token(secret, ""))
+        self.assertFalse(verify_health_token(secret, None))
+
+    def test_web_cluster_health_endpoint_auth_and_status(self):
+        """Test HTTP endpoint /api/internal/cluster/health through WebCheckout RequestHandler."""
+        from vpn_shop import cluster_watchdog
+        tmp_dir = Path(tempfile.mkdtemp())
+        db_path = tmp_dir / "watchdog.db"
+        store = Store(db_path)
+        store.init()
+
+        import dataclasses
+        base_settings = load_settings(tmp_dir)
+        settings = dataclasses.replace(
+            base_settings,
+            database_path=db_path,
+            cluster_sync_secret="resilience-sync-secret-12345678",
+            cf_turnstile_enabled=False,
+            cf_turnstile_secret_key="",
+            web_listen_host="127.0.0.1",
+            web_listen_port=0,
+        )
+        checkout = WebCheckout(settings, store)
+        RequestHandler.checkout = checkout
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), RequestHandler)
+        port = server.server_address[1]
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+
+        try:
+            # 1. No token -> 401
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request("GET", "/api/internal/cluster/health")
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, HTTPStatus.UNAUTHORIZED)
+            conn.close()
+
+            # 2. Wrong token -> 401
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request("GET", "/api/internal/cluster/health", headers={"Authorization": "Bearer bad-token"})
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, HTTPStatus.UNAUTHORIZED)
+            conn.close()
+
+            # 3. Valid token, stale watchdog -> 503
+            with patch("vpn_shop.cluster_watchdog.get_health_status", return_value=(503, {"ok": False, "stale": True, "error": "watchdog_stale"})):
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                conn.request("GET", "/api/internal/cluster/health", headers={"Authorization": "Bearer resilience-sync-secret-12345678"})
+                resp = conn.getresponse()
+                body = resp.read()
+                conn.close()
+                self.assertEqual(resp.status, HTTPStatus.SERVICE_UNAVAILABLE)
+                data = json.loads(body.decode("utf-8"))
+                self.assertTrue(data["stale"])
+
+            # 4. Valid token, fresh watchdog -> 200
+            with patch("vpn_shop.cluster_watchdog.get_health_status", return_value=(200, {"ok": True, "stale": False, "nodes": {"nl": {"healthy": True}}})):
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                conn.request("GET", "/api/internal/cluster/health", headers={"X-Cluster-Health-Token": "resilience-sync-secret-12345678"})
+                resp = conn.getresponse()
+                body = resp.read()
+                conn.close()
+                self.assertEqual(resp.status, HTTPStatus.OK)
+                data = json.loads(body.decode("utf-8"))
+                self.assertFalse(data["stale"])
+                self.assertTrue(data["ok"])
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
