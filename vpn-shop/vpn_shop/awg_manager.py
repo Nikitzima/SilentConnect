@@ -87,6 +87,11 @@ SERVERS: dict[str, dict[str, Any]] = {
 }
 
 DB_PATH = os.environ.get("SHOP_DB_PATH", "/root/vpn-shop/data/vpn_shop.db")
+CLUSTER_KNOWN_HOSTS_PATH = os.environ.get("CLUSTER_KNOWN_HOSTS_PATH", "/root/.ssh/cluster_known_hosts")
+
+
+class ClusterSecurityError(RuntimeError):
+    """Raised when SSH host key verification fails or cluster security constraint is violated."""
 
 
 class NodeIdentityConflictError(RuntimeError):
@@ -261,7 +266,8 @@ def _dex(*args: Any, **kwargs: Any) -> str:
             "ssh",
             "-o", "BatchMode=yes",
             "-o", "ConnectTimeout=10",
-            "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "StrictHostKeyChecking=yes",
+            "-o", f"UserKnownHostsFile={CLUSTER_KNOWN_HOSTS_PATH}",
             "-o", "ControlMaster=auto",
             "-o", "ControlPath=/tmp/ssh-awg-%r@%h:%p",
             "-o", "ControlPersist=300",
@@ -274,7 +280,10 @@ def _dex(*args: Any, **kwargs: Any) -> str:
 
     r = subprocess.run(call_args, input=inp, capture_output=True, text=True, timeout=30)
     if r.returncode != 0:
-        raise RuntimeError(f"[{server_code.upper()}] exec failed: {r.stderr.strip()[:300]}")
+        err_msg = r.stderr.strip()[:300]
+        if "Host key verification failed" in r.stderr or "REMOTE HOST IDENTIFICATION HAS CHANGED" in r.stderr:
+            raise ClusterSecurityError(f"[{server_code.upper()}] SSH host key verification failed: {err_msg}")
+        raise RuntimeError(f"[{server_code.upper()}] exec failed: {err_msg}")
     return r.stdout.strip()
 
 
