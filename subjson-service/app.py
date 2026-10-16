@@ -10597,8 +10597,25 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)}, include_body)
                     return
 
-                from vpn_shop.web import build_slot_conf
-                conf_text = build_slot_conf(slot, server_code=slot.get("server_code", "nl"))
+                try:
+                    from vpn_shop.web import build_slot_conf, AwgNodeUnavailableError
+                    conf_text = build_slot_conf(slot, server_code=slot.get("server_code", "nl"))
+                except AwgNodeUnavailableError as exc:
+                    LOGGER.error("AWG node unavailable: %s", exc)
+                    self.send_response(HTTPStatus.SERVICE_UNAVAILABLE)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Retry-After", "30")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    for k, v in SECURITY_HEADERS:
+                        self.send_header(k, v)
+                    self.end_headers()
+                    if include_body:
+                        self.wfile.write(json.dumps({
+                            "ok": False,
+                            "error": "service_temporarily_unavailable",
+                            "message": "Сервис временно недоступен в данной локации. Попробуйте сменить страну подключения в личном кабинете или повторить через несколько минут."
+                        }, ensure_ascii=False).encode("utf-8"))
+                    return
                 conf_bytes = conf_text.encode("utf-8")
                 slot_label = str(slot.get("slot_label") or f"device_{slot_idx}")
                 safe_label = re.sub(r"[^\w\-]", "_", slot_label, flags=re.ASCII).strip("_") or f"device_{slot_idx}"
@@ -10643,8 +10660,25 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)}, include_body)
                     return
 
-                from vpn_shop.web import build_slot_conf
-                conf_text = build_slot_conf(slot, server_code=slot.get("server_code", "nl"), for_qr=True)
+                try:
+                    from vpn_shop.web import build_slot_conf, AwgNodeUnavailableError
+                    conf_text = build_slot_conf(slot, server_code=slot.get("server_code", "nl"), for_qr=True)
+                except AwgNodeUnavailableError as exc:
+                    LOGGER.error("AWG node unavailable: %s", exc)
+                    self.send_response(HTTPStatus.SERVICE_UNAVAILABLE)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Retry-After", "30")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    for k, v in SECURITY_HEADERS:
+                        self.send_header(k, v)
+                    self.end_headers()
+                    if include_body:
+                        self.wfile.write(json.dumps({
+                            "ok": False,
+                            "error": "service_temporarily_unavailable",
+                            "message": "Сервис временно недоступен в данной локации. Попробуйте сменить страну подключения в личном кабинете или повторить через несколько минут."
+                        }, ensure_ascii=False).encode("utf-8"))
+                    return
                 qr_bytes = b""
                 try:
                     from vpn_shop import qr
@@ -10685,7 +10719,24 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid_slot_index"}, include_body)
                     return
                 try:
+                    from vpn_shop.web import AwgNodeUnavailableError
                     conf_text = wc.get_awg_slot_conf_text(prof["public_id"], slot_idx)
+                except AwgNodeUnavailableError as exc:
+                    LOGGER.error("AWG node unavailable: %s", exc)
+                    self.send_response(HTTPStatus.SERVICE_UNAVAILABLE)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Retry-After", "30")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    for k, v in SECURITY_HEADERS:
+                        self.send_header(k, v)
+                    self.end_headers()
+                    if include_body:
+                        self.wfile.write(json.dumps({
+                            "ok": False,
+                            "error": "service_temporarily_unavailable",
+                            "message": "Сервис временно недоступен в данной локации. Попробуйте сменить страну подключения в личном кабинете или повторить через несколько минут."
+                        }, ensure_ascii=False).encode("utf-8"))
+                    return
                 except Exception as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)}, include_body)
                     return

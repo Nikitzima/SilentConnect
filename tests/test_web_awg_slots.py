@@ -19,6 +19,7 @@ if str(ROOT / "subjson-service") not in sys.path:
 os.environ.setdefault("SERVER_PEPPER", "unit-test-pepper-0123456789abcdefghijklmnop")
 os.environ.setdefault("SECRET_SEGMENT", "test-secret-sub")
 os.environ.setdefault("CLUSTER_SYNC_SECRET", "test-cluster-sync-token-secret-999")
+os.environ.setdefault("AWG_SERVER_PUBLIC_KEY", "OAxzJl7ocbkYzVx0Hh0aKKAnjH1inPt6YQyUi0iorVQ=")
 
 from vpn_shop.store import Store, AWG_TIER_QUOTAS_BYTES
 from vpn_shop.config import Settings, load_settings
