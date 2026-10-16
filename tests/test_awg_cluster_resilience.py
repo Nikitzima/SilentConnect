@@ -179,5 +179,64 @@ class TestAwgClusterResilienceStep2(unittest.TestCase):
                         get_current_node_code(marker_file=non_existent_marker)
 
 
+class TestAwgClusterResilienceStep3(unittest.TestCase):
+    def test_strict_host_key_failure_no_auto_trust(self):
+        """When SSH reports host key verification failure, ClusterSecurityError is raised."""
+        from vpn_shop.awg_manager import _dex, ClusterSecurityError
+        import subprocess
+
+        fake_err = (
+            "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"
+            "@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n"
+            "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"
+            "Host key verification failed.\n"
+        )
+        mock_proc = MagicMock()
+        mock_proc.returncode = 255
+        mock_proc.stderr = fake_err
+
+        with patch("vpn_shop.awg_manager._get_server", return_value={"mode": "ssh", "container": "amnezia-awg2", "host": "198.51.100.2"}):
+            with patch("subprocess.run", return_value=mock_proc):
+                with self.assertRaises(ClusterSecurityError) as ctx:
+                    _dex("echo test", server_code="pl")
+                self.assertIn("SSH host key verification failed", str(ctx.exception))
+
+    def test_pin_key_fingerprint_and_confirmation(self):
+        """Test compute_ed25519_fingerprint and confirmation enforcement in cluster_node_tool."""
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from cluster_node_tool import compute_ed25519_fingerprint, run_pin_key
+
+        test_b64 = "AAAAC3NzaC1lZDI1NTE5AAAAIBCuty5sukUqTXCuhswOIoN3l64PHpK01RfPL9h53Ohe"
+        fp = compute_ed25519_fingerprint(test_b64)
+        self.assertEqual(fp, "SHA256:663GGoUWCbA+CCnN71FtipYmw+8zOz1z39n6g0+KXgs")
+
+        # Wrong confirmation -> aborts
+        fake_keyscan_output = f"198.51.100.2 ssh-ed25519 {test_b64}\n"
+        mock_proc = MagicMock()
+        mock_proc.stdout = fake_keyscan_output
+        mock_proc.stderr = ""
+        mock_proc.returncode = 0
+
+        tmp_known_hosts = Path(tempfile.mktemp())
+        try:
+            with patch("subprocess.run", return_value=mock_proc):
+                # Wrong phrase
+                with patch("builtins.input", return_value="WRONG PHRASE"):
+                    rc = run_pin_key("pl", force_confirm=False, custom_known_hosts=str(tmp_known_hosts))
+                    self.assertEqual(rc, 1)
+                    self.assertFalse(tmp_known_hosts.exists())
+
+                # Correct phrase
+                with patch("builtins.input", return_value="CONFIRM PIN pl"):
+                    rc = run_pin_key("pl", force_confirm=False, custom_known_hosts=str(tmp_known_hosts))
+                    self.assertEqual(rc, 0)
+                    self.assertTrue(tmp_known_hosts.exists())
+                    content = tmp_known_hosts.read_text(encoding="utf-8")
+                    self.assertIn(test_b64, content)
+        finally:
+            if tmp_known_hosts.exists():
+                tmp_known_hosts.unlink()
+
+
 if __name__ == "__main__":
     unittest.main()
