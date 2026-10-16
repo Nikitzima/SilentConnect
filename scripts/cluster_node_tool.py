@@ -214,12 +214,28 @@ def main() -> int:
         print(f"[*] Reconcile invoked for node '{args.node}' ({mode_str})")
         from vpn_shop import awg_manager
         try:
-            res = awg_manager.reconcile_awg_peers(
-                server_code=args.node,
-                dry_run=dry_run,
-                allow_empty=args.allow_empty,
-                force_mass_delete=args.force_mass_delete,
-            )
+            target_node = (args.node or "nl").lower().strip()
+            if target_node == "all":
+                results = {}
+                for code in ("nl", "pl", "fi"):
+                    print(f"[*] Acquiring master_node_lock('{code}')...")
+                    with awg_manager.master_node_lock(code):
+                        results[code] = awg_manager.reconcile_awg_peers(
+                            server_code=code,
+                            dry_run=dry_run,
+                            allow_empty=args.allow_empty,
+                            force_mass_delete=args.force_mass_delete,
+                        )
+                res = results
+            else:
+                print(f"[*] Acquiring master_node_lock('{target_node}')...")
+                with awg_manager.master_node_lock(target_node):
+                    res = awg_manager.reconcile_awg_peers(
+                        server_code=target_node,
+                        dry_run=dry_run,
+                        allow_empty=args.allow_empty,
+                        force_mass_delete=args.force_mass_delete,
+                    )
             import json
             print(f"[RECONCILE RESULT]:\n{json.dumps(res, indent=2, ensure_ascii=False)}")
             return 0

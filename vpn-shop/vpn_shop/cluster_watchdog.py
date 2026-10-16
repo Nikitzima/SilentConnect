@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -25,6 +26,11 @@ try:
     import fcntl
 except ImportError:
     fcntl = None  # type: ignore
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None  # type: ignore
 
 LOGGER = logging.getLogger("vpn_shop.cluster_watchdog")
 
@@ -94,6 +100,9 @@ def try_acquire_leader_lock(lock_path: str | Path | None = None) -> Any | None:
         f = open(path, "a+")
         if fcntl:
             fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        elif msvcrt:
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
         return f
     except (BlockingIOError, OSError):
         return None
@@ -106,6 +115,12 @@ def release_leader_lock(lock_handle: Any) -> None:
     try:
         if fcntl:
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+        elif msvcrt:
+            try:
+                lock_handle.seek(0)
+                msvcrt.locking(lock_handle.fileno(), msvcrt.LK_UNLCK, 1)
+            except Exception:
+                pass
     except Exception:
         pass
     finally:
@@ -179,17 +194,17 @@ def get_health_status(
             "message": f"Could not read health cache: {exc}",
         }
 
-    checked_at = float(data.get("checked_at") or 0.0)
+    checked_at = float(data.get("last_successful_check_at") or data.get("checked_at") or 0.0)
     now = time.time()
-    age = now - checked_at
+    age = now - checked_at if checked_at > 0 else float("inf")
 
-    if age > max_age_seconds:
+    if checked_at == 0.0 or age > max_age_seconds:
         return 503, {
             "ok": False,
             "stale": True,
             "error": "watchdog_stale",
-            "message": f"Cluster health data is stale ({round(age, 1)}s old > {max_age_seconds}s limit)",
-            "age_seconds": round(age, 1),
+            "message": f"Cluster health data is stale ({round(age, 1) if checked_at > 0 else 'never'}s old > {max_age_seconds}s limit)",
+            "age_seconds": round(age, 1) if checked_at > 0 else None,
             "checked_at": checked_at,
         }
 
@@ -224,23 +239,36 @@ def check_node_health(server_code: str) -> dict[str, Any]:
 
 
 def run_single_health_cycle(cache_path: str | Path | None = None) -> dict[str, Any]:
-    """Execute one complete cluster health check cycle and update cache & dead man's switch."""
+    """Execute one complete cluster health check cycle and update cache & dead man's switch.
+    Stale timestamp 'checked_at' is recorded ONLY from successful checks to ensure fail-closed
+    behavior if monitoring attempts repeatedly fail.
+    """
+    path = _get_cache_path(cache_path)
+    prev_last_success: float = 0.0
+    if path.is_file():
+        try:
+            prev_data = json.loads(path.read_text(encoding="utf-8"))
+            prev_last_success = float(prev_data.get("last_successful_check_at") or prev_data.get("checked_at") or 0.0)
+        except Exception:
+            pass
+
     nodes = {}
-    all_healthy = True
     for code in ("nl", "pl", "fi"):
         res = check_node_health(code)
         nodes[code] = res
-        if not res["healthy"]:
-            # FI/PL are standby so cluster as a whole is degraded but not necessarily fatal
-            pass
 
     # NL is primary; if NL is down, cluster is down
     nl_healthy = nodes.get("nl", {}).get("healthy", False)
     all_ok = nl_healthy
 
+    now = time.time()
+    last_successful_check_at = now if all_ok else prev_last_success
+
     health_data = {
         "ok": all_ok,
-        "checked_at": time.time(),
+        "checked_at": last_successful_check_at,
+        "last_successful_check_at": last_successful_check_at,
+        "last_attempt_at": now,
         "primary": "nl",
         "nodes": nodes,
     }
@@ -248,3 +276,93 @@ def run_single_health_cycle(cache_path: str | Path | None = None) -> dict[str, A
     if all_ok:
         send_heartbeat()
     return health_data
+
+
+def run_watchdog_daemon(
+    check_interval: int = 30,
+    retry_leader_interval: int = 30,
+    max_iterations: int | None = None,
+    stop_event: threading.Event | None = None,
+    cache_path: str | Path | None = None,
+    lock_path: str | Path | None = None,
+) -> None:
+    """Run watchdog daemon with dynamic leader election and follower retry loop.
+    - If leader: runs health cycles every `check_interval` seconds.
+    - If follower: standby loop retrying leader lock every `retry_leader_interval` seconds.
+    - If leader terminates, follower seamlessly takes over leadership.
+    """
+    iteration = 0
+    leader_handle: Any | None = None
+
+    LOGGER.info("Starting cluster watchdog process (PID %s)...", os.getpid())
+
+    try:
+        while True:
+            if stop_event and stop_event.is_set():
+                break
+            if max_iterations is not None and iteration >= max_iterations:
+                break
+
+            # 1. Try to acquire leader lock if not currently holding it
+            if leader_handle is None:
+                leader_handle = try_acquire_leader_lock(lock_path)
+                if leader_handle:
+                    LOGGER.info(
+                        "[LEADER] Successfully acquired leader lock. Process %s is now cluster watchdog leader.",
+                        os.getpid(),
+                    )
+                else:
+                    LOGGER.info(
+                        "[FOLLOWER] Leader lock held by another process. Entering standby retry loop (every %ds)...",
+                        retry_leader_interval,
+                    )
+                    if stop_event:
+                        stop_event.wait(timeout=retry_leader_interval)
+                    else:
+                        time.sleep(retry_leader_interval)
+                    iteration += 1
+                    continue
+
+            # 2. As leader: run single health cycle
+            try:
+                cycle_data = run_single_health_cycle(cache_path=cache_path)
+                LOGGER.info("[CYCLE %d] Health cycle completed: ok=%s", iteration + 1, cycle_data.get("ok"))
+            except Exception as exc:
+                LOGGER.error("Health check cycle encountered error: %s", exc)
+
+            iteration += 1
+            if max_iterations is not None and iteration >= max_iterations:
+                break
+
+            if stop_event:
+                stop_event.wait(timeout=check_interval)
+            else:
+                time.sleep(check_interval)
+    finally:
+        if leader_handle is not None:
+            LOGGER.info("Releasing leader lock on shutdown...")
+            release_leader_lock(leader_handle)
+
+
+def main() -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description="SilentConnect High Availability Cluster Watchdog Daemon")
+    parser.add_argument("--once", action="store_true", help="Run a single health check cycle and exit")
+    parser.add_argument("--interval", type=int, default=30, help="Check interval in seconds for leader (default: 30)")
+    parser.add_argument("--leader-retry", type=int, default=30, help="Follower leader lock retry interval (default: 30)")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+    if args.once:
+        data = run_single_health_cycle()
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+        return 0 if data.get("ok") else 1
+
+    run_watchdog_daemon(check_interval=args.interval, retry_leader_interval=args.leader_retry)
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())
