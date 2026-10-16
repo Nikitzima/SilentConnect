@@ -18,6 +18,7 @@ import re
 import shlex
 import subprocess
 import sqlite3
+import socket
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,14 +70,14 @@ SERVERS: dict[str, dict[str, Any]] = {
         "flag": "🇵🇱",
         "mode": "ssh",
         "exec_mode": "ssh",
-        "host": os.environ.get("AWG_PL_HOST", "pl.silentconnect.net"),  # PLACEHOLDER
-        "ssh_host": os.environ.get("AWG_PL_HOST", "pl.silentconnect.net"),  # PLACEHOLDER
+        "host": os.environ.get("AWG_PL_HOST", "198.51.100.2"),
+        "ssh_host": os.environ.get("AWG_PL_HOST", "198.51.100.2"),
         "ssh_user": os.environ.get("AWG_PL_SSH_USER", "root"),
         "ssh_port": int(os.environ.get("AWG_PL_SSH_PORT", "22")),
         "container": os.environ.get("AWG_PL_CONTAINER", "amnezia-awg2"),
         "conf_path": "/opt/amnezia/awg/awg0.conf",
         "subnet": os.environ.get("AWG_PL_SUBNET", "10.8.3"),
-        "endpoint_host": os.environ.get("AWG_PL_ENDPOINT_HOST", "pl.silentconnect.net"),  # PLACEHOLDER
+        "endpoint_host": os.environ.get("AWG_PL_ENDPOINT_HOST", "pl.example.com"),
         "endpoint_port": os.environ.get("AWG_PL_ENDPOINT_PORT", "44121"),
         "allowed_ips_file": os.environ.get("AWG_PL_ALLOWED_IPS_FILE", os.environ.get("AWG_ALLOWED_IPS_FILE", "/root/vpn-shop/awg/allowed-ips.txt")),
         "client_dns": os.environ.get("AWG_CLIENT_DNS", "1.1.1.1, 1.0.0.1"),
@@ -88,29 +89,124 @@ SERVERS: dict[str, dict[str, Any]] = {
 DB_PATH = os.environ.get("SHOP_DB_PATH", "/root/vpn-shop/data/vpn_shop.db")
 
 
+class NodeIdentityConflictError(RuntimeError):
+    """Raised when node identity sources contradict each other."""
+
+
+class NodeIdentityMissingError(RuntimeError):
+    """Raised when no node identity source could determine current node code."""
+
+
+def get_current_node_code(marker_file: str | Path | None = None) -> str:
+    """Determine current cluster node code ('nl', 'pl', 'fi') using a three-way consistency check:
+    1. Marker file: /etc/silentconnect/node_code (or local .node_code)
+    2. Environment variable: AWG_LOCAL_SERVER
+    3. Hostname: socket.gethostname() matched against known nodes
+
+    Rules:
+    - If at least 2 sources are present and disagree -> raise NodeIdentityConflictError.
+    - If no source is present -> raise NodeIdentityMissingError.
+    - If consistent -> return the agreed server code in lowercase.
+    """
+    marker_code: str | None = None
+    env_code: str | None = None
+    host_code: str | None = None
+
+    # Source 1: Marker file
+    paths_to_check = []
+    if marker_file:
+        paths_to_check.append(Path(marker_file))
+    paths_to_check.extend([
+        Path("/etc/silentconnect/node_code"),
+        Path.cwd() / ".node_code",
+        Path(__file__).resolve().parent.parent / ".node_code",
+    ])
+    for p in paths_to_check:
+        try:
+            if p.is_file():
+                txt = p.read_text(encoding="utf-8").strip().lower()
+                if txt in SERVERS:
+                    marker_code = txt
+                    break
+        except Exception:
+            pass
+
+    # Source 2: Environment variable
+    env_val = os.environ.get("AWG_LOCAL_SERVER")
+    if env_val:
+        env_val = env_val.strip().lower()
+        if env_val in SERVERS:
+            env_code = env_val
+
+    # Source 3: Hostname
+    raw_host = socket.gethostname().lower()
+    if "hel1" in raw_host or "finland" in raw_host or raw_host.startswith("fi-") or "-fi" in raw_host or "helsinki" in raw_host:
+        host_code = "fi"
+    elif "certain-coral" in raw_host or "poland" in raw_host or raw_host.startswith("pl-") or "-pl" in raw_host or "warsaw" in raw_host:
+        host_code = "pl"
+    elif "nikitzimawarp" in raw_host or "warp" in raw_host or "netherlands" in raw_host or raw_host.startswith("nl-") or "-nl" in raw_host or "amsterdam" in raw_host:
+        host_code = "nl"
+    else:
+        for code, srv in SERVERS.items():
+            h = str(srv.get("host") or "").lower()
+            eh = str(srv.get("endpoint_host") or "").lower()
+            if raw_host in {h, eh} or (h and h.startswith(raw_host)):
+                host_code = code
+                break
+
+    sources = {"marker": marker_code, "env": env_code, "hostname": host_code}
+    active_sources = {k: v for k, v in sources.items() if v is not None}
+
+    if len(active_sources) >= 2:
+        distinct_vals = set(active_sources.values())
+        if len(distinct_vals) > 1:
+            raise NodeIdentityConflictError(
+                f"Критический конфликт роли ноды! Источники дают разные результаты: "
+                f"marker='{marker_code}', env='{env_code}', hostname='{host_code}'. "
+                "Автозапуск заблокирован во избежание порчи конфигураций."
+            )
+
+    if active_sources:
+        return next(iter(active_sources.values()))
+
+    raise NodeIdentityMissingError(
+        "Роль ноды не определена! Ни один источник (маркер-файл /etc/silentconnect/node_code, "
+        "AWG_LOCAL_SERVER, hostname) не вернул корректный код ноды."
+    )
+
+
 def _get_server(server_code: str = "nl") -> dict[str, Any]:
     code = (server_code or "nl").lower().strip()
     if code not in SERVERS:
         code = "nl"
     srv = dict(SERVERS[code])
-    local_server = os.environ.get("AWG_LOCAL_SERVER", "nl").lower().strip()
-    if local_server == "fi":
-        if code == "fi":
-            srv["mode"] = "local"
-            srv["exec_mode"] = "local"
-            srv["host"] = "127.0.0.1"
-        elif code == "nl":
-            srv["mode"] = "ssh"
-            srv["exec_mode"] = "ssh"
+    try:
+        local_server = get_current_node_code()
+    except Exception:
+        local_server = os.environ.get("AWG_LOCAL_SERVER", "nl").lower().strip()
+
+    if code == local_server:
+        srv["mode"] = "local"
+        srv["exec_mode"] = "local"
+        srv["host"] = "127.0.0.1"
+    else:
+        srv["mode"] = "ssh"
+        srv["exec_mode"] = "ssh"
+        if code == "nl":
             srv["host"] = os.environ.get("AWG_NL_HOST", os.environ.get("NL_MASTER_IP", "192.0.2.1"))
-            srv["ssh_host"] = os.environ.get("AWG_NL_HOST", os.environ.get("NL_MASTER_IP", "192.0.2.1"))
+            srv["ssh_host"] = srv["host"]
             srv["ssh_user"] = os.environ.get("AWG_NL_SSH_USER", "root")
             srv["ssh_port"] = int(os.environ.get("AWG_NL_SSH_PORT", "22"))
-    elif local_server == "pl":
-        if code == "pl":
-            srv["mode"] = "local"
-            srv["exec_mode"] = "local"
-            srv["host"] = "127.0.0.1"
+        elif code == "pl":
+            srv["host"] = os.environ.get("AWG_PL_HOST", "198.51.100.2")
+            srv["ssh_host"] = srv["host"]
+            srv["ssh_user"] = os.environ.get("AWG_PL_SSH_USER", "root")
+            srv["ssh_port"] = int(os.environ.get("AWG_PL_SSH_PORT", "22"))
+        elif code == "fi":
+            srv["host"] = os.environ.get("AWG_FI_HOST", os.environ.get("AWG_REMOTE_SSH_FI", os.environ.get("FI_STANDBY_IP", "198.51.100.1")))
+            srv["ssh_host"] = srv["host"]
+            srv["ssh_user"] = os.environ.get("AWG_FI_SSH_USER", "root")
+            srv["ssh_port"] = int(os.environ.get("AWG_FI_SSH_PORT", "22"))
     return srv
 
 
