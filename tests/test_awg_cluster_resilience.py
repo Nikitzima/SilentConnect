@@ -128,5 +128,56 @@ class TestAwgClusterResilienceStep1(unittest.TestCase):
             server.server_close()
 
 
+class TestAwgClusterResilienceStep2(unittest.TestCase):
+    def test_node_identity_agreement(self):
+        """When sources agree, the correct node code is returned."""
+        from vpn_shop.awg_manager import get_current_node_code
+        tmp_marker = Path(tempfile.mktemp())
+        try:
+            tmp_marker.write_text("nl\n", encoding="utf-8")
+            with patch.dict(os.environ, {"AWG_LOCAL_SERVER": "nl"}):
+                with patch("socket.gethostname", return_value="nikitzimawarp.aeza.network"):
+                    code = get_current_node_code(marker_file=tmp_marker)
+                    self.assertEqual(code, "nl")
+        finally:
+            if tmp_marker.exists():
+                tmp_marker.unlink()
+
+    def test_node_identity_conflict_raises_error(self):
+        """When sources disagree, NodeIdentityConflictError is raised."""
+        from vpn_shop.awg_manager import get_current_node_code, NodeIdentityConflictError
+        tmp_marker = Path(tempfile.mktemp())
+        try:
+            tmp_marker.write_text("pl\n", encoding="utf-8")
+            # Marker says 'pl', but env says 'nl' -> conflict!
+            with patch.dict(os.environ, {"AWG_LOCAL_SERVER": "nl"}):
+                with patch("socket.gethostname", return_value="unknown-host"):
+                    with self.assertRaises(NodeIdentityConflictError):
+                        get_current_node_code(marker_file=tmp_marker)
+
+            # Marker says 'pl', but hostname says 'fi' -> conflict!
+            with patch.dict(os.environ, {}, clear=False):
+                if "AWG_LOCAL_SERVER" in os.environ:
+                    del os.environ["AWG_LOCAL_SERVER"]
+                with patch("socket.gethostname", return_value="SilentConnect-ubuntu-4gb-hel1-1"):
+                    with self.assertRaises(NodeIdentityConflictError):
+                        get_current_node_code(marker_file=tmp_marker)
+        finally:
+            if tmp_marker.exists():
+                tmp_marker.unlink()
+
+    def test_node_identity_missing_raises_error(self):
+        """When no source is present, NodeIdentityMissingError is raised."""
+        from vpn_shop.awg_manager import get_current_node_code, NodeIdentityMissingError
+        non_existent_marker = Path(tempfile.mktemp())
+        with patch.dict(os.environ, {}, clear=False):
+            if "AWG_LOCAL_SERVER" in os.environ:
+                del os.environ["AWG_LOCAL_SERVER"]
+            with patch("socket.gethostname", return_value="arbitrary-unrecognized-pc"):
+                with patch("pathlib.Path.is_file", return_value=False):
+                    with self.assertRaises(NodeIdentityMissingError):
+                        get_current_node_code(marker_file=non_existent_marker)
+
+
 if __name__ == "__main__":
     unittest.main()
