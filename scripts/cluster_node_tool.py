@@ -26,6 +26,32 @@ REPO_ROOT = SCRIPT_DIR.parent
 if str(REPO_ROOT / "vpn-shop") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "vpn-shop"))
 
+def load_cluster_env() -> None:
+    """Load cluster environment variables from standard locations if present."""
+    candidates = [
+        Path("/root/vpn-shop/.env.silentconnect"),
+        Path("/etc/silentconnect/.env.silentconnect"),
+        REPO_ROOT / ".env.silentconnect",
+        REPO_ROOT / "vpn-shop" / ".env.silentconnect",
+    ]
+    for p in candidates:
+        if p.is_file():
+            try:
+                for line in p.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    if k not in os.environ:
+                        os.environ[k] = v
+            except Exception:
+                pass
+            break
+
+load_cluster_env()
+
 from vpn_shop.awg_manager import SERVERS, CLUSTER_KNOWN_HOSTS_PATH
 
 

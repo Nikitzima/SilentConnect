@@ -77,8 +77,8 @@ SERVERS: dict[str, dict[str, Any]] = {
         "flag": "🇵🇱",
         "mode": "ssh",
         "exec_mode": "ssh",
-        "host": os.environ.get("AWG_PL_HOST", "198.51.100.2"),
-        "ssh_host": os.environ.get("AWG_PL_HOST", "198.51.100.2"),
+        "host": os.environ.get("AWG_PL_HOST", os.environ.get("AWG_REMOTE_SSH_PL", os.environ.get("PL_STANDBY_IP", "198.51.100.2"))),
+        "ssh_host": os.environ.get("AWG_PL_HOST", os.environ.get("AWG_REMOTE_SSH_PL", os.environ.get("PL_STANDBY_IP", "198.51.100.2"))),
         "ssh_user": os.environ.get("AWG_PL_SSH_USER", "root"),
         "ssh_port": int(os.environ.get("AWG_PL_SSH_PORT", "22")),
         "container": os.environ.get("AWG_PL_CONTAINER", "amnezia-awg2"),
@@ -293,7 +293,7 @@ def _get_server(server_code: str = "nl") -> dict[str, Any]:
             srv["ssh_user"] = os.environ.get("AWG_NL_SSH_USER", "root")
             srv["ssh_port"] = int(os.environ.get("AWG_NL_SSH_PORT", "22"))
         elif code == "pl":
-            srv["host"] = os.environ.get("AWG_PL_HOST", "198.51.100.2")
+            srv["host"] = os.environ.get("AWG_PL_HOST", os.environ.get("AWG_REMOTE_SSH_PL", os.environ.get("PL_STANDBY_IP", "198.51.100.2")))
             srv["ssh_host"] = srv["host"]
             srv["ssh_user"] = os.environ.get("AWG_PL_SSH_USER", "root")
             srv["ssh_port"] = int(os.environ.get("AWG_PL_SSH_PORT", "22"))
