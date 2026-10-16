@@ -508,7 +508,138 @@ class TestAwgClusterResilienceStep5(unittest.TestCase):
             server.server_close()
 
 
+    def test_remote_container_flock_in_staged_apply(self):
+        """_apply_staged_awg_conf acquires flock on awg0.lock inside container before staging."""
+        from vpn_shop import awg_manager
+
+        executed_scripts = []
+        def fake_dex(cmd, inp=None, server_code="nl"):
+            executed_scripts.append(cmd)
+            return "OK"
+
+        with patch("vpn_shop.awg_manager._dex", side_effect=fake_dex):
+            awg_manager._apply_staged_awg_conf("nl", "[Interface]\nPrivateKey = foo\n")
+
+        self.assertTrue(len(executed_scripts) > 0)
+        script = executed_scripts[0]
+        self.assertIn("exec 200>", script)
+        self.assertIn("flock -x 200", script)
+        self.assertIn(".stage.$$", script)
+
+    def test_stale_calculated_from_last_successful_check_not_attempt(self):
+        """Repeated failed health checks do NOT advance checked_at; stale triggers 503 after max_age."""
+        from vpn_shop import cluster_watchdog
+        import time
+        tmp_cache = Path(tempfile.mktemp())
+        try:
+            # 1. Initial successful cycle at T0 = now - 200
+            initial_t0 = time.time() - 200
+            initial_data = {
+                "ok": True,
+                "checked_at": initial_t0,
+                "last_successful_check_at": initial_t0,
+                "last_attempt_at": initial_t0,
+                "nodes": {"nl": {"healthy": True}},
+            }
+            tmp_cache.write_text(json.dumps(initial_data), encoding="utf-8")
+
+            # 2. Run single health cycle where NL is unhealthy (check_node_health returns False)
+            with patch("vpn_shop.cluster_watchdog.check_node_health", return_value={"healthy": False, "error": "conn refused"}):
+                res = cluster_watchdog.run_single_health_cycle(cache_path=tmp_cache)
+                self.assertFalse(res["ok"])
+                # checked_at must NOT advance to now, it must preserve initial_t0!
+                self.assertEqual(res["checked_at"], initial_t0)
+                self.assertEqual(res["last_successful_check_at"], initial_t0)
+
+            # 3. get_health_status reports 503 stale because last successful check was 200s ago
+            code, status_data = cluster_watchdog.get_health_status(max_age_seconds=180, cache_path=tmp_cache)
+            self.assertEqual(code, 503)
+            self.assertTrue(status_data["stale"])
+            self.assertEqual(status_data["error"], "watchdog_stale")
+        finally:
+            if tmp_cache.exists():
+                tmp_cache.unlink()
+
+    def test_dynamic_leader_takeover_and_follower_loop(self):
+        """Follower daemon retries leader lock and successfully promotes when lock is freed."""
+        from vpn_shop import cluster_watchdog
+        tmp_lock = Path(tempfile.mktemp())
+        tmp_cache = Path(tempfile.mktemp())
+        handle1 = None
+
+        try:
+            # 1. Acquire leader lock in main thread (Process 1)
+            handle1 = cluster_watchdog.try_acquire_leader_lock(tmp_lock)
+            self.assertIsNotNone(handle1)
+
+            # 2. Run watchdog daemon in follower mode for 1 iteration (cannot become leader)
+            with patch("vpn_shop.cluster_watchdog.check_node_health", return_value={"healthy": True}):
+                cluster_watchdog.run_watchdog_daemon(
+                    check_interval=1,
+                    retry_leader_interval=0,
+                    max_iterations=1,
+                    cache_path=tmp_cache,
+                    lock_path=tmp_lock,
+                )
+            # Since it was follower, cache should not have been updated
+            self.assertFalse(tmp_cache.exists())
+
+            # 3. Release leader lock from Process 1
+            cluster_watchdog.release_leader_lock(handle1)
+            handle1 = None
+
+            # 4. Run watchdog daemon again (Process 2) -> acquires leader lock and executes cycle
+            with patch("vpn_shop.cluster_watchdog.check_node_health", return_value={"healthy": True}):
+                cluster_watchdog.run_watchdog_daemon(
+                    check_interval=1,
+                    retry_leader_interval=0,
+                    max_iterations=1,
+                    cache_path=tmp_cache,
+                    lock_path=tmp_lock,
+                )
+            self.assertTrue(tmp_cache.exists())
+            cache_content = json.loads(tmp_cache.read_text(encoding="utf-8"))
+            self.assertTrue(cache_content["ok"])
+        finally:
+            if handle1:
+                cluster_watchdog.release_leader_lock(handle1)
+            if tmp_lock.exists():
+                try:
+                    tmp_lock.unlink()
+                except Exception:
+                    pass
+            if tmp_cache.exists():
+                try:
+                    tmp_cache.unlink()
+                except Exception:
+                    pass
+
+    def test_cli_reconcile_acquires_master_node_lock(self):
+        """CLI tool explicitly acquires master_node_lock before executing reconciliation."""
+        from contextlib import contextmanager
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import cluster_node_tool
+        from vpn_shop import awg_manager
+
+        lock_calls = []
+        orig_master_lock = awg_manager.master_node_lock
+
+        @contextmanager
+        def tracked_master_lock(code):
+            lock_calls.append(code)
+            with orig_master_lock(code):
+                yield
+
+        with patch("vpn_shop.awg_manager.master_node_lock", side_effect=tracked_master_lock):
+            with patch("vpn_shop.awg_manager.reconcile_awg_peers", return_value={"dry_run": True}):
+                with patch("sys.argv", ["cluster_node_tool.py", "reconcile", "--node", "nl"]):
+                    rc = cluster_node_tool.main()
+                    self.assertEqual(rc, 0)
+                    self.assertIn("nl", lock_calls)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
 

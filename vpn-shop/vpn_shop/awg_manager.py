@@ -952,6 +952,8 @@ def _apply_staged_awg_conf(server_code: str, new_conf: str) -> None:
 
     apply_script = (
         "set -e\n"
+        f"exec 200>\"{base_dir}/awg0.lock\"\n"
+        "flock -x 200\n"
         f"STAGE_DIR=\"{base_dir}/.stage.$$\"\n"
         "mkdir -m 700 -p \"$STAGE_DIR\"\n"
         f"cat > \"${{STAGE_DIR}}/awg0.conf\"\n"
