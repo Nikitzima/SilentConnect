@@ -1,7 +1,7 @@
 # SilentConnect: Multi-Protocol VPN & Automated Subscription Platform
 
 [![Security Audit](https://img.shields.io/badge/Security_Audit-Zero_Leaks_Passed-10b981.svg?style=flat-square)](#automated-security--zero-leak-verification)
-[![Tests](https://img.shields.io/badge/Tests-424_passed_(9_skipped)-10b981.svg?style=flat-square)](#automated-security--zero-leak-verification)
+[![Tests](https://img.shields.io/badge/Tests-444_passed_(9_skipped)-10b981.svg?style=flat-square)](#automated-security--zero-leak-verification)
 [![Python Version](https://img.shields.io/badge/Python-3.11+-3b82f6.svg?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-64748b.svg?style=flat-square)](LICENSE)
 [![Protocols](https://img.shields.io/badge/Protocols-VLESS_%7C_Reality_%7C_XHTTP_%7C_Hysteria2_%7C_AmneziaWG_%7C_OpenFlux-8b5cf6.svg?style=flat-square)](#protocol-and-subscription-support)
@@ -273,7 +273,7 @@ SilentConnect includes an automated security audit scanner and regression test s
 python scripts/security_audit_scanner.py --strict
 
 # Output:
-# Files Scanned    : 187
+# Files Scanned    : 190
 # Violations Found : 0
 # [PASS] AUDIT PASSED: Zero leaks, zero binaries, zero untracked secrets detected.
 
@@ -281,7 +281,7 @@ python scripts/security_audit_scanner.py --strict
 python -m unittest discover -s tests -p "test_*.py"
 
 # Output:
-# Ran 424 tests in 56.601s
+# Ran 444 tests in 68.478s
 # OK (skipped=9)
 ```
 

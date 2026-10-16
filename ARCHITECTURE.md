@@ -1,7 +1,7 @@
 # Архитектура платформы SilentConnect
 
 > **Статус документа**: Актуальная боевая спецификация (Production Verified)  
-> **Дата последней верификации**: 14.10.2026  
+> **Дата последней верификации**: 16.10.2026 (Релиз v4.0 Golden Standard)  
 > **Область применения**: Архитектурная спецификация кластера  
 > **Связанные документы**: [README.md](README.md) • [DEPLOYMENT.md](DEPLOYMENT.md) • [WHITELIST_SPEC.md](WHITELIST_SPEC.md) • [AMNEZIA_SLOTS.md](AMNEZIA_SLOTS.md)
 
@@ -265,4 +265,34 @@ python3 /root/switch_primary.py --target pl --confirm
   - `gdrive:<GDRIVE_BACKUP_FOLDER_ID>/backup_nl/`
   - `gdrive:<GDRIVE_BACKUP_FOLDER_ID>/backup_pl/`
   - `gdrive:<GDRIVE_BACKUP_FOLDER_ID>/backup_fi/`
+
+---
+
+## 8. Архитектура кластерной устойчивости и реконсилиации (v4.0 Golden Standard)
+
+В октябре 2026 года в кластер внедрён комплекс отказоустойчивости для исключения состояний гонки при распределённой записи, тихих сбоев SSH и рассинхронизации ролей:
+
+1. **Fail-Closed Gate & Strict Curve25519**:
+   - При сбое SSH или недоступности ноды клиенты получают `HTTP 503` (`Retry-After: 30`) без фиктивных fallback-ключей.
+   - Валидация открытых ключей Curve25519 по строгому шаблону `^[A-Za-z0-9+/]{43}=$`.
+
+2. **Триангуляция идентификации нод**:
+   - Маркер-файл `/etc/silentconnect/node_code` сопоставляется с `AWG_LOCAL_SERVER` и системным `hostname`. Несоответствие вызывает Fail-Fast без угадывания.
+
+3. **Строгий межсерверный SSH**:
+   - Изолированный `cluster_known_hosts` со `StrictHostKeyChecking=yes`.
+   - Команда `scripts/cluster_node_tool.py pin-key` с ручной проверкой отпечатка SHA256 исключает атаки MITM.
+
+4. **Атомарная реконсилиация WireGuard**:
+   - Master-side мьютекс (`master_node_lock`) сериализует операции добавления, удаления слотов и реконсилиации на мастере.
+   - Удалённый `flock -x 200` внутри контейнера `amnezia-awg2` защищает конфиг от локальных писателей на ноде.
+   - Staging-каталог `.stage.$$` с предварительной валидацией синтаксиса через `awg-quick strip` перед атомарным `mv`.
+   - Защита от массового удаления (Circuit Breaker при удалении >30% или >10 пиров) и Zero-Slots Guard с явным флагом `--allow-empty`.
+   - Ротация последних 20 бэкапов с правами `0600`.
+
+5. **Кластерный Watchdog и телеметрия**:
+   - Демон `vpn_shop/cluster_watchdog.py` с динамическим захватом лидерства (`watchdog_leader.lock`).
+   - Эндпоинт `GET /api/internal/cluster/health` (:3090) с защитой HMAC constant-time.
+   - Отдача HTTP 503 при устаревании кэша проверок более 180 секунд.
+
 
