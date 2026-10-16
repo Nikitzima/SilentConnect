@@ -1872,39 +1872,42 @@ class WebCheckout:
                 enabled=False,
             )
 
-        # Verification Gate: activate on target server first
         from . import awg_manager
-        success = awg_manager.add_slot_peer(
-            server_code=target_srv,
-            public_key=str(target_slot.get("public_key") or ""),
-            preshared_key=str(target_slot.get("preshared_key") or ""),
-            client_ip=str(target_slot.get("client_ip") or ""),
-        )
-        if not success:
-            return {
-                "ok": False,
-                "error": f"Не удалось активировать подключение к {target_name}. Ваше текущее подключение к {current_name} сохранено и продолжает работать.",
-            }
+        first_srv, second_srv = sorted([target_srv, current_srv])
+        with awg_manager.master_node_lock(first_srv):
+            with awg_manager.master_node_lock(second_srv):
+                # Verification Gate: activate on target server first
+                success = awg_manager.add_slot_peer(
+                    server_code=target_srv,
+                    public_key=str(target_slot.get("public_key") or ""),
+                    preshared_key=str(target_slot.get("preshared_key") or ""),
+                    client_ip=str(target_slot.get("client_ip") or ""),
+                )
+                if not success:
+                    return {
+                        "ok": False,
+                        "error": f"Не удалось активировать подключение к {target_name}. Ваше текущее подключение к {current_name} сохранено и продолжает работать.",
+                    }
 
-        # Target server is active and verified! Now suspend peer on current server
-        try:
-            awg_manager.remove_slot_peer(
-                server_code=current_srv,
-                public_key=str(current_slot.get("public_key") or ""),
-            )
-        except Exception as exc:
-            LOGGER.warning("Could not suspend old peer on %s: %s", current_srv, exc)
+                # Target server is active and verified! Now suspend peer on current server
+                try:
+                    awg_manager.remove_slot_peer(
+                        server_code=current_srv,
+                        public_key=str(current_slot.get("public_key") or ""),
+                    )
+                except Exception as exc:
+                    LOGGER.warning("Could not suspend old peer on %s: %s", current_srv, exc)
 
-        # Switch active flag in SQLite database
-        self.store.switch_awg_slot_active_server(profile_public_id, idx, target_srv)
+                # Switch active flag in SQLite database
+                self.store.switch_awg_slot_active_server(profile_public_id, idx, target_srv)
 
-        return {
-            "ok": True,
-            "message": f"Локация успешно переключена на {target_name}. Подключение к {current_name} приостановлено.",
-            "server_code": target_srv,
-            "server_name": target_name,
-            "client_ip": target_slot.get("client_ip"),
-        }
+                return {
+                    "ok": True,
+                    "message": f"Локация успешно переключена на {target_name}. Подключение к {current_name} приостановлено.",
+                    "server_code": target_srv,
+                    "server_name": target_name,
+                    "client_ip": target_slot.get("client_ip"),
+                }
 
     def get_awg_slot_conf_text(self, profile_public_id: str, slot_index: int) -> str:
         idx = int(slot_index)

@@ -238,5 +238,146 @@ class TestAwgClusterResilienceStep3(unittest.TestCase):
                 tmp_known_hosts.unlink()
 
 
+
+class TestAwgClusterResilienceStep4(unittest.TestCase):
+    def test_db_query_error_aborts_even_with_allow_empty(self):
+        """DatabaseQueryError must abort reconciliation immediately, even if allow_empty=True."""
+        from vpn_shop.awg_manager import reconcile_awg_peers
+        from vpn_shop.store import DatabaseQueryError
+
+        with patch("vpn_shop.store.Store.list_active_awg_slots", side_effect=DatabaseQueryError("DB disk I/O failure")):
+            with self.assertRaises(DatabaseQueryError):
+                reconcile_awg_peers(server_code="nl", dry_run=True, allow_empty=True)
+
+    def test_empty_db_aborts_without_allow_empty(self):
+        """Zero active slots returned from DB aborts unless allow_empty is explicitly set."""
+        from vpn_shop.awg_manager import reconcile_awg_peers, ReconciliationAbortedError
+
+        with patch("vpn_shop.store.Store.list_active_awg_slots", return_value=[]):
+            # Without allow_empty -> must raise ReconciliationAbortedError
+            with self.assertRaises(ReconciliationAbortedError) as ctx:
+                reconcile_awg_peers(server_code="nl", dry_run=True, allow_empty=False)
+            self.assertIn("Zero active slots", str(ctx.exception))
+
+            # With allow_empty=True -> proceeds
+            with patch("vpn_shop.awg_manager._server_conf", return_value="[Interface]\nAddress = 10.8.1.1/24\n"):
+                res = reconcile_awg_peers(server_code="nl", dry_run=True, allow_empty=True, force_mass_delete=True)
+                self.assertTrue(res["dry_run"])
+                self.assertEqual(res["active_slots_db"], 0)
+
+    def test_mass_deletion_circuit_breaker(self):
+        """Mass deletion (>30% or >10 peers) aborts unless force_mass_delete=True."""
+        from vpn_shop.awg_manager import reconcile_awg_peers, ReconciliationAbortedError
+
+        # Create conf with 20 peers (all manageable IPs 10.8.1.10 - 10.8.1.29)
+        conf_lines = ["[Interface]", "Address = 10.8.1.1/24", "PrivateKey = dummy_key"]
+        for i in range(10, 30):
+            conf_lines.extend([
+                "",
+                "[Peer]",
+                f"PublicKey = pubkey_manageable_{i:02d}=====================",
+                f"AllowedIPs = 10.8.1.{i}/32",
+            ])
+        conf_text = "\n".join(conf_lines) + "\n"
+
+        # Desired DB has only 5 peers (so 15 peers / 75% would be deleted)
+        desired_slots = [
+            {"public_key": f"pubkey_manageable_{i:02d}=====================", "client_ip": f"10.8.1.{i}", "preshared_key": ""}
+            for i in range(10, 15)
+        ]
+
+        with patch("vpn_shop.store.Store.list_active_awg_slots", return_value=desired_slots):
+            with patch("vpn_shop.awg_manager._server_conf", return_value=conf_text):
+                # 1. Without force_mass_delete -> circuit breaker triggers!
+                with self.assertRaises(ReconciliationAbortedError) as ctx:
+                    reconcile_awg_peers(server_code="nl", dry_run=True, force_mass_delete=False)
+                self.assertIn("Mass deletion circuit breaker triggered", str(ctx.exception))
+
+                # 2. With force_mass_delete=True -> allowed to proceed
+                res = reconcile_awg_peers(server_code="nl", dry_run=True, force_mass_delete=True)
+                self.assertEqual(len(res["to_remove"]), 15)
+                self.assertEqual(len(res["unchanged_count"] if isinstance(res["unchanged_count"], list) else [1] * res["unchanged_count"]), 5)
+
+    def test_reconciliation_master_lock_concurrency(self):
+        """master_node_lock provides reentrancy in same thread and mutual exclusion across threads."""
+        from vpn_shop.awg_manager import master_node_lock
+        import time
+
+        # 1. Reentrancy test in same thread
+        with master_node_lock("nl"):
+            with master_node_lock("nl"):
+                with master_node_lock("nl"):
+                    pass  # Must not deadlock or raise
+
+        # 2. Thread mutual exclusion test
+        order = []
+        def worker1():
+            with master_node_lock("pl"):
+                order.append("w1_start")
+                time.sleep(0.05)
+                order.append("w1_end")
+
+        def worker2():
+            time.sleep(0.01)
+            with master_node_lock("pl"):
+                order.append("w2_start")
+                order.append("w2_end")
+
+        t1 = threading.Thread(target=worker1)
+        t2 = threading.Thread(target=worker2)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        # worker 1 must complete before worker 2 enters
+        self.assertEqual(order, ["w1_start", "w1_end", "w2_start", "w2_end"])
+
+    def test_corrupt_config_rejected_in_staging_dir(self):
+        """Corrupt configuration is rejected in staging directory and does not overwrite live conf."""
+        from vpn_shop.awg_manager import _apply_staged_awg_conf
+
+        executed_scripts = []
+        def fake_dex(cmd, inp=None, server_code="nl"):
+            executed_scripts.append((cmd, inp))
+            if "awg-quick strip" in cmd and "exit 42" in cmd:
+                # Simulate validation failure in staging
+                raise RuntimeError("Command failed: STAGING_VALIDATION_FAILED (exit 42)")
+            return ""
+
+        with patch("vpn_shop.awg_manager._dex", side_effect=fake_dex):
+            with self.assertRaises(RuntimeError) as ctx:
+                _apply_staged_awg_conf("nl", "CORRUPT CONFIG SYNTAX ERROR")
+            self.assertIn("STAGING_VALIDATION_FAILED", str(ctx.exception))
+
+        # Verify staging script contained the security checks
+        script, passed_inp = executed_scripts[0]
+        self.assertIn("STAGE_DIR=", script)
+        self.assertIn("awg-quick strip", script)
+        self.assertIn("exit 42", script)
+        self.assertIn("chmod 600", script)
+        self.assertEqual(passed_inp, "CORRUPT CONFIG SYNTAX ERROR")
+
+    def test_backup_rotation_limits_to_20_and_chmod_600(self):
+        """Backup creation uses explicit chmod 600 on the new backup and rotates to latest 20."""
+        from vpn_shop.awg_manager import _apply_staged_awg_conf
+
+        captured = {}
+        def fake_dex(cmd, inp=None, server_code="nl"):
+            captured["cmd"] = cmd
+            captured["inp"] = inp
+            return ""
+
+        with patch("vpn_shop.awg_manager._dex", side_effect=fake_dex):
+            _apply_staged_awg_conf("pl", "[Interface]\nAddress = 10.8.3.1/24\n")
+
+        cmd = captured["cmd"]
+        # Explicit chmod 600 on timestamped backup file
+        self.assertIn('chmod 600 "$BAK_FILE"', cmd)
+        # Rotation keeping latest 20
+        self.assertIn("tail -n +21 | xargs -r rm -f", cmd)
+
+
 if __name__ == "__main__":
     unittest.main()
+

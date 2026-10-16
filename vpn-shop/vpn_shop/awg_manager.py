@@ -19,10 +19,17 @@ import shlex
 import subprocess
 import sqlite3
 import socket
+import tempfile
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore
 
 LOGGER = logging.getLogger("vpn_shop.awg_manager")
 
@@ -100,6 +107,89 @@ class NodeIdentityConflictError(RuntimeError):
 
 class NodeIdentityMissingError(RuntimeError):
     """Raised when no node identity source could determine current node code."""
+
+
+class ReconciliationAbortedError(RuntimeError):
+    """Raised when reconciliation is safely aborted by circuit breakers or validation."""
+
+
+_NODE_LOCK_DEPTH: dict[tuple[str, int], int] = {}
+_NODE_LOCK_HANDLES: dict[str, Any] = {}
+_NODE_LOCK_MUTEX = threading.Lock()
+_NODE_THREAD_LOCKS: dict[str, threading.RLock] = {}
+
+
+def _get_node_thread_lock(code: str) -> threading.RLock:
+    with _NODE_LOCK_MUTEX:
+        if code not in _NODE_THREAD_LOCKS:
+            _NODE_THREAD_LOCKS[code] = threading.RLock()
+        return _NODE_THREAD_LOCKS[code]
+
+
+@contextmanager
+def master_node_lock(server_code: str = "nl") -> Iterator[None]:
+    """OS-level mutual exclusion lock for an individual cluster node.
+
+    Protects against race conditions across multiple processes (CLI, WebCheckout, background sync)
+    and multiple threads modifying WireGuard peers on the same target node.
+    Re-entrant per thread to allow nested slot manipulation within a single transaction.
+    """
+    code = (server_code or "nl").lower().strip()
+    thread_lock = _get_node_thread_lock(code)
+
+    with thread_lock:
+        tid = threading.get_ident()
+        key = (code, tid)
+
+        with _NODE_LOCK_MUTEX:
+            depth = _NODE_LOCK_DEPTH.get(key, 0)
+            if depth > 0:
+                _NODE_LOCK_DEPTH[key] = depth + 1
+                is_outer = False
+            else:
+                _NODE_LOCK_DEPTH[key] = 1
+                is_outer = True
+
+        if is_outer:
+            if os.name == "nt":
+                lock_dir = Path(tempfile.gettempdir())
+            else:
+                lock_dir = Path("/tmp")
+            lock_file_path = lock_dir / f"silentconnect_master_node_{code}.lock"
+
+            lock_file = open(lock_file_path, "a+")
+            if fcntl:
+                try:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                except Exception as exc:
+                    LOGGER.warning("Could not acquire flock on %s: %s", lock_file_path, exc)
+            _NODE_LOCK_HANDLES[code] = lock_file
+
+        try:
+            yield
+        finally:
+            with _NODE_LOCK_MUTEX:
+                depth = _NODE_LOCK_DEPTH.get(key, 1) - 1
+                if depth <= 0:
+                    _NODE_LOCK_DEPTH.pop(key, None)
+                    release_os = True
+                else:
+                    _NODE_LOCK_DEPTH[key] = depth
+                    release_os = False
+
+            if release_os:
+                lock_file = _NODE_LOCK_HANDLES.pop(code, None)
+                if lock_file:
+                    try:
+                        if fcntl:
+                            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                    except Exception:
+                        pass
+                    finally:
+                        try:
+                            lock_file.close()
+                        except Exception:
+                            pass
 
 
 def get_current_node_code(marker_file: str | Path | None = None) -> str:
@@ -256,12 +346,12 @@ def _dex(*args: Any, **kwargs: Any) -> str:
     mode = srv.get("mode") or srv.get("exec_mode", "local")
 
     if mode == "local":
-        call_args = ["docker", "exec", "-i", srv["container"], "sh", "-c", cmd]
+        call_args = ["docker", "exec", "-i", srv["container"], "bash", "-c", cmd]
     elif mode == "ssh":
         ssh_user = srv.get("ssh_user", "root")
         ssh_host = srv.get("host") or srv.get("ssh_host", os.environ.get("FI_STANDBY_IP", "198.51.100.1"))
         ssh_port = str(srv.get("ssh_port", 22))
-        remote_cmd = f"docker exec -i {srv['container']} sh -c {shlex.quote(cmd)}"
+        remote_cmd = f"docker exec -i {srv['container']} bash -c {shlex.quote(cmd)}"
         call_args = [
             "ssh",
             "-o", "BatchMode=yes",
@@ -722,37 +812,38 @@ def add_slot_peer(
 ) -> bool:
     """Add a slot peer to live WireGuard interface and persist to awg0.conf."""
     server_code = (server_code or "nl").lower().strip()
-    srv = _get_server(server_code)
-    pub = public_key.strip()
-    psk = preshared_key.strip()
-    ip = client_ip.strip()
-    if not pub or not ip:
-        return False
+    with master_node_lock(server_code):
+        srv = _get_server(server_code)
+        pub = public_key.strip()
+        psk = preshared_key.strip()
+        ip = client_ip.strip()
+        if not pub or not ip:
+            return False
 
-    # 1. Live add in container
-    psk_file = "/tmp/.awg-psk.tmp"
-    try:
-        if psk:
-            _dex(f"echo '{psk}' > {psk_file}", server_code=server_code)
-            _dex(f"awg set awg0 peer {pub} allowed-ips {ip}/32 preshared-key {psk_file}", server_code=server_code)
-            _dex(f"rm -f {psk_file}", server_code=server_code)
-        else:
-            _dex(f"awg set awg0 peer {pub} allowed-ips {ip}/32", server_code=server_code)
-    except Exception as exc:
-        LOGGER.warning("Could not live-add AWG peer %s on %s: %s", pub, server_code, exc)
-
-    # 2. Persist to awg0.conf if not already present
-    try:
-        conf = _server_conf(server_code)
-        if pub not in conf:
+        # 1. Live add in container
+        psk_file = "/tmp/.awg-psk.tmp"
+        try:
             if psk:
-                block = f"\n[Peer]\nPublicKey = {pub}\nPresharedKey = {psk}\nAllowedIPs = {ip}/32\n"
+                _dex(f"echo '{psk}' > {psk_file}", server_code=server_code)
+                _dex(f"awg set awg0 peer {pub} allowed-ips {ip}/32 preshared-key {psk_file}", server_code=server_code)
+                _dex(f"rm -f {psk_file}", server_code=server_code)
             else:
-                block = f"\n[Peer]\nPublicKey = {pub}\nAllowedIPs = {ip}/32\n"
-            _dex(f"cat >> {srv['conf_path']}", inp=block, server_code=server_code)
-    except Exception as exc:
-        LOGGER.warning("Could not persist AWG peer %s to %s on %s: %s", pub, srv.get("conf_path"), server_code, exc)
-    return True
+                _dex(f"awg set awg0 peer {pub} allowed-ips {ip}/32", server_code=server_code)
+        except Exception as exc:
+            LOGGER.warning("Could not live-add AWG peer %s on %s: %s", pub, server_code, exc)
+
+        # 2. Persist to awg0.conf if not already present
+        try:
+            conf = _server_conf(server_code)
+            if pub not in conf:
+                if psk:
+                    block = f"\n[Peer]\nPublicKey = {pub}\nPresharedKey = {psk}\nAllowedIPs = {ip}/32\n"
+                else:
+                    block = f"\n[Peer]\nPublicKey = {pub}\nAllowedIPs = {ip}/32\n"
+                _dex(f"cat >> {srv['conf_path']}", inp=block, server_code=server_code)
+        except Exception as exc:
+            LOGGER.warning("Could not persist AWG peer %s to %s on %s: %s", pub, srv.get("conf_path"), server_code, exc)
+        return True
 
 
 def remove_slot_peer(server_code: str = "nl", public_key: str = "") -> bool:
@@ -760,30 +851,272 @@ def remove_slot_peer(server_code: str = "nl", public_key: str = "") -> bool:
     DO NOT delete from database to preserve traffic history and allow instant reactivation.
     """
     server_code = (server_code or "nl").lower().strip()
-    srv = _get_server(server_code)
-    pub = public_key.strip()
-    if not pub:
-        return False
-    # 1. Live remove in container kernel
-    try:
-        _dex(f"awg set awg0 peer {pub} remove", server_code=server_code)
-    except Exception as exc:
-        LOGGER.warning("Could not live-remove AWG peer %s on %s: %s", pub, server_code, exc)
+    with master_node_lock(server_code):
+        srv = _get_server(server_code)
+        pub = public_key.strip()
+        if not pub:
+            return False
+        # 1. Live remove in container kernel
+        try:
+            _dex(f"awg set awg0 peer {pub} remove", server_code=server_code)
+        except Exception as exc:
+            LOGGER.warning("Could not live-remove AWG peer %s on %s: %s", pub, server_code, exc)
 
-    # 2. Persist removal to awg0.conf
-    try:
-        conf = _server_conf(server_code)
-        if pub in conf:
-            blocks = conf.split("\n[Peer]\n")
-            kept = [blocks[0]]
-            for b in blocks[1:]:
-                if pub not in b:
-                    kept.append(b)
-            new_conf = "\n[Peer]\n".join(kept)
-            if not new_conf.endswith("\n"):
-                new_conf += "\n"
-            _dex(f"cat > {srv['conf_path']}", inp=new_conf, server_code=server_code)
-    except Exception as exc:
-        LOGGER.warning("Could not strip AWG peer %s from %s on %s: %s", pub, srv.get("conf_path"), server_code, exc)
-    return True
+        # 2. Persist removal to awg0.conf
+        try:
+            conf = _server_conf(server_code)
+            if pub in conf:
+                blocks = conf.split("\n[Peer]\n")
+                kept = [blocks[0]]
+                for b in blocks[1:]:
+                    if pub not in b:
+                        kept.append(b)
+                new_conf = "\n[Peer]\n".join(kept)
+                if not new_conf.endswith("\n"):
+                    new_conf += "\n"
+                _dex(f"cat > {srv['conf_path']}", inp=new_conf, server_code=server_code)
+        except Exception as exc:
+            LOGGER.warning("Could not strip AWG peer %s from %s on %s: %s", pub, srv.get("conf_path"), server_code, exc)
+        return True
+
+
+def _resolve_db_path(db_path: str | Path | None = None) -> str:
+    if db_path:
+        return str(db_path)
+    env_path = os.environ.get("SHOP_DB_PATH")
+    if env_path and Path(env_path).is_file():
+        return env_path
+    candidates = [
+        env_path,
+        "/root/vpn-shop/data-silentconnect/vpn_shop.db",
+        "/root/vpn-shop/data/vpn_shop.db",
+        str(Path.cwd() / "vpn_shop.db"),
+    ]
+    for c in candidates:
+        if c and Path(c).is_file():
+            return str(c)
+    return env_path or "/root/vpn-shop/data-silentconnect/vpn_shop.db"
+
+
+def _parse_awg_conf(conf: str) -> tuple[str, list[dict[str, str]]]:
+    """Parse awg0.conf into raw [Interface] section text and a list of peer dictionaries."""
+    parts = conf.split("[Peer]")
+    iface_text = parts[0].strip()
+    peers: list[dict[str, str]] = []
+    for block in parts[1:]:
+        peer_dict: dict[str, str] = {}
+        for line in block.splitlines():
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            if "=" in s:
+                k, v = s.split("=", 1)
+                peer_dict[k.strip()] = v.strip()
+        if "PublicKey" in peer_dict:
+            peer_dict["public_key"] = peer_dict["PublicKey"]
+            peer_dict["preshared_key"] = peer_dict.get("PresharedKey", "")
+            peer_dict["allowed_ips"] = peer_dict.get("AllowedIPs", "")
+            peers.append(peer_dict)
+    return iface_text, peers
+
+
+def _render_awg_conf(iface_text: str, peers: list[dict[str, str]]) -> str:
+    """Render complete awg0.conf with [Interface] section and [Peer] blocks."""
+    lines = [iface_text.strip(), ""]
+    for p in peers:
+        lines.append("[Peer]")
+        lines.append(f"PublicKey = {p['public_key']}")
+        if p.get("preshared_key"):
+            lines.append(f"PresharedKey = {p['preshared_key']}")
+        allowed = p.get("allowed_ips") or (f"{p.get('client_ip')}/32" if p.get("client_ip") else "")
+        if allowed:
+            lines.append(f"AllowedIPs = {allowed}")
+        for k, v in p.items():
+            if k not in {
+                "public_key", "preshared_key", "allowed_ips", "client_ip",
+                "PublicKey", "PresharedKey", "AllowedIPs"
+            }:
+                lines.append(f"{k} = {v}")
+        lines.append("")
+    return "\n".join(lines).strip() + "\n"
+
+
+def _apply_staged_awg_conf(server_code: str, new_conf: str) -> None:
+    """Safely apply new_conf to target node using staging directory, awg-quick strip validation,
+    timestamped backup rotation (max 20), atomic mv, and live kernel syncconf.
+    Raises RuntimeError if validation fails (leaving live configuration untouched).
+    """
+    srv = _get_server(server_code)
+    conf_path = srv.get("conf_path", "/opt/amnezia/awg/awg0.conf")
+    base_dir = str(Path(conf_path).parent)
+
+    apply_script = (
+        "set -e\n"
+        f"STAGE_DIR=\"{base_dir}/.stage.$$\"\n"
+        "mkdir -m 700 -p \"$STAGE_DIR\"\n"
+        f"cat > \"${{STAGE_DIR}}/awg0.conf\"\n"
+        f"chmod 600 \"${{STAGE_DIR}}/awg0.conf\"\n"
+        "\n"
+        "# 1. Validation in container using awg-quick strip\n"
+        "if ! awg-quick strip \"${STAGE_DIR}/awg0.conf\" > /dev/null 2>&1; then\n"
+        "    rm -rf \"$STAGE_DIR\"\n"
+        "    echo \"STAGING_VALIDATION_FAILED\" >&2\n"
+        "    exit 42\n"
+        "fi\n"
+        "\n"
+        "# 2. Secure backup of existing conf with 0600 permissions\n"
+        f"if [ -f \"{conf_path}\" ]; then\n"
+        f"    BAK_FILE=\"{conf_path}.bak.$(date +%s)\"\n"
+        f"    cp \"{conf_path}\" \"$BAK_FILE\"\n"
+        f"    chmod 600 \"$BAK_FILE\"\n"
+        f"    ls -1t \"{conf_path}\".bak.* 2>/dev/null | tail -n +21 | xargs -r rm -f\n"
+        "fi\n"
+        "\n"
+        "# 3. Atomic replacement\n"
+        f"mv \"${{STAGE_DIR}}/awg0.conf\" \"{conf_path}\"\n"
+        "rmdir \"$STAGE_DIR\" 2>/dev/null || rm -rf \"$STAGE_DIR\"\n"
+        "\n"
+        "# 4. Live kernel synchronization\n"
+        f"awg syncconf awg0 <(awg-quick strip \"{conf_path}\")\n"
+    )
+
+    _dex(apply_script, inp=new_conf, server_code=server_code)
+
+
+def reconcile_awg_peers(
+    server_code: str = "nl",
+    dry_run: bool = True,
+    allow_empty: bool = False,
+    force_mass_delete: bool = False,
+    db_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Reconcile AmneziaWG peers on server_code with active database slots.
+
+    Guarantees:
+    - Thread & process serialization via master_node_lock.
+    - DatabaseQueryError is strictly propagated; does not treat db errors as empty slots.
+    - Zero active slots without allow_empty=True aborts immediately.
+    - Mass deletion circuit breaker: aborts if >30% or >10 peers would be deleted unless force_mass_delete=True.
+    - Preserves reserved/infrastructure server peers.
+    - Staged validation via awg-quick strip; corrupt configs are rejected before touching awg0.conf.
+    - Live kernel syncconf without dropping existing sessions.
+    """
+    if (server_code or "nl").lower().strip() == "all":
+        results = {}
+        for code in ("nl", "pl", "fi"):
+            results[code] = reconcile_awg_peers(
+                server_code=code,
+                dry_run=dry_run,
+                allow_empty=allow_empty,
+                force_mass_delete=force_mass_delete,
+                db_path=db_path,
+            )
+        return results
+
+    code = (server_code or "nl").lower().strip()
+    if code not in SERVERS:
+        raise ValueError(f"Unknown server code: '{server_code}'. Available: {list(SERVERS.keys())}")
+
+    with master_node_lock(code):
+        resolved_db = _resolve_db_path(db_path)
+        from .store import Store, DatabaseQueryError
+        store = Store(resolved_db)
+
+        # 1. Query active slots from DB (fail-closed on db error)
+        try:
+            active_slots = store.list_active_awg_slots(server_code=code)
+        except DatabaseQueryError:
+            LOGGER.critical("[%s] DatabaseQueryError during reconciliation", code.upper())
+            raise
+        except Exception as exc:
+            LOGGER.critical("[%s] Failed to query active slots: %s", code.upper(), exc)
+            raise DatabaseQueryError(f"Database query failed: {exc}") from exc
+
+        # 2. Check for empty database
+        if len(active_slots) == 0 and not allow_empty:
+            msg = f"Zero active slots returned for {code.upper()} and allow_empty is False"
+            LOGGER.warning("[%s] %s", code.upper(), msg)
+            raise ReconciliationAbortedError(msg)
+
+        # 3. Read current conf from node
+        current_conf = _server_conf(code)
+        iface_text, peers_list = _parse_awg_conf(current_conf)
+
+        srv = _get_server(code)
+        reserved_ips = set(srv.get("reserved_ips") or set())
+
+        # Classify current peers into reserved vs manageable
+        reserved_peers: list[dict[str, str]] = []
+        manageable_peers: list[dict[str, str]] = []
+        for p in peers_list:
+            ip_addr = p.get("allowed_ips", "").split("/")[0].strip()
+            if ip_addr in reserved_ips:
+                reserved_peers.append(p)
+            else:
+                manageable_peers.append(p)
+
+        desired_by_pubkey = {s["public_key"]: s for s in active_slots if s.get("public_key")}
+        current_by_pubkey = {p["public_key"]: p for p in manageable_peers if p.get("public_key")}
+
+        to_add = [s for pk, s in desired_by_pubkey.items() if pk not in current_by_pubkey]
+        to_remove = [p for pk, p in current_by_pubkey.items() if pk not in desired_by_pubkey]
+        to_update = []
+        unchanged = []
+
+        for pk, cur_p in current_by_pubkey.items():
+            if pk in desired_by_pubkey:
+                des_slot = desired_by_pubkey[pk]
+                cur_ip = cur_p.get("allowed_ips", "").split("/")[0].strip()
+                des_ip = str(des_slot.get("client_ip") or "").strip()
+                cur_psk = cur_p.get("preshared_key", "").strip()
+                des_psk = str(des_slot.get("preshared_key") or "").strip()
+
+                if cur_ip != des_ip or cur_psk != des_psk:
+                    to_update.append(des_slot)
+                else:
+                    unchanged.append(cur_p)
+
+        # 4. Mass Deletion Circuit Breaker
+        num_manageable = len(current_by_pubkey)
+        num_to_remove = len(to_remove)
+        if num_manageable > 0 and num_to_remove > 0:
+            ratio = num_to_remove / num_manageable
+            if (ratio > 0.30 or num_to_remove > 10) and not force_mass_delete:
+                msg = (
+                    f"Mass deletion circuit breaker triggered for {code.upper()}: "
+                    f"attempting to remove {num_to_remove}/{num_manageable} peers ({ratio:.1%}). "
+                    "Operation aborted to prevent accidental outage. Pass force_mass_delete=True to override."
+                )
+                LOGGER.error("[%s] %s", code.upper(), msg)
+                raise ReconciliationAbortedError(msg)
+
+        summary = {
+            "server_code": code,
+            "dry_run": dry_run,
+            "applied": False,
+            "current_total_peers": len(peers_list),
+            "reserved_peers_count": len(reserved_peers),
+            "active_slots_db": len(active_slots),
+            "to_add": [{"public_key": s["public_key"], "client_ip": s.get("client_ip")} for s in to_add],
+            "to_remove": [{"public_key": p["public_key"], "allowed_ips": p.get("allowed_ips")} for p in to_remove],
+            "to_update": [{"public_key": s["public_key"], "client_ip": s.get("client_ip")} for s in to_update],
+            "unchanged_count": len(unchanged),
+        }
+
+        # 5. Apply if dry_run is False
+        if not dry_run:
+            final_peers = list(reserved_peers)
+            sorted_slots = sorted(desired_by_pubkey.values(), key=lambda x: str(x.get("client_ip", "")))
+            for s in sorted_slots:
+                final_peers.append({
+                    "public_key": s["public_key"],
+                    "preshared_key": str(s.get("preshared_key") or ""),
+                    "allowed_ips": f"{s['client_ip']}/32",
+                })
+
+            rendered_conf = _render_awg_conf(iface_text, final_peers)
+            _apply_staged_awg_conf(code, rendered_conf)
+            summary["applied"] = True
+
+        return summary
 
