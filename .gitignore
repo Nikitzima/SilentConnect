@@ -60,6 +60,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.ruff_cache/
 
 # ==== ОС / IDE ====
 Thumbs.db

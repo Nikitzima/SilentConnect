@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import json
+import logging
 import os
 import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Iterable, Iterator
+
+LOGGER = logging.getLogger("vpn_shop.store")
 
 from .security import hash_secret, masked_code, now_ts, public_id, random_code
 

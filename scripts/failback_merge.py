@@ -44,7 +44,7 @@ import shutil
 import sqlite3
 import sys
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional, Sequence
 
 TERMINAL_ORDER_STATES = {"delivered", "cancelled", "expired"}
 ORDER_RANK = {

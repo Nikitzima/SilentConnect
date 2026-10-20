@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 # Add vpn-shop to sys.path
 REPO_ROOT = Path(__file__).resolve().parents[1]
