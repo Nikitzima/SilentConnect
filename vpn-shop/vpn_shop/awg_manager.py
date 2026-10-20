@@ -93,8 +93,38 @@ SERVERS: dict[str, dict[str, Any]] = {
     },
 }
 
-DB_PATH = os.environ.get("SHOP_DB_PATH", "/root/vpn-shop/data/vpn_shop.db")
+DB_PATH = (
+    os.environ.get("SHOP_DB_PATH")
+    or (
+        "/root/vpn-shop/data-silentconnect/vpn_shop.db"
+        if Path("/root/vpn-shop/data-silentconnect/vpn_shop.db").exists()
+        else "/root/vpn-shop/data/vpn_shop.db"
+    )
+)
+WG_KEY_REGEX = re.compile(r"^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$")
 CLUSTER_KNOWN_HOSTS_PATH = os.environ.get("CLUSTER_KNOWN_HOSTS_PATH", "/root/.ssh/cluster_known_hosts")
+
+
+def validate_wg_key(key: str) -> bool:
+    return bool(WG_KEY_REGEX.match(key.strip()))
+
+
+def validate_ip(ip: str, server_code: str | None = None) -> bool:
+    try:
+        import ipaddress
+        addr = ipaddress.ip_address(ip.strip())
+        if not isinstance(addr, ipaddress.IPv4Address):
+            return False
+        octets = str(addr).split(".")
+        if int(octets[3]) in (0, 1, 255):
+            return False
+        if server_code:
+            prefix = _get_node_cfg(server_code)["subnet_prefix"]
+            if not str(addr).startswith(f"{prefix}."):
+                return False
+        return True
+    except Exception:
+        return False
 
 
 class ClusterSecurityError(RuntimeError):
@@ -403,10 +433,8 @@ def _server_public_key(conf: str, server_code: str = "nl") -> str:
     m = re.search(r"^PrivateKey\s*=\s*(\S+)", conf, re.M)
     if not m:
         raise RuntimeError(f"server PrivateKey not found for {server_code}")
-    try:
-        return _dex(f"echo '{m.group(1)}' | awg pubkey", server_code="nl")
-    except Exception:
-        return _dex(f"echo '{m.group(1)}' | awg pubkey", server_code=server_code)
+    privkey = m.group(1).strip()
+    return _pubkey(privkey, server_code=server_code)
 
 
 def _used_ips(server_code: str = "nl") -> set[str]:
@@ -439,29 +467,70 @@ def _next_free_ip(server_code: str = "nl") -> str:
     raise RuntimeError(f"AWG subnet {subnet}.0/24 exhausted on {server_code}")
 
 
+_STORE_INSTANCE: Any = None
+_STORE_LOCK = threading.Lock()
+
+
+def _get_store() -> Any:
+    global _STORE_INSTANCE
+    if _STORE_INSTANCE is None:
+        with _STORE_LOCK:
+            if _STORE_INSTANCE is None:
+                try:
+                    from .store import Store
+                    _STORE_INSTANCE = Store(database_path=Path(DB_PATH), replica_name="awg")
+                    _STORE_INSTANCE.init()
+                except Exception:
+                    pass
+    return _STORE_INSTANCE
+
+
 def _genkey(server_code: str = "nl") -> str:
     try:
-        return _dex("awg genkey", server_code="nl")
+        from cryptography.hazmat.primitives.asymmetric import x25519
+        import base64
+        priv = x25519.X25519PrivateKey.generate()
+        return base64.b64encode(priv.private_bytes_raw()).decode("ascii")
     except Exception:
-        return _dex("awg genkey", server_code=server_code)
+        import base64
+        raw_priv = bytearray(os.urandom(32))
+        raw_priv[0] &= 248
+        raw_priv[31] &= 127
+        raw_priv[31] |= 64
+        return base64.b64encode(bytes(raw_priv)).decode("ascii")
 
 
 def _pubkey(privkey: str, server_code: str = "nl") -> str:
     try:
-        return _dex("awg pubkey", inp=privkey + "\n", server_code="nl")
+        from cryptography.hazmat.primitives.asymmetric import x25519
+        import base64
+        priv_bytes = base64.b64decode(privkey.strip())
+        priv = x25519.X25519PrivateKey.from_private_bytes(priv_bytes)
+        return base64.b64encode(priv.public_key().public_bytes_raw()).decode("ascii")
     except Exception:
-        return _dex("awg pubkey", inp=privkey + "\n", server_code=server_code)
+        try:
+            return _dex("awg pubkey", inp=privkey.strip() + "\n", server_code=server_code)
+        except Exception:
+            return _dex("awg pubkey", inp=privkey.strip() + "\n", server_code="nl")
 
 
 def _genpsk(server_code: str = "nl") -> str:
-    try:
-        return _dex("awg genpsk", server_code="nl")
-    except Exception:
-        return _dex("awg genpsk", server_code=server_code)
+    import base64
+    return base64.b64encode(os.urandom(32)).decode("ascii")
 
 
 @contextmanager
-def _db() -> Iterator[sqlite3.Connection]:
+def _db() -> Iterator[sqlite3.Connection | Any]:
+    st = _get_store()
+    if st is not None:
+        with st.connection() as conn:
+            yield conn
+            try:
+                conn.commit()
+            except Exception:
+                pass
+        return
+
     conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
     try:
@@ -817,20 +886,25 @@ def add_slot_peer(
         pub = public_key.strip()
         psk = preshared_key.strip()
         ip = client_ip.strip()
-        if not pub or not ip:
+        if not pub or not ip or not validate_wg_key(pub) or not validate_ip(ip):
+            LOGGER.warning("Invalid AWG peer parameters: pub=%s ip=%s", pub, ip)
+            return False
+        if psk and not validate_wg_key(psk):
+            LOGGER.warning("Invalid AWG PSK: %s", psk)
             return False
 
         # 1. Live add in container
         psk_file = "/tmp/.awg-psk.tmp"
         try:
             if psk:
-                _dex(f"echo '{psk}' > {psk_file}", server_code=server_code)
-                _dex(f"awg set awg0 peer {pub} allowed-ips {ip}/32 preshared-key {psk_file}", server_code=server_code)
+                _dex(f"echo {shlex.quote(psk)} > {psk_file}", server_code=server_code)
+                _dex(f"awg set awg0 peer {shlex.quote(pub)} allowed-ips {shlex.quote(ip)}/32 preshared-key {psk_file}", server_code=server_code)
                 _dex(f"rm -f {psk_file}", server_code=server_code)
             else:
-                _dex(f"awg set awg0 peer {pub} allowed-ips {ip}/32", server_code=server_code)
+                _dex(f"awg set awg0 peer {shlex.quote(pub)} allowed-ips {shlex.quote(ip)}/32", server_code=server_code)
         except Exception as exc:
             LOGGER.warning("Could not live-add AWG peer %s on %s: %s", pub, server_code, exc)
+            return False
 
         # 2. Persist to awg0.conf if not already present
         try:
@@ -854,11 +928,12 @@ def remove_slot_peer(server_code: str = "nl", public_key: str = "") -> bool:
     with master_node_lock(server_code):
         srv = _get_server(server_code)
         pub = public_key.strip()
-        if not pub:
+        if not pub or not validate_wg_key(pub):
+            LOGGER.warning("Invalid AWG public key for removal: %s", pub)
             return False
         # 1. Live remove in container kernel
         try:
-            _dex(f"awg set awg0 peer {pub} remove", server_code=server_code)
+            _dex(f"awg set awg0 peer {shlex.quote(pub)} remove", server_code=server_code)
         except Exception as exc:
             LOGGER.warning("Could not live-remove AWG peer %s on %s: %s", pub, server_code, exc)
 
@@ -1083,7 +1158,7 @@ def reconcile_awg_peers(
         num_to_remove = len(to_remove)
         if num_manageable > 0 and num_to_remove > 0:
             ratio = num_to_remove / num_manageable
-            if (ratio > 0.30 or num_to_remove > 10) and not force_mass_delete:
+            if ((ratio > 0.30 and num_to_remove > 3) or num_to_remove > 10) and not force_mass_delete:
                 msg = (
                     f"Mass deletion circuit breaker triggered for {code.upper()}: "
                     f"attempting to remove {num_to_remove}/{num_manageable} peers ({ratio:.1%}). "

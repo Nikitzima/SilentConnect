@@ -257,9 +257,9 @@ def run_single_health_cycle(cache_path: str | Path | None = None) -> dict[str, A
         res = check_node_health(code)
         nodes[code] = res
 
-    # NL is primary; if NL is down, cluster is down
-    nl_healthy = nodes.get("nl", {}).get("healthy", False)
-    all_ok = nl_healthy
+    # Multi-node resilience: cluster is operational if at least one node is healthy
+    all_ok = any(n.get("healthy", False) for n in nodes.values())
+    primary_code = "nl" if nodes.get("nl", {}).get("healthy") else ("pl" if nodes.get("pl", {}).get("healthy") else ("fi" if nodes.get("fi", {}).get("healthy") else "nl"))
 
     now = time.time()
     last_successful_check_at = now if all_ok else prev_last_success
@@ -269,7 +269,7 @@ def run_single_health_cycle(cache_path: str | Path | None = None) -> dict[str, A
         "checked_at": last_successful_check_at,
         "last_successful_check_at": last_successful_check_at,
         "last_attempt_at": now,
-        "primary": "nl",
+        "primary": primary_code,
         "nodes": nodes,
     }
     save_health_cache(health_data, cache_path=cache_path)

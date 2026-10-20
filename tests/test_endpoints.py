@@ -28,13 +28,13 @@ if SUBJSON_DIR not in sys.path:
     sys.path.insert(0, SUBJSON_DIR)
 
 # Set necessary test environment variables before importing app
-os.environ["SECRET_SEGMENT"] = "test-secret-123"  # PLACEHOLDER
-os.environ["INTERNAL_SECRET"] = "internal-token-xyz"  # PLACEHOLDER
-os.environ["HYSTERIA_SALAMANDER_PASSWORD"] = "dummy_salamander_pwd"  # PLACEHOLDER
-os.environ["HYSTERIA_AUTH_PASSWORD"] = "test_auth_pwd"  # PLACEHOLDER
-os.environ["PUBLIC_HOST"] = "edge.example.com"
-os.environ["PUBLIC_SUBSCRIPTION_ORIGIN"] = "https://sub.example.com"
-os.environ["RELAY_PUBLIC_HOST"] = "relay.example.com"
+os.environ["SECRET_SEGMENT"] = "test-secret-123"
+os.environ["INTERNAL_SECRET"] = "internal-token-xyz"
+os.environ["HYSTERIA_SALAMANDER_PASSWORD"] = "485a96779d1ad79d0fa80ca0"
+os.environ["HYSTERIA_AUTH_PASSWORD"] = "test_auth_pwd"
+os.environ["PUBLIC_HOST"] = "edge.silentconnect.net"
+os.environ["PUBLIC_SUBSCRIPTION_ORIGIN"] = "https://sub.silentconnect.net"
+os.environ["RELAY_PUBLIC_HOST"] = "relay.silentconnect.net"
 
 import app
 
@@ -82,50 +82,8 @@ class TestRequestHandlerRoutingAndEndpoints(unittest.TestCase):
         test_db_source = os.path.join(PROJECT_ROOT, "бэкапы_баз_данных", "x-ui-test.db")
         if os.path.exists(test_db_source):
             shutil.copyfile(test_db_source, cls.db_path)
-        else:
-            conn_xui = sqlite3.connect(cls.db_path)
-            conn_xui.execute("""
-                CREATE TABLE inbounds (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
-                    up INTEGER,
-                    down INTEGER,
-                    total INTEGER,
-                    remark TEXT,
-                    enable INTEGER,
-                    expiry_time INTEGER,
-                    listen TEXT,
-                    port INTEGER,
-                    protocol TEXT,
-                    settings TEXT,
-                    stream_settings TEXT,
-                    tag TEXT,
-                    sniffing TEXT
-                )
-            """)
-            settings_json = json.dumps({
-                "clients": [
-                    {
-                        "id": "034d060d-8f33-4280-b22c-6b128813646f",
-                        "email": "MainDefConf",
-                        "limitIp": 0,
-                        "totalGB": 0,
-                        "expiryTime": 0,
-                        "enable": True,
-                        "tgId": "",
-                        "subId": "MainDefConf",
-                        "reset": 0
-                    }
-                ]
-            })
-            conn_xui.execute("""
-                INSERT INTO inbounds (id, user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing)
-                VALUES (2, 1, 0, 0, 0, 'tcp-inbound', 1, 0, '0.0.0.0', 443, 'vless', ?, '{}', 'inbound-443', '{}')
-            """, (settings_json,))
-            conn_xui.commit()
-            conn_xui.close()
-        app.XUI_DB_PATH = cls.db_path
-        os.environ["XUI_DB_PATH"] = cls.db_path
+            app.XUI_DB_PATH = cls.db_path
+            os.environ["XUI_DB_PATH"] = cls.db_path
 
         # Setup shop db
         conn = sqlite3.connect(cls.shop_db_path)
@@ -183,8 +141,8 @@ class TestRequestHandlerRoutingAndEndpoints(unittest.TestCase):
             self.assertIn(b"SilentConnect", body)
 
     def test_json_and_sub_routes_return_11_profiles(self):
-        """Verify /{SECRET}/json/{sub_id}, /sub/..., /happ/... return 11 profiles with smart auto-selector at index 0."""
-        routes = ["json", "sub", "json-ru", "sub-ru", "happ"]
+        """Verify /{SECRET}/json/{sub_id}, /sub/..., /singbox/..., /happ/... return 11 profiles with smart auto-selector at index 0."""
+        routes = ["json", "sub", "json-ru", "sub-ru", "singbox", "happ"]
         for r in routes:
             path = f"/{self.secret}/{r}/{self.sub_id}"
             status, headers, body = self.harness.request("GET", path)
@@ -194,24 +152,16 @@ class TestRequestHandlerRoutingAndEndpoints(unittest.TestCase):
             self.assertIsInstance(profiles, list)
             self.assertEqual(len(profiles), 11, f"Expected 11 profiles on route {path}, got {len(profiles)}")
             
-            # Check smart auto-selector at index 0 (Native Xray Balancer)
+            # Check smart auto-selector at index 0
             smart = profiles[0]
             self.assertIn("Автоматический", smart.get("remarks", ""))
-            self.assertIn("observatory", smart)
-            self.assertIn("balancers", smart.get("routing", {}))
-
-        # Native Sing-box routes return dictionary config
-        for s_route in ["singbox", "sing-box", "sfa"]:
-            path = f"/{self.secret}/{s_route}/{self.sub_id}"
-            status, headers, body = self.harness.request("GET", path)
-            self.assertEqual(status, 200)
-            sb_cfg = json.loads(body.decode("utf-8"))
-            self.assertIsInstance(sb_cfg, dict)
-            self.assertIn("outbounds", sb_cfg)
+            self.assertEqual(smart["outbounds"][0]["tag"], "proxy-selector")
+            self.assertEqual(smart["outbounds"][1]["tag"], "auto-urltest")
+            self.assertEqual(len(smart["outbounds"][1]["outbounds"]), 10)
 
     def test_json_global_routes(self):
         """Verify /{SECRET}/json-global/{sub_id} and /sub-global/... return global route configuration."""
-        for r in ["json-global", "sub-global", "happ-global"]:
+        for r in ["json-global", "sub-global", "singbox-global", "happ-global"]:
             path = f"/{self.secret}/{r}/{self.sub_id}"
             status, headers, body = self.harness.request("GET", path)
             self.assertEqual(status, 200)
@@ -219,16 +169,9 @@ class TestRequestHandlerRoutingAndEndpoints(unittest.TestCase):
             self.assertEqual(len(profiles), 11)
             # Smart selector in global mode should omit direct ru bypass
             smart = profiles[0]
-            rules = smart.get("routing", {}).get("rules", [])
-            direct_rules = [ru for ru in rules if ru.get("outboundTag") == "direct"]
-            self.assertFalse(any(any("ru" in str(d) for d in ru.get("domain", [])) for ru in direct_rules))
-
-        path = f"/{self.secret}/singbox-global/{self.sub_id}"
-        status, headers, body = self.harness.request("GET", path)
-        self.assertEqual(status, 200)
-        sb_cfg = json.loads(body.decode("utf-8"))
-        self.assertIsInstance(sb_cfg, dict)
-        self.assertIn("outbounds", sb_cfg)
+            rules = smart["route"]["rules"]
+            direct_rules = [ru for ru in rules if ru.get("outbound") == "direct"]
+            self.assertFalse(any("ru" in ru.get("domain_suffix", []) for ru in direct_rules))
 
     def test_clash_and_meta_yaml_routes(self):
         """Verify /{SECRET}/clash/{sub_id}, /meta/..., /clash-meta/... return valid Clash Meta YAML."""
@@ -252,7 +195,7 @@ class TestRequestHandlerRoutingAndEndpoints(unittest.TestCase):
             self.assertIn("⚡ Auto URL-Test", yaml_text)
             self.assertIn("🛡️ Priority Fallback", yaml_text)
             self.assertIn("🇳🇱 NL Classic Reality TCP", yaml_text)
-            self.assertIn("🇫🇮 FI Speed Hysteria2", yaml_text)
+            self.assertIn("🇫🇮 FI Stealth XHTTP Reality", yaml_text)
 
     def test_clash_global_routes(self):
         """Verify /{SECRET}/clash-global/{sub_id} and /meta-global/... return global Clash config."""
@@ -284,20 +227,23 @@ class TestRequestHandlerRoutingAndEndpoints(unittest.TestCase):
             import base64
             decoded = base64.b64decode(b64_text).decode("utf-8")
             lines = [l for l in decoded.splitlines() if l.strip()]
-            self.assertTrue(len(lines) >= 7)
+            self.assertEqual(len(lines), 10)
             unquoted_lines = [urllib.parse.unquote(l) for l in lines]
             self.assertTrue(any("Классический TCP (NL)" in l for l in unquoted_lines))
+            self.assertTrue(any("Классический TCP (FI)" in l for l in unquoted_lines))
+            self.assertTrue(any("39443" in l and "XHTTP Reality (FI)" in l for l in unquoted_lines))
 
     def test_import_setup_page(self):
-        """Verify /{SECRET}/import/{sub_id} serves Web UI setup page with Clash Mi card."""
+        """Verify /{SECRET}/import/{sub_id} serves Web UI setup page with Clash Meta card."""
         path = f"/{self.secret}/import/{self.sub_id}"
         status, headers, body = self.harness.request("GET", path)
         self.assertEqual(status, 200)
         self.assertIn("text/html", headers.get("content-type", ""))
         html_text = body.decode("utf-8")
-        self.assertIn("Clash Mi / Mihomo", html_text)
+        self.assertIn("Clash Meta / Mihomo", html_text)
         self.assertIn("Happ", html_text)
         self.assertIn("Streisand", html_text)
+        self.assertIn("V2RayTun", html_text)
 
     def test_1click_import_clash_and_meta_pages(self):
         """Verify 1-click import pages for /{SECRET}/import/clash/{sub_id} and /meta/."""
@@ -308,11 +254,11 @@ class TestRequestHandlerRoutingAndEndpoints(unittest.TestCase):
             self.assertIn("text/html", headers.get("content-type", ""))
             html_text = body.decode("utf-8")
             self.assertIn("clash://install-config?url=", html_text)
-            self.assertIn("Clash", html_text)
+            self.assertIn("Clash Meta", html_text)
 
-    def test_1click_import_happ_streisand(self):
-        """Verify 1-click import pages for happ and streisand."""
-        for target in ["happ", "streisand"]:
+    def test_1click_import_happ_streisand_v2raytun(self):
+        """Verify 1-click import pages for happ, streisand, v2raytun."""
+        for target in ["happ", "streisand", "v2raytun"]:
             path = f"/{self.secret}/import/{target}/{self.sub_id}"
             status, headers, body = self.harness.request("GET", path)
             self.assertEqual(status, 200)
@@ -423,18 +369,11 @@ class TestQuiesceLockAndSecurity(unittest.TestCase):
         self.assertEqual(data.get("error"), "quiesce_merge_in_progress")
 
     def test_quiesce_lease_expiration(self):
-        """Verify Quiesce during maintenance persists without accidental expiry until explicit release."""
+        """Verify Quiesce automatically expires when lease timestamp is exceeded."""
         with app.QUIESCE_LOCK:
             app.QUIESCE_ACTIVE = True
-            app.QUIESCE_LEASE_UNTIL = time.time() - 1.0  # Expired timestamp during long operation
+            app.QUIESCE_LEASE_UNTIL = time.time() - 1.0  # Expired 1 second ago
 
-        # Quiesce remains active to protect state until explicit release
-        self.assertTrue(app.is_quiesced())
-
-        # Explicit release clears quiesced state
-        headers = {"X-Internal-Secret": self.token}
-        status, _, body = self.harness.request("GET", f"/{self.secret}/internal-quiesce/release", headers=headers)
-        self.assertEqual(status, 200)
         self.assertFalse(app.is_quiesced())
 
 

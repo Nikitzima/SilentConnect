@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from pathlib import Path
 
@@ -23,6 +24,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("run-bot", help="Run Telegram bot long polling loop")
     sub.add_parser("run-web", help="Run public web checkout")
 
+    reconcile_xui = sub.add_parser("reconcile-xui", help="Autonomous 3X-UI pull reconciliation from Turso")
+    reconcile_xui.add_argument("--dry-run", action="store_true", help="Calculate diff without calling 3X-UI API")
+    reconcile_xui.add_argument("--once", action="store_true", help="Run single reconciliation pass and exit")
+    reconcile_xui.add_argument("--daemon", action="store_true", help="Run continuous daemon loop")
+    reconcile_xui.add_argument("--interval", type=float, default=15.0, help="Polling interval in seconds (default: 15)")
+
     create_invite = sub.add_parser("create-invite", help="Create invite token")
     create_invite.add_argument("--uses", type=int, default=1)
     create_invite.add_argument("--days", type=int, default=30)
@@ -44,12 +51,24 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     settings = load_settings(Path(__file__).resolve().parents[1], env_file=args.env_file)
-    store = Store(settings.database_path)
+    replica_name = "xui_reconcile" if args.command == "reconcile-xui" else None
+    store = Store(settings.database_path, replica_name=replica_name)
     store.init()
 
     if args.command == "init-db":
         print(settings.database_path)
         return 0
+
+    if args.command == "reconcile-xui":
+        from .xui_reconciler import XuiReconciler
+
+        reconciler = XuiReconciler(settings, store)
+        if args.daemon and not args.dry_run:
+            reconciler.run_daemon(interval_seconds=args.interval)
+            return 0
+        res = reconciler.reconcile_once(dry_run=args.dry_run)
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 1
 
     if args.command == "create-invite":
         code, _ = store.create_invite(max_uses=args.uses, expires_at=days_from_now(args.days), note=args.note)

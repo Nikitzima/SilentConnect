@@ -10,6 +10,8 @@ import json
 import logging
 import os
 import re
+import shlex
+import socket
 import sqlite3
 import subprocess
 import threading
@@ -148,9 +150,14 @@ def run_node_command(server_code: str, cmd: str, timeout: int = 15) -> tuple[int
     local_ips = {ip.strip() for ip in os.environ.get("LOCAL_NODE_IPS", "").split(",") if ip.strip()}
     local_ips.add("127.0.0.1")
     local_ips.add("::1")
-    local_ips.add(get_server_ip("nl"))
+    try:
+        from .awg_manager import get_current_node_code
+        current_srv = get_current_node_code()
+    except Exception:
+        current_srv = os.environ.get("CURRENT_SERVER_CODE", os.environ.get("AWG_LOCAL_SERVER", "nl")).lower().strip()
+    if current_srv:
+        local_ips.add(get_server_ip(current_srv))
 
-    current_srv = os.environ.get("CURRENT_SERVER_CODE", "nl").lower().strip()
     if srv["code"] == current_srv or target_ip in local_ips:
         is_local = True
 
@@ -196,7 +203,7 @@ def run_node_command(server_code: str, cmd: str, timeout: int = 15) -> tuple[int
                     "-o", "BatchMode=yes",
                     "-o", "ConnectTimeout=5",
                     f"root@{fi_host}",
-                    f"ssh -o StrictHostKeyChecking=no -o BatchMode=yes root@{target_ip} {subprocess.list2cmdline([cmd])}",
+                    f"ssh -o StrictHostKeyChecking=no -o BatchMode=yes root@{target_ip} {shlex.quote(cmd)}",
                 ]
                 jump_res = subprocess.run(
                     jump_cmd,
@@ -265,13 +272,14 @@ def rclone_delete_user_doc(doc_name: str) -> bool:
 def start_openflux_worker(server_code: str, container_name: str, public_doc_url: str) -> bool:
     """Launch a lightweight Docker container running mailruexit.php on target node."""
     clean_name = re.sub(r"[^\w\-]", "", container_name)
+    quoted_url = shlex.quote(public_doc_url.strip())
     docker_cmd = (
         f"docker rm -f {clean_name} 2>/dev/null || true; "
         f"docker run -d --name {clean_name} --restart unless-stopped "
         f"--memory=64m --cpus=0.5 "
         f"-v /opt/openflux:/opt/openflux:ro "
         f"php:8.2-cli-alpine "
-        f"sh -c 'while true; do php -d memory_limit=48M /opt/openflux/runner.php \"$1\"; sleep 1; done' _ '{public_doc_url}'"
+        f"sh -c 'while true; do php -d memory_limit=48M /opt/openflux/runner.php \"$1\"; sleep 1; done' _ {quoted_url}"
     )
     code, stdout, stderr = run_node_command(server_code, docker_cmd, timeout=20)
     if code == 0:
@@ -331,8 +339,19 @@ def get_or_create_openflux_slot(conn: sqlite3.Connection, profile_id: str) -> di
     return dict(row)
 
 
+def _is_node_reachable(server_code: str) -> bool:
+    ip = get_server_ip(server_code)
+    if ip in ("127.0.0.1", "192.0.2.1", "192.0.2.2"):
+        return True
+    try:
+        with socket.create_connection((ip, 22), timeout=1.5):
+            return True
+    except OSError:
+        return False
+
+
 def choose_least_loaded_server(conn: sqlite3.Connection) -> str:
-    """Smart Balancer: Select least loaded server between NL and PL."""
+    """Smart Balancer: Select least loaded reachable server between NL and PL."""
     counts = {"nl": 0, "pl": 0}
     rows = conn.execute(
         """
@@ -347,12 +366,12 @@ def choose_least_loaded_server(conn: sqlite3.Connection) -> str:
         if srv in counts:
             counts[srv] = int(r[1])
 
-    # Select lowest count with priority nl -> pl on tie
-    min_count = min(counts.values())
-    for srv in ("nl", "pl"):
+    reachable = [srv for srv in ("nl", "pl") if _is_node_reachable(srv)] or ["nl", "pl"]
+    min_count = min(counts[s] for s in reachable)
+    for srv in reachable:
         if counts[srv] == min_count:
             return srv
-    return "nl"
+    return reachable[0]
 
 
 def activate_openflux_slot(conn: sqlite3.Connection, profile_id: str) -> dict[str, Any]:

@@ -31,7 +31,6 @@ CONSTANTS = {
     "GRPC_REALITY_PUBLIC_KEY": "MockRealityPublicKey2222222222222222222222",
     "GRPC_REALITY_SHORT_ID": "0123456789abcdef",
     "GRPC_REALITY_SNI": "vk.com",
-    "FI_GRPC_REALITY_SNI": "sbercloud.ru",
     "GRPC_SERVICE_NAME": "grpc-maxru",
     "FI_XHTTP_REALITY_PUBLIC_KEY": "MockRealityPublicKey3333333333333333333333",
     "FI_XHTTP_REALITY_SHORT_ID": "fedcba9876543210",
@@ -39,9 +38,9 @@ CONSTANTS = {
     "FI_XHTTP_REALITY_PORT": 39443,
     "HYSTERIA_SALAMANDER_PASSWORD": "485a96779d1ad79d0fa80ca0",
     "HTTP_204_CLOUDFLARE": "https://cp.cloudflare.com/generate_204",
-    "NL_HOST": "edge.example.com",
-    "NL_SUB_HOST": "sub.example.com",
-    "FI_HOST": "fi.example.com",
+    "NL_HOST": "edge.silentconnect.net",
+    "NL_SUB_HOST": "sub.silentconnect.net",
+    "FI_HOST": "fi.silentconnect.net",
     "TEST_UUID": "9c3d7f1e-4b8a-4c2d-9e1f-8a2b3c4d5e6f",
     "WS_PATH": "/sc-ws-path",
 }
@@ -206,11 +205,11 @@ def build_authoritative_clash_meta_dict(
                 "name": "🇫🇮 FI Backup Reality gRPC",
                 "type": "vless",
                 "server": CONSTANTS["FI_HOST"],
-                "port": 443,
+                "port": 29443,
                 "uuid": client_uuid,
                 "network": "grpc",
                 "tls": True,
-                "servername": CONSTANTS["FI_GRPC_REALITY_SNI"],
+                "servername": CONSTANTS["GRPC_REALITY_SNI"],
                 "reality-opts": {
                     "public-key": CONSTANTS["GRPC_REALITY_PUBLIC_KEY"],
                     "short-id": CONSTANTS["GRPC_REALITY_SHORT_ID"],
@@ -323,12 +322,12 @@ def build_authoritative_streisand_bundle_text(
     uris = [
         f"vless://{client_uuid}@{CONSTANTS['NL_HOST']}:443?type=tcp&security=reality&pbk={CONSTANTS['TCP_REALITY_PUBLIC_KEY']}&fp=chrome&sni={CONSTANTS['TCP_REALITY_SNI_CLASSIC']}&sid={CONSTANTS['TCP_REALITY_SHORT_ID']}&flow=xtls-rprx-vision#{urllib.parse.quote('🇳🇱 1. Классический TCP (NL)')}",
         f"vless://{client_uuid}@{CONSTANTS['NL_HOST']}:443?type=tcp&security=reality&pbk={CONSTANTS['TCP_REALITY_PUBLIC_KEY']}&fp=chrome&sni={CONSTANTS['TCP_REALITY_SNI_FAST']}&sid={CONSTANTS['TCP_REALITY_SHORT_ID']}&flow=xtls-rprx-vision#{urllib.parse.quote('🇳🇱 2. Быстрый TCP (NL)')}",
-        f"hy2://{client_uuid}@{CONSTANTS['NL_SUB_HOST']}:443?sni={CONSTANTS['NL_SUB_HOST']}&alpn=h3&obfs=gecko&obfs-password={CONSTANTS['HYSTERIA_SALAMANDER_PASSWORD']}#{urllib.parse.quote('🇳🇱 3. Скоростной Hysteria2 (NL)')}",
+        f"hy2://{client_uuid}@{CONSTANTS['NL_SUB_HOST']}:443?sni={CONSTANTS['NL_SUB_HOST']}&alpn=h3&obfs=salamander&obfs-password={CONSTANTS['HYSTERIA_SALAMANDER_PASSWORD']}#{urllib.parse.quote('🇳🇱 3. Скоростной Hysteria2 (NL)')}",
         f"vless://{client_uuid}@{CONSTANTS['NL_HOST']}:29443?type=grpc&security=reality&pbk={CONSTANTS['GRPC_REALITY_PUBLIC_KEY']}&fp=chrome&sni={CONSTANTS['GRPC_REALITY_SNI']}&sid={CONSTANTS['GRPC_REALITY_SHORT_ID']}&serviceName={CONSTANTS['GRPC_SERVICE_NAME']}#{urllib.parse.quote('🇳🇱 4. Запасной gRPC (NL)')}",
         f"vless://{client_uuid}@{CONSTANTS['NL_HOST']}:443?type=xhttp&security=tls&sni={CONSTANTS['NL_HOST']}&alpn=h2,http/1.1&path=%2Fxh-mx-d1f7c0429d6a&mode=packet-up#{urllib.parse.quote('🇳🇱 5. Незаметный XHTTP (NL)')}",
         f"vless://{client_uuid}@{CONSTANTS['FI_HOST']}:443?type=tcp&security=reality&pbk={CONSTANTS['TCP_REALITY_PUBLIC_KEY']}&fp=chrome&sni={CONSTANTS['TCP_REALITY_SNI_CLASSIC']}&sid={CONSTANTS['TCP_REALITY_SHORT_ID']}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 6. Классический TCP (FI)')}",
         f"vless://{client_uuid}@{CONSTANTS['FI_HOST']}:443?type=tcp&security=reality&pbk={CONSTANTS['TCP_REALITY_PUBLIC_KEY']}&fp=chrome&sni={CONSTANTS['TCP_REALITY_SNI_FAST']}&sid={CONSTANTS['TCP_REALITY_SHORT_ID']}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 7. Быстрый TCP (FI)')}",
-        f"hy2://{client_uuid}@{CONSTANTS['FI_HOST']}:443?sni={CONSTANTS['FI_HOST']}&alpn=h3&obfs=gecko&obfs-password={CONSTANTS['HYSTERIA_SALAMANDER_PASSWORD']}#{urllib.parse.quote('🇫🇮 8. Скоростной Hysteria2 (FI)')}",
+        f"hy2://{client_uuid}@{CONSTANTS['FI_HOST']}:443?sni={CONSTANTS['FI_HOST']}&alpn=h3&obfs=salamander&obfs-password={CONSTANTS['HYSTERIA_SALAMANDER_PASSWORD']}#{urllib.parse.quote('🇫🇮 8. Скоростной Hysteria2 (FI)')}",
         f"vless://{client_uuid}@{CONSTANTS['FI_HOST']}:29443?type=grpc&security=reality&pbk={CONSTANTS['GRPC_REALITY_PUBLIC_KEY']}&fp=chrome&sni={CONSTANTS['GRPC_REALITY_SNI']}&sid={CONSTANTS['GRPC_REALITY_SHORT_ID']}&serviceName={CONSTANTS['GRPC_SERVICE_NAME']}#{urllib.parse.quote('🇫🇮 9. Запасной gRPC (FI)')}",
         f"vless://{client_uuid}@{CONSTANTS['FI_HOST']}:{CONSTANTS['FI_XHTTP_REALITY_PORT']}?type=xhttp&security=reality&pbk={CONSTANTS['FI_XHTTP_REALITY_PUBLIC_KEY']}&fp=chrome&sni={CONSTANTS['FI_XHTTP_REALITY_SNI']}&sid={CONSTANTS['FI_XHTTP_REALITY_SHORT_ID']}&path=%2Fxh-mx-d1f7c0429d6a&mode=packet-up#{urllib.parse.quote('🇫🇮 10. Незаметный XHTTP Reality (FI)')}",
     ]
@@ -482,7 +481,7 @@ def parse_and_validate_streisand_bundle(encoded_bundle: str) -> Tuple[List[Dict[
                     if not params.get("sni"):
                         errors.append(f"Line {idx+1}: Missing 'sni' in Reality node")
             elif scheme in ("hy2", "hysteria2"):
-                if params.get("obfs", [""])[0] in ("salamander", "gecko"):
+                if params.get("obfs", [""])[0] == "salamander":
                     if not params.get("obfs-password"):
                         errors.append(f"Line {idx+1}: Missing 'obfs-password' for Salamander")
 
@@ -591,7 +590,7 @@ class TestStreisandBase64Bundle(unittest.TestCase):
 
     def test_streisand_deep_link_generation(self):
         """Feature 5 & Scenario 3: Verify 1-click streisand:// import link structure."""
-        sub_url = "https://sub.example.com/my-secret/streisand/user-sub-123"
+        sub_url = "https://sub.silentconnect.net/my-secret/streisand/user-sub-123"
         encoded_name = urllib.parse.quote("SilentConnect Smart")
         deep_link = f"streisand://import/{sub_url}#{encoded_name}"
 
@@ -603,7 +602,7 @@ class TestStreisandBase64Bundle(unittest.TestCase):
 
     def test_v2raytun_deep_link_generation(self):
         """Feature 8: Verify 1-click v2raytun:// import link structure."""
-        sub_url = "https://sub.example.com/my-secret/json/user-sub-123"
+        sub_url = "https://sub.silentconnect.net/my-secret/json/user-sub-123"
         deep_link = f"v2raytun://import/{sub_url}"
 
         parsed = urllib.parse.urlparse(deep_link)
@@ -715,7 +714,7 @@ class TestAdversarialClientFormatEdgeCases(unittest.TestCase):
 
     def test_invalid_streisand_uri_detection(self):
         """Assert validator detects missing Reality PBK in Streisand VLESS URI."""
-        bad_raw = "vless://user@edge.example.com:443?type=tcp&security=reality#CorruptNode\n"
+        bad_raw = "vless://user@edge.silentconnect.net:443?type=tcp&security=reality#CorruptNode\n"
         encoded = base64.b64encode(bad_raw.encode("utf-8")).decode("utf-8")
         _, errors = parse_and_validate_streisand_bundle(encoded)
         self.assertTrue(any("Missing 'pbk'" in e for e in errors))
@@ -729,7 +728,7 @@ class TestAdversarialClientFormatEdgeCases(unittest.TestCase):
 
     def test_streisand_missing_salamander_password(self):
         """Assert validator flags missing Salamander password in Streisand hy2 URI."""
-        bad_raw = "hy2://user@sub.example.com:443?sni=sub.example.com&alpn=h3&obfs=salamander#BadHy2\n"
+        bad_raw = "hy2://user@sub.silentconnect.net:443?sni=sub.silentconnect.net&alpn=h3&obfs=salamander#BadHy2\n"
         encoded = base64.b64encode(bad_raw.encode("utf-8")).decode("utf-8")
         _, errors = parse_and_validate_streisand_bundle(encoded)
         self.assertTrue(any("Missing 'obfs-password'" in e for e in errors))

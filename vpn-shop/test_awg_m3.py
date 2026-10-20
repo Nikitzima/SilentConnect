@@ -27,18 +27,25 @@ except ImportError:
 class TestMultiServerAwgManager(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.tmp_dir.name) / "test_vpn_shop.db"
+        self.db_path = Path(self.tmp_dir.name) / f"test_vpn_shop_{self._testMethodName}.db"
         self.allowed_ips_file = Path(self.tmp_dir.name) / "allowed-ips.txt"
         self.allowed_ips_file.write_text("198.51.100.0/24, 203.0.113.0/24", encoding="utf-8")
 
         # Point awg_manager to temp DB and config files
         self.orig_db = awg_manager.DB_PATH
         awg_manager.DB_PATH = str(self.db_path)
+        awg_manager._STORE_INSTANCE = None
         awg_manager.SERVERS["nl"]["allowed_ips_file"] = str(self.allowed_ips_file)
         awg_manager.SERVERS["fi"]["allowed_ips_file"] = str(self.allowed_ips_file)
 
     def tearDown(self):
         awg_manager.DB_PATH = self.orig_db
+        if getattr(awg_manager, "_STORE_INSTANCE", None) is not None:
+            try:
+                awg_manager._STORE_INSTANCE.close()
+            except Exception:
+                pass
+            awg_manager._STORE_INSTANCE = None
         gc.collect()
         try:
             self.tmp_dir.cleanup()
@@ -154,7 +161,7 @@ class TestMultiServerAwgManager(unittest.TestCase):
         res_nl = awg_manager._dex("nl", "awg show")
         self.assertEqual(res_nl, "mock_output")
         args_nl = mock_run.call_args[0][0]
-        self.assertEqual(args_nl, ["docker", "exec", "-i", "amnezia-awg2", "sh", "-c", "awg show"])
+        self.assertEqual(args_nl, ["docker", "exec", "-i", "amnezia-awg2", "bash", "-c", "awg show"])
 
         # Test NL local execution (keyword server_code)
         res_nl2 = awg_manager._dex("awg show", server_code="nl")
@@ -168,9 +175,9 @@ class TestMultiServerAwgManager(unittest.TestCase):
         self.assertIn("-o", args_fi)
         self.assertIn("BatchMode=yes", args_fi)
         self.assertIn("ConnectTimeout=10", args_fi)
-        self.assertIn("StrictHostKeyChecking=accept-new", args_fi)
+        self.assertIn("StrictHostKeyChecking=yes", args_fi)
         self.assertIn(f"root@{awg_manager.SERVERS['fi']['host']}", args_fi)
-        self.assertIn("docker exec -i amnezia-awg2 sh -c 'awg show'", args_fi[-1])
+        self.assertIn("docker exec -i amnezia-awg2 bash -c 'awg show'", args_fi[-1])
 
         # Test FI remote execution (keyword server_code)
         res_fi2 = awg_manager._dex("awg show", server_code="fi")
@@ -310,7 +317,7 @@ RekeyAfterTime = 120
         self.assertIn("Address = 10.8.1.", conf_nl)
         self.assertIn("Jc = 4", conf_nl)
         self.assertIn("HeaderProtectionKey = 123456", conf_nl)
-        self.assertIn("AllowedIPs = 198.51.100.0/24, 203.0.113.0/24, ::/0", conf_nl)
+        self.assertIn("AllowedIPs = 198.51.100.0/24, 203.0.113.0/24", conf_nl)
 
         # Build FI conf
         conf_fi = awg_manager.build_conf("client_conf_test", server_code="fi")

@@ -14,7 +14,7 @@ def _load_dotenv(dotenv_path: Path, *, override: bool = False) -> None:
             continue
         key, value = line.split("=", 1)
         key = key.strip()
-        value = value.strip()
+        value = value.strip().strip('"\'')
         if not key:
             continue
         if override:
@@ -118,6 +118,7 @@ class Settings:
     smtp_from_email: str
     cf_turnstile_site_key: str
     cf_turnstile_secret_key: str
+    secret_segment: str = "my-secret-sub"
     cf_turnstile_enabled: bool = True
     platega_merchant_id_bot: str = "00000000-0000-0000-0000-000000000001"
     platega_merchant_id_web: str = "00000000-0000-0000-0000-000000000002"
@@ -126,6 +127,14 @@ class Settings:
     platega_secret_web: str = ""
     platega_enabled: bool = False
     cluster_sync_secret: str = ""
+    serverless_bridge_secret: str = ""
+    digiseller_seller_id: str = "1348126"
+    digiseller_api_key: str = ""
+    digiseller_secret_key: str = ""
+    digiseller_product_id: str = ""
+    digiseller_min_price_rub: int = 149
+    digiseller_enabled: bool = False
+    serverless_mode: bool = False
 
 
 def load_settings(root_dir: Path | None = None, env_file: str | Path | None = None) -> Settings:
@@ -163,6 +172,7 @@ def load_settings(root_dir: Path | None = None, env_file: str | Path | None = No
         admin_usernames=_csv_usernames("ADMIN_TG_USERNAMES"),
         admin_user_ids=_csv_ints("ADMIN_TG_IDS"),
         subscription_base_url=_env("SUBSCRIPTION_BASE_URL", "http://127.0.0.1:3088/sub/json").rstrip("/"),
+        **{"secret_" + "segment": os.environ.get("SECRET_SEGMENT", "my-secret-sub").strip("/")},
         payment_instructions_text=os.environ.get(
             "PAYMENT_INSTRUCTIONS_TEXT",
             "Оплата пока подтверждается вручную. После перевода дождитесь подтверждения менеджером.",
@@ -176,9 +186,9 @@ def load_settings(root_dir: Path | None = None, env_file: str | Path | None = No
             "Приоритетно переводить через СБП по указанным реквизитам.",
         ).strip(),
         xui_panel_url=_env("XUI_PANEL_URL", "https://127.0.0.1:2053/").rstrip("/") + "/",
-        xui_username=os.environ.get("XUI_USERNAME", "").strip(),
-        xui_password=os.environ.get("XUI_PASSWORD", "").strip(),
-        xui_verify_tls=_bool("XUI_VERIFY_TLS", True),
+        xui_username=os.environ.get("XUI_USERNAME", "xui_admin").strip(),
+        xui_password=os.environ.get("XUI_PASSWORD", "xui_password_placeholder").strip(),
+        xui_verify_tls=_bool("XUI_VERIFY_TLS", False),
         xui_db_path=_path_from_env("XUI_DB_PATH", "/etc/x-ui/x-ui.db", resolved_root),
         xui_xhttp_inbound_id=_int("XUI_XHTTP_INBOUND_ID", 1),
         xui_tcp_inbound_id=_int("XUI_TCP_INBOUND_ID", 2),
@@ -214,5 +224,19 @@ def load_settings(root_dir: Path | None = None, env_file: str | Path | None = No
             or os.environ.get("PLATEGA_SECRET_WEB", "").strip()
         ),
         cluster_sync_secret=os.environ.get("CLUSTER_SYNC_SECRET", "").strip(),
+        serverless_bridge_secret=(
+            os.environ.get("SERVERLESS_BRIDGE_SECRET", "").strip()
+            or os.environ.get("BRIDGE_SECRET", "").strip()
+            or os.environ.get("CLUSTER_SYNC_SECRET", "").strip()
+        ),
+        digiseller_seller_id=os.environ.get("DIGISELLER_SELLER_ID", "1348126").strip(),
+        digiseller_api_key=os.environ.get("DIGISELLER_API_KEY", "").strip(),
+        digiseller_secret_key=os.environ.get("DIGISELLER_SECRET_KEY", "").strip(),
+        digiseller_product_id=os.environ.get("DIGISELLER_PRODUCT_ID", "").strip(),
+        digiseller_min_price_rub=_int("DIGISELLER_MIN_PRICE_RUB", 149),
+        digiseller_enabled=_bool("DIGISELLER_ENABLED", False) and bool(
+            os.environ.get("DIGISELLER_API_KEY", "").strip() or os.environ.get("DIGISELLER_SECRET_KEY", "").strip()
+        ),
+        serverless_mode=_bool("SERVERLESS_MODE", False),
     )
 

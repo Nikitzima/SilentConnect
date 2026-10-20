@@ -382,6 +382,106 @@ def render_expiration_reminder_email_text(
 """
 
 
+def send_expiration_reminder_email_sync(
+    settings: Settings,
+    *,
+    customer_email: str,
+    reminder_kind: str,
+    setup_url: str,
+    subject: str | None = None,
+) -> bool:
+    if not customer_email or "@" not in customer_email:
+        LOGGER.warning("Invalid target email for expiration reminder: %r", customer_email)
+        return False
+
+    smtp_host = (settings.smtp_host or "").strip()
+    api_key = os.environ.get("RESEND_API_KEY", "").strip()
+
+    if not smtp_host and not api_key:
+        LOGGER.info(
+            "SMTP host / Resend API not configured. Expiration reminder skipped for %s (Kind: %s, URL: %s)",
+            customer_email,
+            reminder_kind,
+            setup_url,
+        )
+        return False
+
+    port = settings.smtp_port or 465
+    user = (settings.smtp_user or "").strip()
+    password = (settings.smtp_password or "").strip()
+    from_email = (settings.smtp_from_email or "SilentConnect <support@example.com>").strip()
+
+    if not subject:
+        if reminder_kind == "1_day":
+            subject = "Срок действия вашей подписки SilentConnect истекает завтра"
+        else:
+            subject = "Срочно: подписка SilentConnect будет отключена через 1 час"
+
+    html_content = render_expiration_reminder_email_html(
+        customer_email=customer_email,
+        reminder_kind=reminder_kind,
+        setup_url=setup_url,
+    )
+    text_content = render_expiration_reminder_email_text(
+        customer_email=customer_email,
+        reminder_kind=reminder_kind,
+        setup_url=setup_url,
+    )
+
+    if api_key:
+        try:
+            payload = {
+                "from": from_email,
+                "to": [customer_email],
+                "subject": subject,
+                "html": html_content,
+                "text": text_content,
+            }
+            req = urllib.request.Request(
+                "https://api.resend.com/emails",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                resp_data = json.loads(resp.read().decode("utf-8"))
+                LOGGER.info("Expiration reminder sent via Resend API to %s (Kind: %s, ID: %s)", customer_email, reminder_kind, resp_data.get("id"))
+                return True
+        except Exception as exc:
+            LOGGER.exception("Failed to send expiration reminder via Resend API to %s: %s", customer_email, exc)
+            return False
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = from_email
+    msg["To"] = customer_email
+
+    msg.attach(MIMEText(text_content, "plain", "utf-8"))
+    msg.attach(MIMEText(html_content, "html", "utf-8"))
+
+    try:
+        if port == 465:
+            with smtplib.SMTP_SSL(smtp_host, port, timeout=10) as server:
+                if user and password:
+                    server.login(user, password)
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(smtp_host, port, timeout=10) as server:
+                server.ehlo()
+                server.starttls()
+                if user and password:
+                    server.login(user, password)
+                server.send_message(msg)
+        LOGGER.info("Expiration reminder successfully sent to %s (Kind: %s)", customer_email, reminder_kind)
+        return True
+    except Exception as exc:
+        LOGGER.error("Failed to send expiration reminder to %s: %s", customer_email, exc)
+        return False
+
+
 def send_subscription_email_sync(
     settings: Settings,
     *,

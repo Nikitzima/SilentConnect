@@ -2,12 +2,19 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import json
+import os
 import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 from .security import hash_secret, masked_code, now_ts, public_id, random_code
+
+try:
+    from .libsql_replica import LibsqlReplicaManager, HAS_LIBSQL
+except ImportError:
+    LibsqlReplicaManager = None
+    HAS_LIBSQL = False
 
 
 SCHEMA = """
@@ -94,7 +101,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_open_orders_invite
   ON orders(invite_id) WHERE invite_id IS NOT NULL
   AND status IN ('waiting_payment', 'auto_provision');
 
-CREATE INDEX IF NOT EXISTS idx_orders_external_id
+CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_external_id
   ON orders(external_id) WHERE external_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS profiles (
@@ -106,6 +113,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   family_label TEXT,
   xui_email TEXT NOT NULL UNIQUE,
   xui_client_id TEXT NOT NULL,
+  xui_sub_id TEXT,
   status TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
@@ -321,6 +329,34 @@ CREATE INDEX IF NOT EXISTS ix_awg_traffic_ledger_profile ON awg_traffic_ledger(p
 CREATE INDEX IF NOT EXISTS ix_awg_traffic_ledger_slot ON awg_traffic_ledger(slot_id);
 CREATE INDEX IF NOT EXISTS ix_awg_traffic_ledger_node ON awg_traffic_ledger(node_id, collected_at);
 
+CREATE TABLE IF NOT EXISTS openflux_slots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_public_id TEXT NOT NULL UNIQUE,
+  slot_label TEXT NOT NULL DEFAULT 'Белые списки (OpenFlux)',
+  status TEXT NOT NULL DEFAULT 'uninitialized',
+  active_server TEXT DEFAULT NULL,
+  active_doc_name TEXT DEFAULT NULL,
+  active_doc_url TEXT DEFAULT NULL,
+  active_container_name TEXT DEFAULT NULL,
+  pending_server TEXT DEFAULT NULL,
+  pending_doc_name TEXT DEFAULT NULL,
+  pending_doc_url TEXT DEFAULT NULL,
+  pending_container_name TEXT DEFAULT NULL,
+  pending_started_at INTEGER DEFAULT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (profile_public_id) REFERENCES profiles(public_id)
+);
+CREATE INDEX IF NOT EXISTS ix_openflux_slots_profile ON openflux_slots(profile_public_id);
+CREATE INDEX IF NOT EXISTS ix_openflux_slots_status ON openflux_slots(status);
+
+CREATE TABLE IF NOT EXISTS cluster_leases (
+  lease_name TEXT PRIMARY KEY,
+  holder_node TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version INTEGER PRIMARY KEY,
   applied_at INTEGER NOT NULL
@@ -355,12 +391,13 @@ def default_awg_quota_bytes_for_devices(device_limit: int) -> int:
 # Order finite-state machine. Any transition not listed here is rejected at the
 # storage layer, regardless of what the caller asks for.
 ORDER_TRANSITIONS: dict[str, frozenset[str]] = {
-    "waiting_payment": frozenset({"provisioning", "auto_provision", "cancelled", "expired"}),
-    "auto_provision": frozenset({"provisioning", "failed", "cancelled"}),
-    "provisioning": frozenset({"delivered", "failed", "waiting_payment"}),
+    "waiting_payment": frozenset({"provisioning", "auto_provision", "pending_provision", "cancelled", "expired"}),
+    "auto_provision": frozenset({"provisioning", "pending_provision", "failed", "cancelled"}),
+    "provisioning": frozenset({"delivered", "failed", "waiting_payment", "pending_provision"}),
+    "pending_provision": frozenset({"provisioning", "delivered", "failed", "cancelled"}),
     "failed": frozenset({"provisioning", "delivered", "cancelled"}),
-    # terminal states
-    "delivered": frozenset(),
+    # terminal states (delivered can transition to cancelled upon refund/chargeback)
+    "delivered": frozenset({"cancelled"}),
     "cancelled": frozenset(),
     "expired": frozenset(),
 }
@@ -376,11 +413,56 @@ class DatabaseQueryError(RuntimeError):
 
 
 class Store:
-    def __init__(self, database_path: Path):
+    def __init__(self, database_path: Path, replica_name: str | None = None):
         self.database_path = Path(database_path)
+        self._turso_url = (
+            os.environ.get("TURSO_DATABASE_URL", "").strip().strip('"\'')
+            or os.environ.get("LIBSQL_URL", "").strip().strip('"\'')
+        )
+        self._turso_token = (
+            os.environ.get("TURSO_AUTH_TOKEN", "").strip().strip('"\'')
+            or os.environ.get("LIBSQL_AUTH_TOKEN", "").strip().strip('"\'')
+        )
+        replica_enabled = os.environ.get("TURSO_REPLICA_ENABLED", "true").strip().strip('"\'').lower() in ("1", "true", "yes")
+        self._replica_mgr: LibsqlReplicaManager | None = None
+        if replica_enabled and self._turso_url and self._turso_token and HAS_LIBSQL and LibsqlReplicaManager is not None:
+            r_name = (replica_name or os.environ.get("TURSO_REPLICA_NAME", "")).strip()
+            if not r_name:
+                import sys
+                main_cmd = " ".join(sys.argv).lower()
+                if "subjson" in main_cmd or "app.py" in main_cmd:
+                    r_name = "subjson"
+                elif "bot" in main_cmd:
+                    r_name = "bot"
+                elif "web" in main_cmd:
+                    r_name = "web"
+                else:
+                    r_name = "shared"
+            replica_path = self.database_path.parent / f"{self.database_path.stem}_replica_{r_name}{self.database_path.suffix}"
+            self._replica_mgr = LibsqlReplicaManager(
+                local_replica_path=str(replica_path),
+                sync_url=self._turso_url,
+                auth_token=self._turso_token,
+                auto_sync_interval=float(os.environ.get("TURSO_SYNC_INTERVAL", "2.0")),
+            )
 
     def init(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        if self._replica_mgr is not None:
+            self._replica_mgr.force_sync()
+            with self._connect() as conn:
+                existing_tables = {
+                    str(row["name"])
+                    for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                }
+                if "orders" not in existing_tables:
+                    conn.executescript(SCHEMA)
+            return
+        init_conn = self._open()
+        try:
+            init_conn.execute("PRAGMA journal_mode = WAL;")
+        finally:
+            init_conn.close()
         with self._connect() as conn:
             existing_tables = {
                 str(row["name"])
@@ -396,6 +478,7 @@ class Store:
                 self._ensure_column(conn, "profiles", "awg_used_bytes", "INTEGER NOT NULL DEFAULT 0")
                 self._ensure_column(conn, "profiles", "awg_reset_at", "INTEGER")
                 self._ensure_column(conn, "profiles", "device_limit", "INTEGER NOT NULL DEFAULT 3")
+                self._ensure_column(conn, "profiles", "xui_sub_id", "TEXT")
             if "awg_slots" in existing_tables:
                 self._ensure_column(conn, "awg_slots", "server_code", "TEXT NOT NULL DEFAULT 'nl'")
                 table_sql_row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='awg_slots'").fetchone()
@@ -449,8 +532,11 @@ class Store:
             self._ensure_column(conn, "profiles", "awg_used_bytes", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "profiles", "awg_reset_at", "INTEGER")
             self._ensure_column(conn, "profiles", "device_limit", "INTEGER NOT NULL DEFAULT 3")
+            self._ensure_column(conn, "profiles", "xui_sub_id", "TEXT")
             self._ensure_column(conn, "awg_slots", "server_code", "TEXT NOT NULL DEFAULT 'nl'")
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_awg_slots_server_ip ON awg_slots(server_code, client_ip);")
+            conn.execute("DROP INDEX IF EXISTS idx_orders_external_id;")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_external_id ON orders(external_id) WHERE external_id IS NOT NULL;")
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)",
                 (SCHEMA_VERSION, now_ts()),
@@ -469,17 +555,33 @@ class Store:
                 if "duplicate column name" not in str(exc).lower():
                     raise
 
-    def _open(self) -> sqlite3.Connection:
+    def _open(self) -> sqlite3.Connection | Any:
+        if self._replica_mgr is not None:
+            return self._replica_mgr.connect()
+        # Ensure parent directory exists before sqlite3.connect
+        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         # isolation_level=None => Python does not inject implicit BEGINs; we
         # control transaction boundaries explicitly (autocommit otherwise).
-        conn = sqlite3.connect(self.database_path, timeout=30.0, isolation_level=None)
+        conn = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA busy_timeout = 30000;")
+        conn.execute("PRAGMA busy_timeout = 5000;")
         conn.execute("PRAGMA foreign_keys = ON;")
-        conn.execute("PRAGMA journal_mode = WAL;")
         conn.execute("PRAGMA synchronous = NORMAL;")
         conn.execute("PRAGMA temp_store = MEMORY;")
         return conn
+
+    def connect(self) -> sqlite3.Connection | Any:
+        """Return a live, thread-safe connection (LibsqlConnectionProxy or sqlite3.Connection)."""
+        return self._open()
+
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection | Any]:
+        """Context manager yielding an auto-closing database connection."""
+        conn = self._open()
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -529,6 +631,11 @@ class Store:
         """Consistent snapshot using the SQLite online-backup API (safe under WAL)."""
         destination = Path(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
+        if self._replica_mgr is not None:
+            import shutil
+            self._replica_mgr.force_sync()
+            shutil.copy2(self._replica_mgr._path, destination)
+            return destination
         tmp = destination.with_suffix(destination.suffix + ".tmp")
         src = self._open()
         try:
@@ -589,11 +696,17 @@ class Store:
 
         def _run(c: sqlite3.Connection) -> dict[str, Any]:
             current = c.execute(
-                "SELECT status FROM orders WHERE public_id = ?", (public_id_value,)
+                "SELECT status, external_id FROM orders WHERE public_id = ?", (public_id_value,)
             ).fetchone()
             if current is None:
                 raise OrderStateError(f"Order {public_id_value} not found")
             from_status = str(current["status"])
+            if from_status == "delivered" and to_status == "cancelled":
+                ext = str(current["external_id"] or "")
+                if not (ext.startswith("digiseller:") or actor in ("digiseller_webhook", "digiseller_reconciliation", "admin_refund", "refund")):
+                    raise OrderStateError(
+                        f"Refusing delivered -> cancelled for internal order {public_id_value} (actor={actor})"
+                    )
             placeholders = ",".join("?" for _ in allowed_from)
             now = now_ts()
             closed = to_status in TERMINAL_ORDER_STATES
@@ -849,20 +962,38 @@ class Store:
             )
 
     def get_order_by_web_token(self, public_id_value: str, token: str) -> dict[str, Any] | None:
-        from .security import constant_time_equals, hash_token
+        from .security import constant_time_equals, hash_token, derive_sub_order_token
 
         order = self.get_order(public_id_value)
         if not order:
             return None
         stored = str(order.get("web_token_hash") or "")
+        if stored and constant_time_equals(stored, hash_token(token, purpose="order_web")):
+            return order
+
+        meta = order.get("meta_json") or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+
+        # Check deterministic token from subscription cabinet
+        target_sub = str(meta.get("target_sub_id") or "").strip()
+        if not target_sub:
+            prof = self.get_profile_for_order(public_id_value)
+            if prof:
+                target_sub = str(prof.get("xui_client_id") or prof.get("public_id") or "").strip()
+        if target_sub:
+            derived = derive_sub_order_token(public_id_value, target_sub)
+            if derived and constant_time_equals(derived, token):
+                return order
+
         if not stored:
             # Legacy orders created before v2 kept the token in meta_json.
-            legacy = str((order.get("meta_json") or {}).get("web_token") or "")
+            legacy = str(meta.get("web_token") or "")
             if legacy and constant_time_equals(legacy, token):
                 return order
-            return None
-        if constant_time_equals(stored, hash_token(token, purpose="order_web")):
-            return order
         return None
 
     def create_magic_link(self, *, email: str, token: str, ttl_seconds: int, request_ip: str | None) -> None:
@@ -968,7 +1099,7 @@ class Store:
             )
 
     def clear_session(self, chat_id: int | str) -> None:
-        with self._connect() as conn:
+        with self.transaction() as conn:
             conn.execute("DELETE FROM chat_sessions WHERE chat_id = ?", (str(chat_id),))
 
     def upsert_telegram_user(self, *, user: dict[str, Any], chat_id: int | str) -> None:
@@ -1011,7 +1142,7 @@ class Store:
                 (scope,),
             ).fetchall()
             result = [str(row["chat_id"]) for row in rows if row["chat_id"]]
-            if not result and scope == "admin":
+            if scope == "admin":
                 admin_rows = conn.execute(
                     "SELECT DISTINCT actor FROM admin_actions WHERE actor LIKE 'tg:%' ORDER BY id DESC LIMIT 10"
                 ).fetchall()
@@ -1023,7 +1154,7 @@ class Store:
                             result.append(cid)
                 if getattr(self, "settings", None) and getattr(self.settings, "admin_user_ids", None):
                     for uid in self.settings.admin_user_ids:
-                        suid = str(uid)
+                        suid = str(uid).strip()
                         if suid and suid not in result:
                             result.append(suid)
         return result
@@ -1284,6 +1415,7 @@ class Store:
         loss_policy_ack: bool,
         terms_version: str,
         customer_email: str = "",
+        external_id: str | None = None,
         meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         now = now_ts()
@@ -1291,6 +1423,7 @@ class Store:
         if customer_email:
             merged_meta["customer_email"] = customer_email
         payload = json.dumps(merged_meta, ensure_ascii=False, separators=(",", ":"))
+        ext_clean = str(external_id).strip() if external_id else None
         for attempt in range(5):
             public = public_id("ord", size=12)
             try:
@@ -1300,9 +1433,9 @@ class Store:
                         INSERT INTO orders(
                           public_id, kind, status, transport, duration_days, profile_mode, family_label,
                           base_price_rub, final_price_rub, promo_id, invite_id, customer_chat_id,
-                          privacy_ack, loss_policy_ack, terms_version, customer_email, created_at, updated_at, meta_json
+                          privacy_ack, loss_policy_ack, terms_version, customer_email, created_at, updated_at, meta_json, external_id
                         )
-                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             public,
@@ -1324,11 +1457,17 @@ class Store:
                             now,
                             now,
                             payload,
+                            ext_clean,
                         ),
                     )
                     row = conn.execute("SELECT * FROM orders WHERE id = ?", (cursor.lastrowid,)).fetchone()
                     return self._row_to_dict(row) or {}
             except sqlite3.IntegrityError as err:
+                if ext_clean and ("external_id" in str(err).lower() or "uq_orders_external_id" in str(err).lower()):
+                    LOGGER.info("Order with external_id %s already exists, returning existing", ext_clean)
+                    existing = self.get_order_by_external_id(ext_clean)
+                    if existing:
+                        return existing
                 if "orders.public_id" in str(err) and attempt < 4:
                     continue
                 raise
@@ -1352,9 +1491,13 @@ class Store:
     def get_order(self, public_id_value: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
+        if row is None and self._replica_mgr is not None:
+            self._replica_mgr.force_sync()
+            with self._connect() as conn:
+                row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
         return self._row_to_dict(row)
 
-    def get_order_by_platega_tx_id(self, tx_id: str) -> dict[str, Any] | None:
+    def get_order_by_platega_tx_id(self, tx_id: str, _retried: bool = False) -> dict[str, Any] | None:
         if not tx_id:
             return None
         # Сначала ищем по новой колонке external_id (быстрый путь)
@@ -1377,7 +1520,78 @@ class Store:
                 meta = d.get("meta_json") or {}
                 if str(meta.get("platega_transaction_id") or "") == str(tx_id):
                     return d
+        if not _retried and self._replica_mgr is not None:
+            self._replica_mgr.force_sync()
+            return self.get_order_by_platega_tx_id(tx_id, _retried=True)
         return None
+
+    def get_order_by_digiseller_invoice(self, invoice_id: str, _retried: bool = False) -> dict[str, Any] | None:
+        """Find order by Digiseller invoice ID via external_id or meta_json."""
+        if not invoice_id:
+            return None
+        inv_str = str(invoice_id).strip()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM orders WHERE external_id = ? OR external_id = ? LIMIT 1",
+                (f"digiseller:{inv_str}", inv_str),
+            ).fetchone()
+        if row:
+            return self._row_to_dict(row)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM orders WHERE meta_json LIKE ? ORDER BY id DESC LIMIT 5",
+                (f"%{inv_str}%",),
+            ).fetchall()
+        for r in rows:
+            d = self._row_to_dict(r)
+            if d:
+                meta = d.get("meta_json") or {}
+                if str(meta.get("digiseller_invoice_id") or "") == inv_str:
+                    return d
+        if not _retried and self._replica_mgr is not None:
+            self._replica_mgr.force_sync()
+            return self.get_order_by_digiseller_invoice(invoice_id, _retried=True)
+        return None
+
+    def get_order_by_external_id(self, external_id: str, _retried: bool = False) -> dict[str, Any] | None:
+        """Find order by exact external_id."""
+        if not external_id:
+            return None
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM orders WHERE external_id = ? LIMIT 1", (str(external_id).strip(),)).fetchone()
+            if row:
+                return self._row_to_dict(row)
+        if not _retried and self._replica_mgr is not None:
+            self._replica_mgr.force_sync()
+            return self.get_order_by_external_id(external_id, _retried=True)
+        return None
+
+    def list_recent_digiseller_orders(self, limit: int = 50) -> list[dict[str, Any]]:
+        """List most recent orders created via Digiseller."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM orders WHERE external_id LIKE 'digiseller:%' ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [self._row_to_dict(r) or {} for r in rows]
+
+    def record_refund_tombstone(self, gateway: str, invoice_id: str) -> None:
+        """Record a refund tombstone so a delayed sale event cannot provision access."""
+        event_id = f"tombstone:refund:{invoice_id}"
+        self.record_webhook_event(gateway, event_id, "refund", invoice_id)
+        self.finish_webhook_event(gateway, event_id, ok=True)
+
+    def is_refund_tombstoned(self, gateway: str, invoice_id: str) -> bool:
+        """Check if an invoice has already been tombstoned as refunded."""
+        if not invoice_id:
+            return False
+        event_id = f"tombstone:refund:{invoice_id}"
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM webhook_events WHERE gateway = ? AND event_id = ? AND status = 'processed'",
+                (gateway, event_id),
+            ).fetchone()
+            return row is not None
 
     def link_order_external_id(self, public_id_value: str, external_id: str) -> None:
         """Привязывает external_id (Platega tx_id) к ордеру. Idempotent — без ошибок при повторном вызове."""
@@ -1411,7 +1625,7 @@ class Store:
         now = now_ts()
         with self.transaction() as conn:
             existing = conn.execute(
-                "SELECT status, payload_sha256 FROM webhook_events WHERE gateway = ? AND event_id = ?",
+                "SELECT status, payload_sha256, updated_at FROM webhook_events WHERE gateway = ? AND event_id = ?",
                 (gateway, event_id),
             ).fetchone()
             if existing is None:
@@ -1427,9 +1641,10 @@ class Store:
                 return True
             if existing["status"] == "processed":
                 return False
-            if payload_sha256 and existing["payload_sha256"] and existing["payload_sha256"] != payload_sha256:
-                # Same event id, different body: replay/tampering attempt.
+            # Concurrency protection: if currently in-flight (< 30s), reject concurrent worker
+            if existing["status"] == "pending" and (now - (existing["updated_at"] or 0)) < 30:
                 return False
+
             conn.execute(
                 """
                 UPDATE webhook_events
@@ -1581,6 +1796,10 @@ class Store:
     def get_profile(self, public_id_value: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM profiles WHERE public_id = ?", (public_id_value,)).fetchone()
+        if row is None and self._replica_mgr is not None:
+            self._replica_mgr.force_sync()
+            with self._connect() as conn:
+                row = conn.execute("SELECT * FROM profiles WHERE public_id = ?", (public_id_value,)).fetchone()
         return self._row_to_dict(row)
 
     def get_profile_by_xui_email(self, xui_email: str) -> dict[str, Any] | None:
@@ -1589,6 +1808,13 @@ class Store:
                 "SELECT * FROM profiles WHERE xui_email = ? ORDER BY id DESC LIMIT 1",
                 (xui_email,),
             ).fetchone()
+        if row is None and self._replica_mgr is not None:
+            self._replica_mgr.force_sync()
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT * FROM profiles WHERE xui_email = ? ORDER BY id DESC LIMIT 1",
+                    (xui_email,),
+                ).fetchone()
         return self._row_to_dict(row)
 
     def get_profile_owner(self, profile_public_id: str) -> dict[str, Any] | None:
@@ -1724,6 +1950,7 @@ class Store:
         family_label: str | None,
         xui_email: str,
         xui_client_id: str,
+        xui_sub_id: str | None = None,
         expires_at: int,
         notes: str = "",
         awg_quota_bytes: int = 0,
@@ -1748,10 +1975,10 @@ class Store:
                 """
                 INSERT INTO profiles(
                   public_id, xui_inbound_id, transport, profile_mode, family_label,
-                  xui_email, xui_client_id, status, created_at, expires_at, last_renewed_at, notes,
+                  xui_email, xui_client_id, xui_sub_id, status, created_at, expires_at, last_renewed_at, notes,
                   awg_quota_bytes, awg_used_bytes, awg_reset_at, device_limit
                 )
-                VALUES(?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, 0, ?, ?)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, 0, ?, ?)
                 """,
                 (
                     public,
@@ -1761,6 +1988,7 @@ class Store:
                     family_label,
                     xui_email,
                     xui_client_id,
+                    (xui_sub_id or "").strip() or None,
                     now,
                     expires_at,
                     now,
@@ -1943,23 +2171,22 @@ class Store:
                 conn.execute(
                     """
                     UPDATE profiles
-                    SET status = 'expired', updated_at = ?
+                    SET status = 'expired'
                     WHERE status = 'active' AND expires_at > 0 AND expires_at <= ?
                     """,
-                    (cutoff, cutoff),
+                    (cutoff,),
                 )
         return [self._row_to_dict(row) or {} for row in rows]
 
     def mark_profile_expired(self, public_id_value: str) -> None:
-        now = now_ts()
         with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE profiles
-                SET status = 'expired', updated_at = ?
+                SET status = 'expired'
                 WHERE public_id = ? AND status = 'active'
                 """,
-                (now, public_id_value),
+                (public_id_value,),
             )
 
     def list_profiles_due_for_reminder(
@@ -3206,4 +3433,33 @@ class Store:
             "total_tx_bytes": total_tx,
             "total_bytes": total_rx + total_tx,
         }
+
+    def try_acquire_cluster_lease(self, lease_name: str, holder_node: str, ttl_seconds: int = 90) -> bool:
+        """Бессерверная координация фоновых задач через Turso: только одна живая нода выполняет рассылку."""
+        now = now_ts()
+        expires = now + int(ttl_seconds)
+        try:
+            with self.transaction() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO cluster_leases(lease_name, holder_node, expires_at, updated_at)
+                    VALUES(?, ?, ?, ?)
+                    ON CONFLICT(lease_name) DO UPDATE SET
+                        holder_node = excluded.holder_node,
+                        expires_at = excluded.expires_at,
+                        updated_at = excluded.updated_at
+                    WHERE cluster_leases.expires_at <= ? OR cluster_leases.holder_node = ?
+                    """,
+                    (lease_name, holder_node, expires, now, now, holder_node),
+                )
+                row = conn.execute(
+                    "SELECT holder_node, expires_at FROM cluster_leases WHERE lease_name = ?",
+                    (lease_name,),
+                ).fetchone()
+                if row and row["holder_node"] == holder_node and row["expires_at"] == expires:
+                    return True
+                return False
+        except Exception as exc:
+            LOGGER.warning("Could not acquire cluster lease %s for %s: %s", lease_name, holder_node, exc)
+            return False
 

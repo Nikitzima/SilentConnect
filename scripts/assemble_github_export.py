@@ -64,6 +64,7 @@ FORBIDDEN_EXACT_FILENAMES = {
     "fix_reality_snis.py", "deploy_all.py", "deploy_smart_selector.py",
     "deploy_subjson_catalog.py", "deploy_ui_upgrade.py", "promote.sh", "demote.sh",
     "promote_fi.sh", "demote_fi.sh", "cf-failover-dns.sh", "live_audit_nl.py", "scan_fi.py",
+    "apply_all_audit7_patches.py", "execute_deploy_nl.py", "pre_deploy_audit.py",
 }
 
 ALLOWED_EXEMPT_NAMES = {
@@ -91,6 +92,9 @@ def is_file_allowed(path: Path) -> bool:
         return False
 
     if (name.startswith(".env") or name.endswith(".env")) and name not in ALLOWED_EXEMPT_NAMES and not name.endswith(".example"):
+        return False
+
+    if ".bak" in name_lower or ".old" in name_lower:
         return False
 
     for ext in FORBIDDEN_EXTENSIONS:

@@ -197,11 +197,11 @@ class TestPhaseP1Hardening(unittest.TestCase):
     # Task 2: SQLite Resilience & Context Cleanup
     # =========================================================================
     def test_store_connect_busy_timeout_pragma(self):
-        """Verify Store._connect sets timeout=30.0 and executes PRAGMA busy_timeout = 30000."""
+        """Verify Store._connect sets timeout=5.0 and executes PRAGMA busy_timeout = 5000."""
         with self.store._connect() as conn:
             row = conn.execute("PRAGMA busy_timeout;").fetchone()
             self.assertIsNotNone(row)
-            self.assertEqual(row[0], 30000)
+            self.assertEqual(row[0], 5000)
 
     def test_xui_db_connect_busy_timeout_pragma(self):
         """Verify XuiDatabase._connect sets timeout=30.0 and executes PRAGMA busy_timeout = 30000."""

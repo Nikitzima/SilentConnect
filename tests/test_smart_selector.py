@@ -40,9 +40,9 @@ CONSTANTS = {
     "HEALTHCHECK_INTERVAL": "3m",
     "HEALTHCHECK_IDLE_TIMEOUT": "15m",
     "HEALTHCHECK_TOLERANCE": 50,
-    "NL_HOST": "edge.example.com",
-    "NL_SUB_HOST": "sub.example.com",
-    "FI_HOST": "fi.example.com",
+    "NL_HOST": "edge.silentconnect.net",
+    "NL_SUB_HOST": "sub.silentconnect.net",
+    "FI_HOST": "fi.silentconnect.net",
     "TEST_UUID": "9c3d7f1e-4b8a-4c2d-9e1f-8a2b3c4d5e6f",
     "WS_PATH": "/sc-ws-path",
 }
@@ -232,7 +232,7 @@ def build_authoritative_singbox_smart_config(
                     "alpn": ["h3"],
                 },
                 "obfs": {
-                    "type": "gecko",
+                    "type": "salamander",
                     "password": CONSTANTS["HYSTERIA_SALAMANDER_PASSWORD"],
                 },
             },
@@ -330,7 +330,7 @@ def build_authoritative_singbox_smart_config(
                     "alpn": ["h3"],
                 },
                 "obfs": {
-                    "type": "gecko",
+                    "type": "salamander",
                     "password": CONSTANTS["HYSTERIA_SALAMANDER_PASSWORD"],
                 },
             },
@@ -617,8 +617,8 @@ class TestSingboxSmartSelectorSchema(unittest.TestCase):
         self.assertEqual(fi_fast["server"], CONSTANTS["FI_HOST"])
         self.assertEqual(fi_fast["tls"]["server_name"], "st.kinopoisk.ru")
 
-    def test_hysteria2_with_gecko_obfs(self):
-        """Verify Hysteria 2 UDP protocol with Gecko obfuscation on NL and FI."""
+    def test_hysteria2_with_salamander_obfs(self):
+        """Verify Hysteria 2 UDP protocol with Salamander obfuscation on NL and FI."""
         outbounds = {o["tag"]: o for o in self.config["outbounds"]}
 
         for tag, expected_host in [("nl-speed-hysteria2", CONSTANTS["NL_SUB_HOST"]), ("fi-speed-hysteria2", CONSTANTS["FI_HOST"])]:
@@ -627,7 +627,7 @@ class TestSingboxSmartSelectorSchema(unittest.TestCase):
             self.assertEqual(hy2["server"], expected_host)
             self.assertEqual(hy2["server_port"], 443)
             self.assertEqual(hy2["tls"]["alpn"], ["h3"])
-            self.assertEqual(hy2["obfs"]["type"], "gecko")
+            self.assertEqual(hy2["obfs"]["type"], "salamander")
             self.assertEqual(hy2["obfs"]["password"], CONSTANTS["HYSTERIA_SALAMANDER_PASSWORD"])
 
     def test_reality_grpc_nodes(self):
@@ -857,7 +857,7 @@ class TestHappHeadersAndMeta(unittest.TestCase):
             "profile-title": "SilentConnect",
             "profile-update-interval": "1",
             "subscription-userinfo": "upload=1024; download=2048; total=536870912000; expire=1790000000",
-            "profile-web-page-url": "https://example.com",
+            "profile-web-page-url": "https://silentconnect.net",
             "tun-enable": "1",
             "server-address-resolve-enable": "1",
             "fragmentation-enable": "1",
