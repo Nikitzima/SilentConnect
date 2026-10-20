@@ -60,7 +60,7 @@ IGNORED_FILENAMES: Set[str] = {
 }
 
 IGNORED_DIR_NAMES: Set[str] = {
-    ".git", ".agents", "__pycache__", ".pytest_cache", "venv", ".venv",
+    ".git", ".agents", "__pycache__", ".pytest_cache", ".ruff_cache", "venv", ".venv",
     "node_modules", ".idea", ".vscode", ".gemini", "tests",
 }
 

@@ -119,9 +119,11 @@ def validate_ip(ip: str, server_code: str | None = None) -> bool:
         if int(octets[3]) in (0, 1, 255):
             return False
         if server_code:
-            prefix = _get_node_cfg(server_code)["subnet_prefix"]
-            if not str(addr).startswith(f"{prefix}."):
-                return False
+            code = (server_code or "nl").lower().strip()
+            if code in SERVERS:
+                prefix = SERVERS[code]["subnet"]
+                if not str(addr).startswith(f"{prefix}."):
+                    return False
         return True
     except Exception:
         return False

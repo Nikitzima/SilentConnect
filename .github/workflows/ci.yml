@@ -31,7 +31,7 @@ jobs:
 
       - name: Static analysis for undefined names & syntax errors (Ruff F821/E999)
         run: |
-          ruff check --select E9,F63,F7,F82 vpn-shop subjson-service scripts tests
+          ruff check --no-cache --select E9,F63,F7,F82 vpn-shop subjson-service scripts tests
 
       - name: Run Pre-Commit Secret & Quality Gate
         run: |
@@ -39,7 +39,7 @@ jobs:
 
       - name: Run Strict Security Audit Scanner
         run: |
-          python scripts/security_audit_scanner.py --root . --strict
+          python scripts/security_audit_scanner.py --target-dir . --strict
 
       - name: Run Primary Test Suite (tests/)
         env:
