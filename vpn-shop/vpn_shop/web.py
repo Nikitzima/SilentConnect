@@ -18,8 +18,9 @@ import urllib.request
 
 from .catalog import Offer, build_offers
 from .config import REFERRAL_COOKIE_MAX_AGE, REFERRAL_COOKIE_NAME, REFERRAL_INVITEE_DISCOUNT_PERCENT, Settings, load_settings
-from .mailer import send_subscription_email_async, send_cabinet_access_email_async
+from .mailer import send_subscription_email_async, send_cabinet_access_email_async, send_expiration_reminder_email_sync
 from .platega import PlategaClient
+from .digiseller import DigisellerClient
 import hashlib
 from .provisioning import Provisioner
 from .security import client_ip_from_headers, hash_token, is_allowed_host, random_web_token, sign_token, verify_token,  now_ts
@@ -95,11 +96,13 @@ def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool 
     allowed_ips = "0.0.0.0/0"
 
     iface_params: dict[str, str] = {
-        "Jc": "4",
-        "Jmin": "40",
-        "Jmax": "70",
-        "S1": "15",
-        "S2": "20",
+        "Jc": "5",
+        "Jmin": "10",
+        "Jmax": "50",
+        "S1": "51" if srv_code == "fi" else "12",
+        "S2": "30" if srv_code == "fi" else "12",
+        "S3": "34" if srv_code == "fi" else "12",
+        "S4": "12",
         "H1": "1",
         "H2": "2",
         "H3": "3",
@@ -119,14 +122,16 @@ def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool 
                 lst = Path(allowed_ips_file).read_text(encoding="utf-8").strip()
                 if lst:
                     allowed_ips = lst
-        conf = awg_manager._server_conf(srv_code)
-        if conf:
-            parsed_params = awg_manager._interface_params(conf)
-            if parsed_params:
-                iface_params.update(parsed_params)
-            sp = awg_manager._server_public_key(conf, server_code=srv_code)
-            if sp:
-                server_pub = sp
+        # Запрашиваем конфиг из контейнера только локально ИЛИ если ключ не задан в env
+        if srv.get("mode") == "local" or not (server_pub and WG_KEY_REGEX.match(server_pub)):
+            conf = awg_manager._server_conf(srv_code)
+            if conf:
+                parsed_params = awg_manager._interface_params(conf)
+                if parsed_params:
+                    iface_params.update(parsed_params)
+                sp = awg_manager._server_public_key(conf, server_code=srv_code)
+                if sp:
+                    server_pub = sp
     except Exception as exc:
         LOGGER.warning("Could not fetch server conf from %s: %s", srv_code, exc)
 
@@ -749,6 +754,11 @@ class WebCheckout:
             secret_bot=settings.platega_secret_bot,
             secret_web=settings.platega_secret_web,
         )
+        self.digiseller = DigisellerClient(
+            seller_id=settings.digiseller_seller_id,
+            api_key=settings.digiseller_api_key,
+            secret_key=settings.digiseller_secret_key,
+        )
         self._bot: Any = None
 
     @property
@@ -841,6 +851,17 @@ class WebCheckout:
             return {"status": "ok", "message": "duplicate_ignored"}
 
         try:
+            is_refund_status = status.upper() in ("REFUNDED", "CHARGEBACK", "REVERSED")
+            if is_refund_status and order.get("status") == "delivered":
+                self.store.update_order_status(order_public_id, "cancelled", closed=True, actor="refund")
+                prof = self.store.get_profile_for_order(order_public_id)
+                if prof:
+                    self.revoke_profile_access(str(prof["id"]))
+                elif order.get("provisioned_profile_id"):
+                    self.revoke_profile_access(str(order["provisioned_profile_id"]))
+                self.store.finish_webhook_event("platega", event_id, ok=True)
+                return {"status": "ok", "message": "refund_revoked"}
+
             if order.get("status") == "delivered":
                 LOGGER.info("Order %s already delivered, acknowledging callback", order_public_id)
                 self.store.finish_webhook_event("platega", event_id, ok=True)
@@ -848,11 +869,35 @@ class WebCheckout:
 
             if status == "CONFIRMED":
                 expected_rub = int(order.get("final_price_rub") or 0)
-                if amount > 0 and expected_rub > 0 and amount < (expected_rub - 0.5):
+                if expected_rub > 0 and amount < (expected_rub - 0.5):
                     err_msg = f"Amount mismatch: received {amount}, expected {expected_rub}"
                     LOGGER.error("Platega callback for order %s: %s", order_public_id, err_msg)
                     self.store.finish_webhook_event("platega", event_id, ok=False, error=err_msg)
                     return {"status": "error", "message": "amount_too_low"}
+
+                # Currency verification
+                currency = str(data.get("currency") or (data.get("paymentDetails") or {}).get("currency") or "RUB").upper()
+                if currency not in ("RUB", "RUR"):
+                    err_msg = f"Currency mismatch: received {currency}, expected RUB"
+                    LOGGER.error("Platega callback for order %s: %s", order_public_id, err_msg)
+                    self.store.finish_webhook_event("platega", event_id, ok=False, error=err_msg)
+                    return {"status": "error", "message": "invalid_currency"}
+
+                # Active verification of transaction status via Platega API if configured
+                is_conf = getattr(self.platega, "is_configured", False) if hasattr(self, "platega") and self.platega else False
+                if callable(is_conf):
+                    is_conf = is_conf()
+                if tx_id and is_conf:
+                    try:
+                        tx_info = self.platega.get_transaction_status(tx_id, is_bot=False)
+                        api_status = str(tx_info.get("status") or "").upper()
+                        if api_status and api_status not in ("CONFIRMED", "SUCCESS", "PAID"):
+                            err_msg = f"Platega API verification returned non-confirmed status: {api_status}"
+                            LOGGER.error("Platega callback for order %s: %s", order_public_id, err_msg)
+                            self.store.finish_webhook_event("platega", event_id, ok=False, error=err_msg)
+                            return {"status": "error", "message": "unconfirmed_status"}
+                    except Exception as verify_err:
+                        LOGGER.warning("Could not verify Platega transaction %s via API: %s", tx_id, verify_err)
 
                 meta = dict(order.get("meta_json") or {})
                 if tx_id:
@@ -883,6 +928,335 @@ class WebCheckout:
             LOGGER.exception("Error processing Platega webhook for order %s: %s", order_public_id, exc)
             self.store.finish_webhook_event("platega", event_id, ok=False, error=str(exc))
             raise
+
+    def revoke_profile_access(self, profile_id: str) -> None:
+        """Revoke profile in store, disable AWG slots, and deactivate client in X-UI."""
+        if hasattr(self.bot, "revoke_profile_access"):
+            self.bot.revoke_profile_access(profile_id)
+            return
+
+        try:
+            self.store.mark_profile_expired(profile_id)
+        except Exception as exc:
+            LOGGER.warning("Could not mark profile %s expired: %s", profile_id, exc)
+
+        try:
+            slots = self.store.list_awg_slots(profile_id)
+            for s in slots:
+                self.store.set_awg_slot_enabled(s["id"], False)
+        except Exception as exc:
+            LOGGER.warning("Could not disable AWG slots for profile %s: %s", profile_id, exc)
+
+        try:
+            xui_db = getattr(self.bot, "xui_db", None) or getattr(self.provisioner, "xui_db", None)
+            if xui_db:
+                prof = self.store.get_profile(profile_id)
+                if prof and prof.get("xui_email"):
+                    xui_db.update_client_expiry_direct(
+                        inbound_id=int(prof.get("xui_inbound_id") or 2),
+                        email=str(prof["xui_email"]),
+                        new_expiry_ms=1,
+                        enable=False,
+                    )
+        except Exception as exc:
+            LOGGER.warning("Could not disable X-UI client for profile %s: %s", profile_id, exc)
+
+    def _get_sub_url_for_order(self, order: dict[str, Any]) -> str:
+        segment = getattr(self.settings, "secret_segment", "my-secret-sub") or "my-secret-sub"
+        prof = self.store.get_profile_for_order(str(order.get("public_id") or ""))
+        if prof and prof.get("public_id"):
+            base_sub = (self.settings.subscription_base_url or "").rstrip("/")
+            return f"{base_sub}/{segment}/import/{prof['public_id']}"
+        profile_id = (order.get("meta_json") or {}).get("profile_public_id") or order.get("provisioned_profile_id")
+        if profile_id:
+            base_sub = (self.settings.subscription_base_url or "").rstrip("/")
+            return f"{base_sub}/{segment}/import/{profile_id}"
+        return ""
+
+    def _deliver_unique_code_safe(self, unique_code: str, sub_url: str, email: str = "", cabinet_url: str = "") -> bool:
+        if not unique_code or not sub_url:
+            return False
+        try:
+            cabinet_part = f"\nЛичный кабинет: {cabinet_url}\n" if cabinet_url else ""
+            delivery_text = (
+                f"Благодарим за покупку!\n\n"
+                f"Ваша персональная ссылка на Личный кабинет:\n"
+                f"{sub_url}\n"
+                f"{cabinet_part}\n"
+                f"Подробная инструкция также отправлена на вашу почту: {email or 'почту'}.\n"
+                f"Служба заботы: https://t.me/SilentConnectVPNBot"
+            )
+            self.digiseller.deliver_unique_code(unique_code, delivery_text)
+            return True
+        except Exception as exc:
+            LOGGER.warning("Could not auto-deliver unique code %s: %s", unique_code, exc)
+            return False
+
+    def _notify_admin_digiseller_alert(self, subject: str, details: dict[str, Any]) -> None:
+        """Send emergency Telegram alert to admins about a payment anomaly."""
+        msg = f"🚨 {subject}\n\n" + "\n".join(f"• {k}: {v}" for k, v in details.items())
+        try:
+            if hasattr(self.bot, "telegram") and self.settings.admin_user_ids:
+                for admin_id in self.settings.admin_user_ids:
+                    self.bot.telegram.send_message(admin_id, msg)
+        except Exception as exc:
+            LOGGER.warning("Failed to send admin digiseller alert: %s", exc)
+
+    def handle_digiseller_callback(self, data: dict[str, Any], raw_body: bytes = b"") -> tuple[dict[str, Any], int]:
+        """Process incoming Digiseller sales & refund notifications with strict fail-closed security.
+
+        Returns tuple: (response_dict, http_status_code).
+        """
+        if not self.settings.digiseller_enabled:
+            LOGGER.warning("Digiseller callback received but digiseller is disabled in settings")
+            return {"status": "error", "message": "digiseller_disabled"}, 503
+
+        # 1. Signature Verification (Canonical SHA256 only)
+        if not self.digiseller.verify_webhook_signature(data, self.settings.digiseller_secret_key):
+            # Sanitized log: never log raw secrets or full payload
+            LOGGER.warning(
+                "Digiseller callback unauthorized signature: invoice=%s product=%s keys=%s",
+                data.get("id_invoice") or data.get("id_i"),
+                data.get("id_goods") or data.get("id_d"),
+                list(data.keys()),
+            )
+            return {"status": "error", "message": "unauthorized"}, 401
+
+        invoice_id = str(data.get("id_invoice") or data.get("invoice_id") or data.get("id_i") or data.get("ID_I") or "").strip()
+        product_id = str(data.get("id_goods") or data.get("product_id") or data.get("id_d") or data.get("ID_D") or "").strip()
+        unique_code = str(data.get("unique_code") or data.get("uniquecode") or data.get("uniqueCode") or data.get("UniqueCode") or "").strip()
+        raw_action = str(data.get("action") or data.get("type") or data.get("event") or "").strip().lower()
+
+        is_refund = raw_action in ("refund", "cancel", "cancelled", "returned")
+        event_type = "refund" if is_refund else "sale"
+
+        # Unique event_id distinguishes sales from refunds
+        event_id = f"digiseller:{event_type}:{invoice_id}" if invoice_id else f"digiseller:{event_type}:{unique_code or product_id}:{now_ts()}"
+        payload_sha256 = hashlib.sha256(raw_body).hexdigest() if raw_body else None
+
+        reserved = self.store.record_webhook_event(
+            gateway="digiseller",
+            event_id=event_id,
+            event_type=event_type,
+            order_public_id=invoice_id or unique_code or "digiseller_order",
+            payload_sha256=payload_sha256,
+        )
+        if not reserved:
+            LOGGER.info("Digiseller webhook %s already processed or in-flight", event_id)
+            return {"status": "ok", "message": "duplicate_ignored"}, 200
+
+        # 2. Refund Handling (Wrapped in try/except with real profile revoke)
+        if is_refund:
+            try:
+                if invoice_id:
+                    if hasattr(self.digiseller, "get_purchase_info"):
+                        try:
+                            raw_check = self.digiseller.get_purchase_info(invoice_id)
+                            retval = raw_check.get("retval") if isinstance(raw_check, dict) else None
+                            if retval is not None and int(retval) != 0:
+                                self.store.finish_webhook_event("digiseller", event_id, ok=False, error="Invalid invoice in refund check")
+                                return {"status": "error", "message": "invalid_refund_invoice"}, 400
+                        except Exception as check_err:
+                            LOGGER.warning("Could not verify invoice %s with Digiseller during refund: %s", invoice_id, check_err)
+                    self.store.record_refund_tombstone("digiseller", invoice_id)
+                    existing = self.store.get_order_by_digiseller_invoice(invoice_id)
+                    if existing:
+                        self.store.update_order_status(existing["public_id"], "cancelled", closed=True)
+                        prof = self.store.get_profile_for_order(existing["public_id"])
+                        profile_id = prof["public_id"] if prof else (existing.get("provisioned_profile_id") or (existing.get("meta_json") or {}).get("profile_public_id"))
+                        if profile_id:
+                            self.revoke_profile_access(str(profile_id))
+                            LOGGER.info("Digiseller refund: profile %s revoked for invoice %s", profile_id, invoice_id)
+                self.store.finish_webhook_event("digiseller", event_id, ok=True)
+                return {"status": "ok", "message": "refund_processed"}, 200
+            except Exception as exc:
+                LOGGER.exception("Error processing Digiseller refund for invoice %s: %s", invoice_id, exc)
+                self.store.finish_webhook_event("digiseller", event_id, ok=False, error=str(exc))
+                return {"status": "error", "message": "refund_processing_failed"}, 500
+
+        # 3. Check for Refund Tombstone (Protects against out-of-order refund arriving before sale)
+        if invoice_id and self.store.is_refund_tombstoned("digiseller", invoice_id):
+            LOGGER.warning("Invoice %s was already tombstoned as refunded, aborting provisioning", invoice_id)
+            self.store.finish_webhook_event("digiseller", event_id, ok=True)
+            return {"status": "ok", "message": "refunded_already"}, 200
+
+        # 4. Fail-Closed Outbound Two-Way API Verification
+        if not invoice_id:
+            LOGGER.error("Digiseller webhook missing required invoice ID")
+            self._notify_admin_digiseller_alert("Digiseller Webhook Missing Invoice ID", {"keys": list(data.keys())})
+            self.store.finish_webhook_event("digiseller", event_id, ok=False, error="missing_invoice_id")
+            return {"status": "error", "message": "missing_invoice_id"}, 400
+
+        try:
+            raw_purchase = self.digiseller.get_purchase_info(invoice_id, timeout=5)
+        except Exception as exc:
+            LOGGER.error("Digiseller API unreachable for invoice %s: %s", invoice_id, exc)
+            self.store.finish_webhook_event("digiseller", event_id, ok=False, error=f"api_unreachable: {exc}")
+            # 503 triggers retry from Digiseller
+            return {"status": "error", "message": "verification_service_unavailable"}, 503
+
+        parsed_purchase = self.digiseller.parse_purchase_info(raw_purchase)
+        if not parsed_purchase.get("valid"):
+            reason = str(parsed_purchase.get("reason") or "verification_failed")
+            LOGGER.error("Digiseller purchase verification failed for invoice %s: %s", invoice_id, reason)
+            self._notify_admin_digiseller_alert("Digiseller Verification Failed", {"invoice": invoice_id, "reason": reason})
+            self.store.finish_webhook_event("digiseller", event_id, ok=False, error=reason)
+            return {"status": "error", "message": reason}, 400
+
+        # Product ID Check against configured inventory item (fail-closed if unset or mismatch)
+        api_item_id = str(parsed_purchase.get("item_id") or "").strip()
+        expected_item_id = str(self.settings.digiseller_product_id or "").strip()
+        if not expected_item_id or api_item_id != expected_item_id:
+            LOGGER.error("Digiseller product ID mismatch or unconfigured for invoice %s: API=%s configured=%s", invoice_id, api_item_id, expected_item_id)
+            self._notify_admin_digiseller_alert(
+                "Digiseller Product ID Mismatch or Unconfigured",
+                {"invoice": invoice_id, "got_item_id": api_item_id, "expected_item_id": expected_item_id},
+            )
+            self.store.finish_webhook_event("digiseller", event_id, ok=False, error="product_mismatch")
+            return {"status": "error", "message": "product_mismatch"}, 400
+
+        # Amount check: fail-closed if underpaid or invalid currency
+        api_amount = float(parsed_purchase.get("amount") or 0.0)
+        if api_amount <= 0:
+            raw_amt = data.get("amount") if data.get("amount") is not None else (data.get("Amount") if data.get("Amount") is not None else data.get("pay_amount"))
+            api_amount = float(raw_amt or 0.0)
+
+        api_currency = str(parsed_purchase.get("currency") or parsed_purchase.get("currency_type") or "").strip().upper()
+        if not api_currency or api_currency == "NONE":
+            api_currency = str(data.get("currency") or data.get("Currency") or "RUB").strip().upper()
+
+        expected_min_price = float(self.settings.digiseller_min_price_rub or 149.0)
+        if api_currency not in ("RUB", "RUR", "WMT", "WMR", "WMP") or api_amount < expected_min_price:
+            err_msg = f"Digiseller invoice {invoice_id} underpaid or invalid currency: {api_amount} {api_currency} < min {expected_min_price}"
+            LOGGER.error(err_msg)
+            self._notify_admin_digiseller_alert(
+                "Digiseller Underpaid/Currency Alert",
+                {"invoice": invoice_id, "amount": api_amount, "min_price": expected_min_price, "currency": api_currency},
+            )
+            self.store.finish_webhook_event("digiseller", event_id, ok=False, error=err_msg)
+            return {"status": "error", "message": "amount_too_low"}, 400
+
+        # Priority to verified email from Digiseller API
+        email_buyer = parsed_purchase.get("email") or str(data.get("email_buyer") or data.get("email") or data.get("Email") or "").strip()
+
+        if not unique_code:
+            LOGGER.warning("Digiseller webhook invoice %s has no unique_code attached", invoice_id)
+
+        # 5. Idempotent Provisioning
+        try:
+            existing_order = self.store.get_order_by_digiseller_invoice(invoice_id)
+            if existing_order and existing_order.get("status") == "delivered":
+                LOGGER.info("Digiseller order for invoice %s already delivered", invoice_id)
+                sub_url = self._get_sub_url_for_order(existing_order)
+                if unique_code and not (existing_order.get("meta_json") or {}).get("digiseller_delivered"):
+                    token = str((existing_order.get("meta_json") or {}).get("web_token") or "")
+                    cab_url = f"{self.settings.web_public_base_url}/order/{quote(str(existing_order['public_id']), safe='')}/{quote(token, safe='')}" if token else ""
+                    delivered = self._deliver_unique_code_safe(unique_code, sub_url, email_buyer, cabinet_url=cab_url)
+                    if delivered:
+                        meta = dict(existing_order.get("meta_json") or {})
+                        meta["digiseller_delivered"] = True
+                        self.store.update_order_meta(existing_order["public_id"], meta)
+                self.store.finish_webhook_event("digiseller", event_id, ok=True)
+                return {
+                    "status": "ok",
+                    "message": "already_delivered",
+                    "order_id": existing_order["public_id"],
+                    "sub_url": sub_url,
+                }, 200
+
+            order = existing_order
+            token = ""
+            if not order:
+                token = random_web_token()
+                order = self.store.create_order(
+                    kind="purchase",
+                    status="waiting_payment",
+                    transport="tcp",
+                    duration_days=30,
+                    profile_mode="individual",
+                    family_label=None,
+                    base_price_rub=int(api_amount or expected_min_price),
+                    final_price_rub=int(api_amount or expected_min_price),
+                    promo_id=None,
+                    invite_id=None,
+                    customer_chat_id=None,
+                    privacy_ack=True,
+                    loss_policy_ack=True,
+                    terms_version=self.settings.terms_version,
+                    customer_email=email_buyer,
+                    external_id=f"digiseller:{invoice_id}",
+                    meta={
+                        "source": "digiseller",
+                        "digiseller_invoice_id": invoice_id,
+                        "digiseller_product_id": api_item_id or product_id,
+                        "digiseller_amount": api_amount,
+                        "digiseller_currency": api_currency,
+                        "digiseller_unique_code": unique_code,
+                        "customer_email": email_buyer,
+                        "web_token": "",  # persisted via _attach_web_token
+                    },
+                )
+                order = self._attach_web_token(order, token)
+            else:
+                token = str((order.get("meta_json") or {}).get("web_token") or "")
+
+            order_public_id = str(order["public_id"])
+            completion = self.bot.complete_order(order, actor="digiseller_webhook")
+            sub_url = str(completion.get("subscription_url") or completion.get("sub_url") or "")
+            if not sub_url:
+                prof = self.store.get_profile_for_order(order_public_id)
+                prof_public_id = prof["public_id"] if prof else (completion.get("profile_public_id") or (order.get("meta_json") or {}).get("profile_public_id"))
+                if prof_public_id:
+                    base_sub = (self.settings.subscription_base_url or "").rstrip("/")
+                    segment = getattr(self.settings, "secret_segment", "my-secret-sub") or "my-secret-sub"
+                    sub_url = f"{base_sub}/{segment}/import/{prof_public_id}"
+
+            # 6. Delivery to oplata.info and email (Isolated: delivery failure does NOT poison provisioning)
+            meta = dict(order.get("meta_json") or {})
+            prof = self.store.get_profile_for_order(order_public_id)
+            prof_id = prof["public_id"] if prof else (completion.get("profile_public_id") or order.get("provisioned_profile_id"))
+            if prof_id:
+                meta["profile_public_id"] = str(prof_id)
+
+            cabinet_url = f"{self.settings.web_public_base_url}/order/{quote(order_public_id, safe='')}/{quote(token, safe='')}" if token else ""
+
+            delivered = False
+            if unique_code and sub_url:
+                delivered = self._deliver_unique_code_safe(unique_code, sub_url, email_buyer, cabinet_url=cabinet_url)
+                meta["digiseller_delivered"] = delivered
+
+            self.store.update_order_meta(order_public_id, meta)
+
+            if email_buyer and sub_url:
+                try:
+                    setup_url = subscription_setup_url(sub_url) if sub_url else self.settings.web_public_base_url
+                    send_subscription_email_async(
+                        self.settings,
+                        customer_email=email_buyer,
+                        order_public_id=order_public_id,
+                        plan_name="SilentConnect (30 дн.)",
+                        duration_days=30,
+                        setup_url=setup_url,
+                        json_url=sub_url,
+                        cabinet_url=cabinet_url or self.settings.web_public_base_url,
+                    )
+                    LOGGER.info("Digiseller sale %s: dispatched subscription email to %s", invoice_id, email_buyer)
+                except Exception as exc:
+                    LOGGER.warning("Failed to dispatch subscription email to %s for invoice %s: %s", email_buyer, invoice_id, exc)
+
+            self.store.finish_webhook_event("digiseller", event_id, ok=True)
+            LOGGER.info("Digiseller sale %s successfully fulfilled: order %s", invoice_id, order_public_id)
+            return {
+                "status": "ok",
+                "message": "delivered",
+                "order_id": order_public_id,
+                "sub_url": sub_url,
+            }, 200
+
+        except Exception as exc:
+            LOGGER.exception("Error fulfilling Digiseller callback %s: %s", event_id, exc)
+            self.store.finish_webhook_event("digiseller", event_id, ok=False, error=str(exc))
+            return {"status": "error", "message": "processing_failed"}, 500
 
     @property
     def support_url(self) -> str:
@@ -1313,7 +1687,8 @@ class WebCheckout:
                 sub_id = str(item["xui_email"])
                 if found and (found.get("client") or {}).get("subId"):
                     sub_id = str(found["client"]["subId"])
-                setup_url = f"{self.settings.subscription_base_url}/my-secret-sub/import/{sub_id}"
+                segment = getattr(self.settings, "secret_segment", "my-secret-sub") or "my-secret-sub"
+                setup_url = f"{self.settings.subscription_base_url}/{segment}/import/{sub_id}"
                 if send_expiration_reminder_email_sync(self.settings, customer_email=email, reminder_kind="1_day", setup_url=setup_url):
                     self.store.record_profile_reminder(str(item["public_id"]), "1_day")
 
@@ -1326,7 +1701,8 @@ class WebCheckout:
                 sub_id = str(item["xui_email"])
                 if found and (found.get("client") or {}).get("subId"):
                     sub_id = str(found["client"]["subId"])
-                setup_url = f"{self.settings.subscription_base_url}/my-secret-sub/import/{sub_id}"
+                segment = getattr(self.settings, "secret_segment", "my-secret-sub") or "my-secret-sub"
+                setup_url = f"{self.settings.subscription_base_url}/{segment}/import/{sub_id}"
                 if send_expiration_reminder_email_sync(self.settings, customer_email=email, reminder_kind="1_hour", setup_url=setup_url):
                     self.store.record_profile_reminder(str(item["public_id"]), "1_hour")
         except Exception:
@@ -1466,6 +1842,18 @@ class WebCheckout:
     def order_status_json(self, order: dict[str, Any]) -> bytes:
         status = str(order.get("status") or "")
         meta = dict(order.get("meta_json") or {})
+
+        # Fast sync check if order was delivered remotely (e.g. admin confirmed in tgcloud)
+        if status in ("waiting_payment", "provisioning") and getattr(self.store, "_replica_mgr", None) is not None:
+            try:
+                self.store._replica_mgr.force_sync()
+                refreshed = self.store.get_order(str(order["public_id"]))
+                if refreshed:
+                    order = refreshed
+                    status = str(order.get("status") or "")
+                    meta = dict(order.get("meta_json") or {})
+            except Exception as exc:
+                LOGGER.debug("force_sync during order polling: %s", exc)
 
         # Active reconciliation with Platega if order is waiting payment
         if status == "waiting_payment" and self.settings.platega_enabled and self.platega.is_configured:
@@ -4649,6 +5037,25 @@ class RequestHandler(BaseHTTPRequestHandler):
             if path == ["api", "payment", "platega", "callback"]:
                 self._send_json(HTTPStatus.OK, b'{"status":"active","gateway":"platega"}')
                 return
+            if path == ["api", "payment", "digiseller", "callback"]:
+                query_str = parsed.query
+                if query_str:
+                    try:
+                        parsed_query = parse_qs(query_str, keep_blank_values=True)
+                        data = {k: v[0] if len(v) == 1 else v for k, v in parsed_query.items()}
+                        if any(k.lower() in ("id_invoice", "id_i", "sign", "signature") for k in data):
+                            result = self.checkout.handle_digiseller_callback(data, raw_body=query_str.encode("utf-8"))
+                            if isinstance(result, tuple) and len(result) == 2:
+                                res, status_code = result
+                            else:
+                                res = result
+                                status_code = HTTPStatus.OK if res.get("status") == "ok" else HTTPStatus.BAD_REQUEST
+                            self._send_json(status_code, json.dumps(res).encode("utf-8"))
+                            return
+                    except Exception as exc:
+                        LOGGER.warning("Error processing Digiseller GET callback: %s", exc)
+                self._send_json(HTTPStatus.OK, b'{"status":"active","gateway":"digiseller"}')
+                return
             if path == ["healthz"]:
                 self._send_json(HTTPStatus.OK, b'{"status":"ok"}')
                 return
@@ -4729,17 +5136,23 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if not order:
                     self._send(HTTPStatus.NOT_FOUND, self.checkout.render_not_found())
                     return
-                meta = order.get("meta_json") or {}
-                if isinstance(meta, str):
-                    try:
-                        meta = json.loads(meta)
-                    except Exception:
-                        meta = {}
-                token = str(meta.get("web_token") or "")
-                if token:
-                    self._redirect(f"/order/{quote(str(order['public_id']))}/{quote(token)}")
-                    return
-                self._send(HTTPStatus.OK, self.checkout.render_order(self.headers, order))
+                # Audit S-01: IDOR protection. Never leak token via 302 redirect and never show private data without token.
+                self._send(
+                    HTTPStatus.OK,
+                    self.checkout.render_page(
+                        f"Заказ #{order['public_id']} — Доступ защищен",
+                        '''<section class="section">
+                        <h2>Доступ к заказу защищен</h2>
+                        <p class="muted">Ссылка на просмотр этого заказа была отправлена на вашу электронную почту при оформлении покупки.</p>
+                        <p class="muted">Чтобы получить новую ссылку для входа в Личный кабинет со всеми вашими заказами и настройками VPN, укажите ваш Email ниже:</p>
+                        <form method="post" action="/cabinet/request-link" style="margin-top: 20px; max-width: 420px; display: flex; flex-direction: column; gap: 12px;">
+                          <input type="email" name="customer_email" required placeholder="Ваш Email" style="padding: 12px 14px; border-radius: 8px; border: 1px solid var(--glass-border); background: rgba(255,255,255,0.06); color: #fff; font-size: 15px;" />
+                          <button type="submit" class="btn primary" style="padding: 12px 20px; font-weight: 700;">Войти в Личный кабинет</button>
+                        </form>
+                        <p style="margin-top: 16px;"><a class="btn secondary" href="/" style="display: inline-flex; width: auto; padding: 8px 16px; font-size: 13px;">На главную</a></p>
+                        </section>'''
+                    ),
+                )
                 return
             if len(path) == 3 and path[0] == "order":
                 order = self.checkout.load_web_order(path[1], path[2])
@@ -4986,6 +5399,51 @@ class RequestHandler(BaseHTTPRequestHandler):
                 status_code = HTTPStatus.OK if res.get("status") == "ok" else HTTPStatus.BAD_REQUEST
                 self._send_json(status_code, json.dumps(res).encode("utf-8"))
                 return
+            if path == ["api", "payment", "digiseller", "callback"]:
+                length = int(self.headers.get("Content-Length", "0"))
+                raw = self.rfile.read(length) if length > 0 else b""
+                query_str = parsed.query
+                query_data: dict[str, Any] = {}
+                if query_str:
+                    try:
+                        parsed_query = parse_qs(query_str, keep_blank_values=True)
+                        query_data = {k: v[0] if len(v) == 1 else v for k, v in parsed_query.items()}
+                    except Exception:
+                        pass
+
+                body_data: dict[str, Any] = {}
+                content_type = self.headers.get("Content-Type", "")
+                if raw.strip() and raw.strip() != b"{}":
+                    if "application/json" in content_type:
+                        try:
+                            body_data = json.loads(raw.decode("utf-8"))
+                        except Exception:
+                            LOGGER.warning("Digiseller callback invalid JSON: %r", raw[:200])
+                            self._send_json(HTTPStatus.BAD_REQUEST, b'{"error":"invalid_json"}')
+                            return
+                    else:
+                        try:
+                            parsed_form = parse_qs(raw.decode("utf-8", errors="replace"), keep_blank_values=True)
+                            body_data = {k: v[0] if len(v) == 1 else v for k, v in parsed_form.items()}
+                        except Exception:
+                            LOGGER.warning("Digiseller callback invalid form body: %r", raw[:200])
+                            self._send_json(HTTPStatus.BAD_REQUEST, b'{"error":"invalid_body"}')
+                            return
+
+                data = {**query_data, **body_data}
+                if not data:
+                    LOGGER.info("Received Digiseller empty verification ping. Responding 200 OK.")
+                    self._send_json(HTTPStatus.OK, b'{"status":"ok","message":"verification_ping_received"}')
+                    return
+
+                result = self.checkout.handle_digiseller_callback(data, raw_body=raw or query_str.encode("utf-8"))
+                if isinstance(result, tuple) and len(result) == 2:
+                    res, status_code = result
+                else:
+                    res = result
+                    status_code = HTTPStatus.OK if res.get("status") == "ok" else HTTPStatus.BAD_REQUEST
+                self._send_json(status_code, json.dumps(res).encode("utf-8"))
+                return
             if path == ["order"]:
                 form = self._read_form()
                 customer_email = form.get("customer_email", "").strip()
@@ -5074,6 +5532,30 @@ class RequestHandler(BaseHTTPRequestHandler):
                 turnstile_token = str(payload.get("turnstile_token") or "")
                 res = self.checkout.request_cabinet_access_link(self.headers, email, turnstile_token)
                 self._send_json(HTTPStatus.OK, json.dumps(res, ensure_ascii=False).encode("utf-8"))
+                return
+
+            # POST /api/bridge
+            if path == ["api", "bridge"]:
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                if length > MAX_JSON_BODY_BYTES:
+                    self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, b'{"ok":false,"error":"body_too_large"}')
+                    return
+                raw = self.rfile.read(length) if length > 0 else b""
+                secret = (
+                    getattr(self.checkout.settings, "serverless_bridge_secret", "")
+                    or os.environ.get("SERVERLESS_BRIDGE_SECRET", "")
+                    or os.environ.get("BRIDGE_SECRET", "")
+                ).strip()
+                from . import awg_manager
+                from .bridge import verify_and_dispatch_bridge
+                code, resp = verify_and_dispatch_bridge(
+                    headers=self.headers,
+                    raw_body=raw,
+                    secret=secret,
+                    provisioner=self.checkout.provisioner,
+                    awg_manager=awg_manager,
+                )
+                self._send_json(HTTPStatus(code), json.dumps(resp, ensure_ascii=False).encode("utf-8"))
                 return
 
             # POST /api/internal/awg/traffic-sync

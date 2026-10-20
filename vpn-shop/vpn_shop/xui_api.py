@@ -22,13 +22,29 @@ class XuiApiClient:
         self._logged_in = False
         self._csrf_token: str | None = None
         self._cookie_jar = http.cookiejar.CookieJar()
+        self._opener = self._build_opener()
+
+    def _build_opener(self) -> urllib.request.OpenerDirector:
         handlers: list[Any] = [urllib.request.HTTPCookieProcessor(self._cookie_jar)]
-        if not verify_tls:
+        if not self.verify_tls:
             context = ssl.create_default_context()
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
             handlers.append(urllib.request.HTTPSHandler(context=context))
-        self._opener = urllib.request.build_opener(*handlers)
+        return urllib.request.build_opener(*handlers)
+
+    def _try_toggle_scheme_on_ssl_error(self, exc: Exception) -> bool:
+        err_str = str(exc).lower()
+        if any(token in err_str for token in ("record layer failure", "wrong version number", "unknown protocol", "ssl")):
+            if self.panel_url.startswith("https://127.0.0.1") or self.panel_url.startswith("https://localhost"):
+                self.panel_url = "http://" + self.panel_url[len("https://"):]
+                self._opener = self._build_opener()
+                return True
+            elif self.panel_url.startswith("http://127.0.0.1") or self.panel_url.startswith("http://localhost"):
+                self.panel_url = "https://" + self.panel_url[len("http://"):]
+                self._opener = self._build_opener()
+                return True
+        return False
 
     def _url(self, path: str) -> str:
         return urllib.parse.urljoin(self.panel_url, path.lstrip("/"))
@@ -54,6 +70,8 @@ class XuiApiClient:
             detail = exc.read().decode("utf-8", errors="replace")
             raise XuiApiError(f"HTTP {exc.code} for {path}: {detail}") from exc
         except urllib.error.URLError as exc:
+            if self._try_toggle_scheme_on_ssl_error(exc):
+                return self._request(method, path, payload)
             raise XuiApiError(f"Request failed for {path}: {exc}") from exc
 
         if not raw:
@@ -87,8 +105,9 @@ class XuiApiClient:
                             if token:
                                 self._csrf_token = token
                                 break
-        except Exception:
-            pass
+        except Exception as exc:
+            if self._try_toggle_scheme_on_ssl_error(exc):
+                return self.login()
 
         response = self._request(
             "POST",

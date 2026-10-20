@@ -45,15 +45,13 @@ for pr in [
         sys.path.insert(0, pr)
 
 # Setup environment before importing app
-os.environ["HYSTERIA_SALAMANDER_PASSWORD"] = "485a96779d1ad79d0fa80ca0"  # PLACEHOLDER
-os.environ["HYSTERIA_AUTH_PASSWORD"] = "test_auth_pass_443"  # PLACEHOLDER
-os.environ["SECRET_SEGMENT"] = "test-secret"  # PLACEHOLDER
+os.environ["HYSTERIA_SALAMANDER_PASSWORD"] = "485a96779d1ad79d0fa80ca0"
+os.environ["HYSTERIA_AUTH_PASSWORD"] = "test_auth_pass_443"
+os.environ["SECRET_SEGMENT"] = "test-secret"
 os.environ["LISTEN_PORT"] = "3088"
-os.environ["PUBLIC_HOST"] = "sub.example.com"
-os.environ["WS443_PUBLIC_HOST"] = "edge.example.com"
-os.environ["FI_STANDBY_HOST"] = "fi.example.com"
-os.environ["PUBLIC_SUBSCRIPTION_ORIGIN"] = "https://sub.example.com"
-os.environ["FALLBACK_SUBSCRIPTION_ORIGIN"] = "https://example.com"
+os.environ["PUBLIC_HOST"] = "sub.silentconnect.net"
+os.environ["PUBLIC_SUBSCRIPTION_ORIGIN"] = "https://sub.silentconnect.net"
+os.environ["FALLBACK_SUBSCRIPTION_ORIGIN"] = "https://silentconnect.net"
 
 SINGBOX_PATH = os.path.join(PROJECT_ROOT, "v2rayN", "bin", "bin", "sing_box", "sing-box.exe")
 if not os.path.exists(SINGBOX_PATH):
@@ -100,25 +98,6 @@ class SingboxChallengerM1Test(unittest.TestCase):
                     sniffing TEXT
                 )
             """)
-            settings_json = json.dumps({
-                "clients": [
-                    {
-                        "id": "034d060d-8f33-4280-b22c-6b128813646f",
-                        "email": "MainDefConf",
-                        "limitIp": 0,
-                        "totalGB": 0,
-                        "expiryTime": 0,
-                        "enable": True,
-                        "tgId": "",
-                        "subId": "MainDefConf",
-                        "reset": 0
-                    }
-                ]
-            })
-            conn.execute("""
-                INSERT INTO inbounds (id, user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing)
-                VALUES (2, 1, 0, 0, 0, 'tcp-inbound', 1, 0, '0.0.0.0', 443, 'vless', ?, '{}', 'inbound-443', '{}')
-            """, (settings_json,))
             conn.commit()
             conn.close()
 
@@ -181,10 +160,12 @@ class SingboxChallengerM1Test(unittest.TestCase):
             "nl-fast-tcp",
             "nl-speed-hysteria2",
             "nl-backup-grpc",
+            "nl-stealth-xhttp",
             "fi-classic-tcp",
             "fi-fast-tcp",
             "fi-speed-hysteria2",
             "fi-backup-grpc",
+            "fi-stealth-xhttp",
             "nl-ws443",
             "fi-ws443",
             "direct",
@@ -193,7 +174,7 @@ class SingboxChallengerM1Test(unittest.TestCase):
             self.assertIn(tag, selector.get("outbounds", []), f"Selector missing outbound '{tag}'")
 
     def test_02_auto_urltest_pool_parameters(self):
-        """Assert Tier 2 auto-urltest group has exact HTTP 204 endpoint and 1m interval."""
+        """Assert Tier 2 auto-urltest group has exact HTTP 204 endpoint and 3m interval."""
         cfg = subjson_app.build_singbox_smart_config(self.active_sub_id)
         outbounds = cfg.get("outbounds", [])
         urltest = outbounds[1]
@@ -201,29 +182,31 @@ class SingboxChallengerM1Test(unittest.TestCase):
         self.assertEqual(urltest.get("type"), "urltest", "Outbound[1] must be of type 'urltest'")
         self.assertEqual(urltest.get("tag"), "auto-urltest", "Outbound[1] tag must be 'auto-urltest'")
         self.assertEqual(urltest.get("url"), "https://cp.cloudflare.com/generate_204", "Healthcheck URL must be cp.cloudflare.com/generate_204")
-        self.assertEqual(urltest.get("interval"), "1m", "Healthcheck interval must be '1m'")
-        self.assertEqual(urltest.get("idle_timeout"), "30m", "Healthcheck idle_timeout must be '30m'")
+        self.assertEqual(urltest.get("interval"), "3m", "Healthcheck interval must be '3m'")
+        self.assertEqual(urltest.get("idle_timeout"), "15m", "Healthcheck idle_timeout must be '15m'")
         self.assertEqual(urltest.get("tolerance"), 50, "Healthcheck latency tolerance must be 50ms")
-        self.assertTrue(urltest.get("interrupt_exist_connections"), "interrupt_exist_connections must be True")
+        self.assertFalse(urltest.get("interrupt_exist_connections"), "interrupt_exist_connections must be False")
 
-    def test_03_all_8_nodes_present_in_urltest_pool(self):
-        """Assert auto-urltest contains exactly the 8 target protocol nodes (4 NL + 4 FI)."""
+    def test_03_all_10_nodes_present_in_urltest_pool(self):
+        """Assert auto-urltest contains exactly the 10 target protocol nodes (5 NL + 5 FI)."""
         cfg = subjson_app.build_singbox_smart_config(self.active_sub_id)
         urltest = cfg["outbounds"][1]
         pooled_tags = urltest.get("outbounds", [])
 
-        expected_8_nodes = [
+        expected_10_nodes = [
             "nl-classic-tcp",
             "nl-fast-tcp",
             "nl-speed-hysteria2",
             "nl-backup-grpc",
+            "nl-stealth-xhttp",
             "fi-classic-tcp",
             "fi-fast-tcp",
             "fi-speed-hysteria2",
             "fi-backup-grpc",
+            "fi-stealth-xhttp",
         ]
-        self.assertEqual(len(pooled_tags), 8, f"Expected exactly 8 pooled nodes in urltest, found {len(pooled_tags)}")
-        for expected in expected_8_nodes:
+        self.assertEqual(len(pooled_tags), 10, f"Expected exactly 10 pooled nodes in urltest, found {len(pooled_tags)}")
+        for expected in expected_10_nodes:
             self.assertIn(expected, pooled_tags, f"Pooled node '{expected}' missing from auto-urltest")
 
     # =========================================================================
@@ -234,14 +217,14 @@ class SingboxChallengerM1Test(unittest.TestCase):
         cfg = subjson_app.build_singbox_smart_config(self.active_sub_id)
         ob = next(o for o in cfg["outbounds"] if o.get("tag") == "nl-classic-tcp")
         self.assertEqual(ob.get("type"), "vless")
-        self.assertEqual(ob.get("server"), "edge.example.com")
+        self.assertEqual(ob.get("server"), "edge.silentconnect.net")
         self.assertEqual(ob.get("server_port"), 443)
         self.assertEqual(ob.get("flow"), "xtls-rprx-vision")
         self.assertEqual(ob.get("packet_encoding"), "xudp")
         self.assertTrue(ob.get("tls", {}).get("enabled"))
         self.assertEqual(ob["tls"].get("server_name"), "sber.ru")
-        self.assertEqual(ob["tls"].get("reality", {}).get("public_key"), subjson_app.TCP_REALITY_PUBLIC_KEY)
-        self.assertEqual(ob["tls"].get("reality", {}).get("short_id"), subjson_app.TCP_REALITY_SHORT_ID)
+        self.assertEqual(ob["tls"].get("reality", {}).get("public_key"), "2JCWlJ5M8OxWsp8YLWZqtlkyJGMbdRSwVishk8mIuEo")
+        self.assertEqual(ob["tls"].get("reality", {}).get("short_id"), "9a2f7c6d1e4b8a30")
         self.assertTrue(UUID_REGEX.match(ob.get("uuid", "")), f"Invalid UUID: {ob.get('uuid')}")
 
     def test_05_nl_fast_tcp_properties(self):
@@ -249,7 +232,7 @@ class SingboxChallengerM1Test(unittest.TestCase):
         cfg = subjson_app.build_singbox_smart_config(self.active_sub_id)
         ob = next(o for o in cfg["outbounds"] if o.get("tag") == "nl-fast-tcp")
         self.assertEqual(ob.get("type"), "vless")
-        self.assertEqual(ob.get("server"), "edge.example.com")
+        self.assertEqual(ob.get("server"), "edge.silentconnect.net")
         self.assertEqual(ob.get("server_port"), 443)
         self.assertEqual(ob.get("flow"), "xtls-rprx-vision")
         self.assertEqual(ob["tls"].get("server_name"), "st.kinopoisk.ru")
@@ -260,15 +243,12 @@ class SingboxChallengerM1Test(unittest.TestCase):
         cfg = subjson_app.build_singbox_smart_config(self.active_sub_id)
         ob = next(o for o in cfg["outbounds"] if o.get("tag") == "nl-speed-hysteria2")
         self.assertEqual(ob.get("type"), "hysteria2")
-        self.assertEqual(ob.get("server"), "edge.example.com")
-        self.assertEqual(ob.get("server_ports"), ["30000:40000"])
-        self.assertEqual(ob.get("hop_interval"), "60s")
+        self.assertEqual(ob.get("server"), "sub.silentconnect.net")
+        self.assertEqual(ob.get("server_port"), 443)
         self.assertEqual(ob["tls"].get("alpn"), ["h3"])
-        self.assertEqual(ob["tls"].get("server_name"), "edge.example.com")
-        self.assertEqual(ob.get("obfs", {}).get("type"), "gecko")
-        self.assertEqual(ob.get("obfs", {}).get("password"), subjson_app.HYSTERIA_SALAMANDER_PASSWORD)
-        self.assertEqual(ob.get("obfs", {}).get("min_packet_size"), 512)
-        self.assertEqual(ob.get("obfs", {}).get("max_packet_size"), 1000)
+        self.assertEqual(ob["tls"].get("server_name"), "sub.silentconnect.net")
+        self.assertEqual(ob.get("obfs", {}).get("type"), "salamander")
+        self.assertEqual(ob.get("obfs", {}).get("password"), "485a96779d1ad79d0fa80ca0")
         self.assertTrue(UUID_REGEX.match(ob.get("password", "")))
 
     def test_07_nl_grpc_properties(self):
@@ -276,12 +256,24 @@ class SingboxChallengerM1Test(unittest.TestCase):
         cfg = subjson_app.build_singbox_smart_config(self.active_sub_id)
         ob = next(o for o in cfg["outbounds"] if o.get("tag") == "nl-backup-grpc")
         self.assertEqual(ob.get("type"), "vless")
-        self.assertEqual(ob.get("server"), "edge.example.com")
+        self.assertEqual(ob.get("server"), "edge.silentconnect.net")
         self.assertEqual(ob.get("server_port"), 29443)
         self.assertEqual(ob.get("transport", {}).get("type"), "grpc")
         self.assertEqual(ob["transport"].get("service_name"), "grpc-maxru")
         self.assertEqual(ob["tls"].get("server_name"), "vk.com")
-        self.assertEqual(ob["tls"].get("reality", {}).get("public_key"), subjson_app.GRPC_REALITY_PUBLIC_KEY)
+        self.assertEqual(ob["tls"].get("reality", {}).get("public_key"), "qb3chneGBO60_kv-McyCvUrXM93aN851duFH2bVIMQU")
+        self.assertTrue(UUID_REGEX.match(ob.get("uuid", "")))
+
+    def test_08_nl_xhttp_properties(self):
+        """Verify NL XHTTP Caddy TLS configuration."""
+        cfg = subjson_app.build_singbox_smart_config(self.active_sub_id)
+        ob = next(o for o in cfg["outbounds"] if o.get("tag") == "nl-stealth-xhttp")
+        self.assertEqual(ob.get("type"), "vless")
+        self.assertEqual(ob.get("server"), "edge.silentconnect.net")
+        self.assertEqual(ob.get("server_port"), 443)
+        self.assertEqual(ob.get("transport", {}).get("type"), "http")
+        self.assertEqual(ob["transport"].get("path"), "/xh-mx-d1f7c0429d6a")
+        self.assertEqual(ob["tls"].get("alpn"), ["h2", "http/1.1"])
         self.assertTrue(UUID_REGEX.match(ob.get("uuid", "")))
 
     def test_09_fi_classic_tcp_properties(self):
@@ -289,7 +281,7 @@ class SingboxChallengerM1Test(unittest.TestCase):
         cfg = subjson_app.build_singbox_smart_config(self.active_sub_id)
         ob = next(o for o in cfg["outbounds"] if o.get("tag") == "fi-classic-tcp")
         self.assertEqual(ob.get("type"), "vless")
-        self.assertEqual(ob.get("server"), "fi.example.com")
+        self.assertEqual(ob.get("server"), "fi.silentconnect.net")
         self.assertEqual(ob.get("server_port"), 443)
         self.assertEqual(ob["tls"].get("server_name"), "sber.ru")
         self.assertTrue(UUID_REGEX.match(ob.get("uuid", "")))
@@ -299,9 +291,9 @@ class SingboxChallengerM1Test(unittest.TestCase):
         cfg = subjson_app.build_singbox_smart_config(self.active_sub_id)
         ob = next(o for o in cfg["outbounds"] if o.get("tag") == "fi-fast-tcp")
         self.assertEqual(ob.get("type"), "vless")
-        self.assertEqual(ob.get("server"), "fi.example.com")
+        self.assertEqual(ob.get("server"), "fi.silentconnect.net")
         self.assertEqual(ob.get("server_port"), 443)
-        self.assertEqual(ob["tls"].get("server_name"), subjson_app.FI_REALITY_SNI_FAST)
+        self.assertEqual(ob["tls"].get("server_name"), "st.kinopoisk.ru")
         self.assertTrue(UUID_REGEX.match(ob.get("uuid", "")))
 
     def test_11_fi_hysteria2_properties(self):
@@ -309,15 +301,11 @@ class SingboxChallengerM1Test(unittest.TestCase):
         cfg = subjson_app.build_singbox_smart_config(self.active_sub_id)
         ob = next(o for o in cfg["outbounds"] if o.get("tag") == "fi-speed-hysteria2")
         self.assertEqual(ob.get("type"), "hysteria2")
-        self.assertEqual(ob.get("server"), "fi.example.com")
-        self.assertEqual(ob.get("server_ports"), ["30000:40000"])
-        self.assertEqual(ob.get("hop_interval"), "60s")
+        self.assertEqual(ob.get("server"), "fi.silentconnect.net")
+        self.assertEqual(ob.get("server_port"), 443)
         self.assertEqual(ob["tls"].get("alpn"), ["h3"])
-        self.assertEqual(ob["tls"].get("server_name"), "fi.example.com")
-        self.assertEqual(ob.get("obfs", {}).get("type"), "gecko")
-        self.assertEqual(ob.get("obfs", {}).get("password"), subjson_app.HYSTERIA_SALAMANDER_PASSWORD)
-        self.assertEqual(ob.get("obfs", {}).get("min_packet_size"), 512)
-        self.assertEqual(ob.get("obfs", {}).get("max_packet_size"), 1000)
+        self.assertEqual(ob["tls"].get("server_name"), "fi.silentconnect.net")
+        self.assertEqual(ob.get("obfs", {}).get("type"), "salamander")
         self.assertTrue(UUID_REGEX.match(ob.get("password", "")))
 
     def test_12_fi_grpc_properties(self):
@@ -325,10 +313,25 @@ class SingboxChallengerM1Test(unittest.TestCase):
         cfg = subjson_app.build_singbox_smart_config(self.active_sub_id)
         ob = next(o for o in cfg["outbounds"] if o.get("tag") == "fi-backup-grpc")
         self.assertEqual(ob.get("type"), "vless")
-        self.assertEqual(ob.get("server"), "fi.example.com")
+        self.assertEqual(ob.get("server"), "fi.silentconnect.net")
         self.assertEqual(ob.get("server_port"), 29443)
         self.assertEqual(ob["transport"].get("service_name"), "grpc-maxru")
-        self.assertEqual(ob["tls"].get("server_name"), subjson_app.FI_GRPC_REALITY_SNI)
+        self.assertEqual(ob["tls"].get("server_name"), "vk.com")
+        self.assertTrue(UUID_REGEX.match(ob.get("uuid", "")))
+
+    def test_13_fi_xhttp_reality_port_39443_properties(self):
+        """Verify FI XHTTP Reality on Port 39443 (Hetzner TSPU Bypass)."""
+        cfg = subjson_app.build_singbox_smart_config(self.active_sub_id)
+        ob = next(o for o in cfg["outbounds"] if o.get("tag") == "fi-stealth-xhttp")
+        self.assertEqual(ob.get("type"), "vless")
+        self.assertEqual(ob.get("server"), "fi.silentconnect.net")
+        self.assertEqual(ob.get("server_port"), 39443)
+        self.assertEqual(ob.get("transport", {}).get("type"), "http")
+        self.assertEqual(ob["transport"].get("path"), "/xh-mx-d1f7c0429d6a")
+        self.assertTrue(ob.get("tls", {}).get("reality", {}).get("enabled"))
+        self.assertEqual(ob["tls"]["reality"].get("public_key"), "ASvvjJ4dOcHst5FWDJ9D562UQ0nN1pAw0l13Z58RNQA")
+        self.assertEqual(ob["tls"]["reality"].get("short_id"), "a1b2c3d4e5f60718")
+        self.assertEqual(ob["tls"].get("server_name"), "sber.ru")
         self.assertTrue(UUID_REGEX.match(ob.get("uuid", "")))
 
     # =========================================================================
@@ -384,12 +387,7 @@ class SingboxChallengerM1Test(unittest.TestCase):
                     "listen_port": 20808
                 }
             ],
-            "outbounds": [
-                {**ob, "obfs": {"type": "salamander", "password": ob["obfs"]["password"]}}
-                if ob.get("type") == "hysteria2" and ob.get("obfs", {}).get("type") == "gecko"
-                else ob
-                for ob in cfg["outbounds"] if ob.get("type") != "dns"
-            ],
+            "outbounds": [ob for ob in cfg["outbounds"] if ob.get("type") != "dns"],
             "route": {
                 "auto_detect_interface": True,
                 "default_domain_resolver": "dns-remote",
@@ -420,15 +418,15 @@ class SingboxChallengerM1Test(unittest.TestCase):
 
     def test_15_build_four_profiles_top_item_is_smart_selector(self):
         """Assert build_four_profiles returns Smart Auto-Selector at index 0 followed by 10 individual profiles."""
-        profiles = subjson_app.build_four_profiles(self.active_sub_id, "sub.example.com", "split-ru")
+        profiles = subjson_app.build_four_profiles(self.active_sub_id, "sub.silentconnect.net", "split-ru")
         self.assertIsInstance(profiles, list)
         self.assertEqual(len(profiles), 11, f"Expected 11 profiles (1 smart + 10 individual), got {len(profiles)}")
 
-        # Index 0 is the Smart Auto-Selector (Native Xray Balancer)
+        # Index 0 is the Smart Auto-Selector
         smart_p = profiles[0]
-        self.assertIn("node-nl-classic", [ob.get("tag") for ob in smart_p.get("outbounds", [])])
-        self.assertIn("observatory", smart_p)
-        self.assertIn("balancers", smart_p.get("routing", {}))
+        self.assertIn("auto-urltest", [ob.get("tag") for ob in smart_p.get("outbounds", [])])
+        self.assertEqual(smart_p.get("outbounds", [])[0].get("tag"), "proxy-selector")
+        self.assertEqual(smart_p.get("outbounds", [])[1].get("tag"), "auto-urltest")
         self.assertIn("Автоматический", smart_p.get("remarks", ""))
 
         # Indices 1-10 are the individual server profiles

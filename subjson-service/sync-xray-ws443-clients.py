@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -149,6 +151,9 @@ def main() -> None:
             print("Local xray-maxru config already in sync.")
 
     # --- Germany sync ---
+    if "--local-only" in sys.argv or not os.environ.get("FRANKFURT_IP"):
+        return
+
     try:
         # 1. Sync Germany xray-ws443
         res = subprocess.run([

@@ -17,7 +17,7 @@ from .security import (
     random_subscription_id,
     to_xui_ms,
 )
-from .store import Store
+from .store import Store, default_awg_quota_bytes_for_devices
 from .xui_api import XuiApiClient
 from .xui_db import XuiDatabase
 
@@ -189,6 +189,7 @@ class Provisioner:
         # Idempotency check: reuse profile if already created in store
         profile = self.store.get_profile_by_xui_email(alias)
         if not profile:
+            eff_device_limit = int(device_limit) if int(device_limit or 0) > 0 else 3
             profile = self.store.create_profile(
                 xui_inbound_id=inbound_id,
                 transport=transport,
@@ -196,8 +197,11 @@ class Provisioner:
                 family_label=family_label,
                 xui_email=alias,
                 xui_client_id=found["client"].get("id") or found["client"].get("password") or alias,
+                xui_sub_id=str(sub_id),
                 expires_at=expires_at_s,
                 notes=notes,
+                awg_quota_bytes=default_awg_quota_bytes_for_devices(eff_device_limit),
+                device_limit=eff_device_limit,
             )
 
         return {

@@ -438,6 +438,65 @@ def merge_awg_peers(nl, fi, stats: Stats, dry_run: bool) -> None:
         stats.inc("awg_peers_merged")
 
 
+def merge_awg_slots(nl, fi, base, stats: Stats, dry_run: bool) -> None:
+    if not table_exists(fi, "awg_slots") or not table_exists(nl, "awg_slots"):
+        return
+    for fs in fi.execute("SELECT * FROM awg_slots").fetchall():
+        ns_ = nl.execute("SELECT * FROM awg_slots WHERE profile_public_id = ? AND slot_index = ?", (fs["profile_public_id"], fs["slot_index"])).fetchone()
+        if ns_ is None:
+            insert_row(nl, "awg_slots", fs, dry_run=dry_run)
+            stats.inc("awg_slots_inserted")
+            continue
+        fi_updated = int(fs["updated_at"] or fs["created_at"] or 0)
+        nl_updated = int(ns_["updated_at"] or ns_["created_at"] or 0)
+        if fi_updated > nl_updated:
+            non_id_cols = [c for c in columns(nl, "awg_slots") if c != "id" and c in fs.keys()]
+            set_clause = ", ".join(f"{c} = ?" for c in non_id_cols)
+            if not dry_run:
+                nl.execute(f"UPDATE awg_slots SET {set_clause} WHERE id = ?", [*[fs[c] for c in non_id_cols], ns_["id"]])
+            stats.inc("awg_slots_updated")
+
+
+def merge_awg_traffic_ledger(nl, fi, stats: Stats, dry_run: bool) -> None:
+    if not table_exists(fi, "awg_traffic_ledger") or not table_exists(nl, "awg_traffic_ledger"):
+        return
+    for fl in fi.execute("SELECT * FROM awg_traffic_ledger").fetchall():
+        nl_ = nl.execute("SELECT * FROM awg_traffic_ledger WHERE server_code = ? AND public_key = ?", (fl["server_code"], fl["public_key"])).fetchone()
+        if nl_ is None:
+            insert_row(nl, "awg_traffic_ledger", fl, dry_run=dry_run)
+            stats.inc("awg_traffic_ledger_inserted")
+            continue
+        merged_rx = max(int(nl_["total_rx_bytes"] or 0), int(fl["total_rx_bytes"] or 0))
+        merged_tx = max(int(nl_["total_tx_bytes"] or 0), int(fl["total_tx_bytes"] or 0))
+        winner = fl if int(fl["updated_at"] or 0) >= int(nl_["updated_at"] or 0) else nl_
+        if merged_rx != int(nl_["total_rx_bytes"] or 0) or merged_tx != int(nl_["total_tx_bytes"] or 0):
+            if not dry_run:
+                nl.execute(
+                    "UPDATE awg_traffic_ledger SET last_rx_bytes = ?, last_tx_bytes = ?, total_rx_bytes = ?, total_tx_bytes = ?, updated_at = ? WHERE server_code = ? AND public_key = ?",
+                    (winner["last_rx_bytes"], winner["last_tx_bytes"], merged_rx, merged_tx, winner["updated_at"], fl["server_code"], fl["public_key"])
+                )
+            stats.inc("awg_traffic_ledger_updated")
+
+
+def merge_openflux_slots(nl, fi, stats: Stats, dry_run: bool) -> None:
+    if not table_exists(fi, "openflux_slots") or not table_exists(nl, "openflux_slots"):
+        return
+    for fs in fi.execute("SELECT * FROM openflux_slots").fetchall():
+        ns_ = nl.execute("SELECT * FROM openflux_slots WHERE profile_public_id = ?", (fs["profile_public_id"],)).fetchone()
+        if ns_ is None:
+            insert_row(nl, "openflux_slots", fs, dry_run=dry_run)
+            stats.inc("openflux_slots_inserted")
+            continue
+        fi_updated = int(fs["updated_at"] or fs["created_at"] or 0)
+        nl_updated = int(ns_["updated_at"] or ns_["created_at"] or 0)
+        if fi_updated > nl_updated:
+            non_id_cols = [c for c in columns(nl, "openflux_slots") if c != "id" and c in fs.keys()]
+            set_clause = ", ".join(f"{c} = ?" for c in non_id_cols)
+            if not dry_run:
+                nl.execute(f"UPDATE openflux_slots SET {set_clause} WHERE id = ?", [*[fs[c] for c in non_id_cols], ns_["id"]])
+            stats.inc("openflux_slots_updated")
+
+
 def merge_vpn_shop(
     nl_db_path: str,
     fi_db_path: Optional[str] = None,
@@ -500,6 +559,9 @@ def merge_vpn_shop(
             merge_append_only(nl, fi, table="admin_actions", keys=("action_type", "target_public_id", "created_at"), stats=stats, dry_run=dry_run)
             merge_append_only(nl, fi, table="profile_reminders", keys=("profile_public_id", "reminder_kind"), stats=stats, dry_run=dry_run)
             merge_awg_peers(nl, fi, stats, dry_run)
+            merge_awg_slots(nl, fi, base, stats, dry_run)
+            merge_awg_traffic_ledger(nl, fi, stats, dry_run)
+            merge_openflux_slots(nl, fi, stats, dry_run)
             # 7. verify BEFORE commit (D-05)
             if not dry_run:
                 check_integrity(nl, "NL vpn_shop.db (pre-commit)")

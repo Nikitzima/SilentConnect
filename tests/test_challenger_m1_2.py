@@ -22,14 +22,14 @@ import unittest
 import urllib.parse
 
 # Setup environment before importing app
-os.environ["HYSTERIA_SALAMANDER_PASSWORD"] = "485a96779d1ad79d0fa80ca0"  # PLACEHOLDER
-os.environ["HYSTERIA_AUTH_PASSWORD"] = "test_auth_pass_443"  # PLACEHOLDER
-os.environ["SECRET_SEGMENT"] = "test-secret"  # PLACEHOLDER
-os.environ["INTERNAL_SECRET"] = "internal-token-xyz"  # PLACEHOLDER
-os.environ["RELAY_PUBLIC_HOST"] = "relay.example.com"
+os.environ["HYSTERIA_SALAMANDER_PASSWORD"] = "485a96779d1ad79d0fa80ca0"
+os.environ["HYSTERIA_AUTH_PASSWORD"] = "test_auth_pass_443"
+os.environ["SECRET_SEGMENT"] = "test-secret"
+os.environ["INTERNAL_SECRET"] = "internal-token-xyz"
+os.environ["RELAY_PUBLIC_HOST"] = "relay.silentconnect.net"
 os.environ["LISTEN_PORT"] = "3088"
-os.environ["PUBLIC_HOST"] = "sub.example.com"
-os.environ["PUBLIC_SUBSCRIPTION_ORIGIN"] = "https://sub.example.com"
+os.environ["PUBLIC_HOST"] = "sub.silentconnect.net"
+os.environ["PUBLIC_SUBSCRIPTION_ORIGIN"] = "https://sub.silentconnect.net"
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
@@ -42,9 +42,6 @@ if APP_DIR not in sys.path:
 MIHOMO_PATH = os.path.join(PROJECT_ROOT, "v2rayN", "bin", "bin", "mihomo", "mihomo.exe")
 TEST_DB_PATH = os.path.join(PROJECT_ROOT, "бэкапы_баз_данных", "x-ui-test.db")
 os.environ["XUI_DB_PATH"] = TEST_DB_PATH
-os.environ["PUBLIC_HOST"] = "sub.example.com"
-os.environ["WS443_PUBLIC_HOST"] = "edge.example.com"
-os.environ["FI_STANDBY_HOST"] = "fi.example.com"
 
 import app as subjson_app
 import yaml
@@ -61,51 +58,8 @@ class EmpiricalChallengerTest(unittest.TestCase):
         cls.db_path = os.path.join(cls.temp_dir, "x-ui-test.db")
         cls.shop_db_path = os.path.join(cls.temp_dir, "vpn_shop.db")
 
-        # Copy existing test db or create synthetic
-        if os.path.exists(TEST_DB_PATH):
-            shutil.copyfile(TEST_DB_PATH, cls.db_path)
-        else:
-            conn_xui = sqlite3.connect(cls.db_path)
-            conn_xui.execute("""
-                CREATE TABLE inbounds (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
-                    up INTEGER,
-                    down INTEGER,
-                    total INTEGER,
-                    remark TEXT,
-                    enable INTEGER,
-                    expiry_time INTEGER,
-                    listen TEXT,
-                    port INTEGER,
-                    protocol TEXT,
-                    settings TEXT,
-                    stream_settings TEXT,
-                    tag TEXT,
-                    sniffing TEXT
-                )
-            """)
-            settings_json = json.dumps({
-                "clients": [
-                    {
-                        "id": "034d060d-8f33-4280-b22c-6b128813646f",
-                        "email": "MainDefConf",
-                        "limitIp": 0,
-                        "totalGB": 0,
-                        "expiryTime": 0,
-                        "enable": True,
-                        "tgId": "",
-                        "subId": "MainDefConf",
-                        "reset": 0
-                    }
-                ]
-            })
-            conn_xui.execute("""
-                INSERT INTO inbounds (id, user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing)
-                VALUES (2, 1, 0, 0, 0, 'tcp-inbound', 1, 0, '0.0.0.0', 443, 'vless', ?, '{}', 'inbound-443', '{}')
-            """, (settings_json,))
-            conn_xui.commit()
-            conn_xui.close()
+        # Copy existing test db
+        shutil.copyfile(TEST_DB_PATH, cls.db_path)
         subjson_app.XUI_DB_PATH = cls.db_path
         os.environ["XUI_DB_PATH"] = cls.db_path
         os.environ["STORE_DB_PATH"] = cls.shop_db_path
@@ -199,7 +153,7 @@ class EmpiricalChallengerTest(unittest.TestCase):
 
     def test_01_empirical_bug_reproduction_geosite_ru_failure(self):
         """Verify build_clash_meta_config in split-ru mode no longer has GEOSITE,ru and passes Mihomo validation."""
-        yaml_out = subjson_app.build_clash_meta_config("MainDefConf", "sub.example.com", "split-ru")
+        yaml_out = subjson_app.build_clash_meta_config("MainDefConf", "sub.silentconnect.net", "split-ru")
         self.assertNotIn("GEOSITE,ru,DIRECT", yaml_out)
         res = self._run_mihomo_validate(yaml_out)
         self.assertEqual(res.returncode, 0, f"Mihomo validation failed on split-ru mode:\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}")
@@ -207,7 +161,7 @@ class EmpiricalChallengerTest(unittest.TestCase):
 
     def test_02_mihomo_validation_active_global(self):
         """Empirically test Clash Meta YAML with Mihomo core (global route mode)."""
-        yaml_out = subjson_app.build_clash_meta_config("MainDefConf", "sub.example.com", "global")
+        yaml_out = subjson_app.build_clash_meta_config("MainDefConf", "sub.silentconnect.net", "global")
         res = self._run_mihomo_validate(yaml_out)
         self.assertEqual(res.returncode, 0, f"Mihomo validation failed on global mode:\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}")
         self.assertIn("configuration file", res.stdout.lower())
@@ -215,7 +169,7 @@ class EmpiricalChallengerTest(unittest.TestCase):
 
     def test_03_mihomo_validation_expired_sub(self):
         """Empirically test Clash Meta YAML for expired subscription with Mihomo core."""
-        yaml_out = subjson_app.build_clash_meta_config("expired-sub-id", "sub.example.com", "split-ru")
+        yaml_out = subjson_app.build_clash_meta_config("expired-sub-id", "sub.silentconnect.net", "split-ru")
         parsed = yaml.safe_load(yaml_out)
         self.assertEqual(parsed.get("mode"), "direct")
         self.assertEqual(parsed.get("proxies"), [])
@@ -225,7 +179,7 @@ class EmpiricalChallengerTest(unittest.TestCase):
 
     def test_04_mihomo_validation_split_ru_with_fixed_rules(self):
         """Verify that removing GEOSITE,ru from split-ru rules makes Mihomo pass completely."""
-        yaml_out = subjson_app.build_clash_meta_config("MainDefConf", "sub.example.com", "split-ru")
+        yaml_out = subjson_app.build_clash_meta_config("MainDefConf", "sub.silentconnect.net", "split-ru")
         parsed = yaml.safe_load(yaml_out)
 
         # Remove the offending GEOSITE,ru rule
@@ -238,7 +192,7 @@ class EmpiricalChallengerTest(unittest.TestCase):
 
     def test_05_mihomo_validation_fallback_yaml_generator(self):
         """Empirically test custom fallback YAML serializer when yaml module is bypassed."""
-        yaml_out = subjson_app.build_clash_meta_config("MainDefConf", "sub.example.com", "global")
+        yaml_out = subjson_app.build_clash_meta_config("MainDefConf", "sub.silentconnect.net", "global")
         doc = yaml.safe_load(yaml_out)
 
         # Monkeypatch yaml module import failure inside dump_clash_yaml
@@ -259,7 +213,7 @@ class EmpiricalChallengerTest(unittest.TestCase):
 
     def test_06_clash_proxy_groups_and_proxies_integrity(self):
         """Verify all 10 proxies and 3 proxy-groups are present with correct parameters."""
-        yaml_out = subjson_app.build_clash_meta_config("MainDefConf", "sub.example.com", "global")
+        yaml_out = subjson_app.build_clash_meta_config("MainDefConf", "sub.silentconnect.net", "global")
         parsed = yaml.safe_load(yaml_out)
 
         proxies = parsed.get("proxies", [])
@@ -280,12 +234,12 @@ class EmpiricalChallengerTest(unittest.TestCase):
         ]
         self.assertEqual(proxy_names, expected_names)
 
-        # Check FI XHTTP Reality port & Reality params
+        # Check FI XHTTP Reality port 39443 & Reality params
         fi_xhttp = next(p for p in proxies if p["name"] == "🇫🇮 FI Stealth XHTTP Reality")
-        self.assertEqual(fi_xhttp["port"], subjson_app.FI_XHTTP_REALITY_PORT)
-        self.assertEqual(fi_xhttp["servername"], subjson_app.FI_XHTTP_REALITY_SNI)
-        self.assertEqual(fi_xhttp["reality-opts"]["public-key"], subjson_app.FI_XHTTP_REALITY_PUBLIC_KEY)
-        self.assertEqual(fi_xhttp["reality-opts"]["short-id"], subjson_app.FI_XHTTP_REALITY_SHORT_ID)
+        self.assertEqual(fi_xhttp["port"], 39443)
+        self.assertEqual(fi_xhttp["servername"], "sber.ru")
+        self.assertEqual(fi_xhttp["reality-opts"]["public-key"], "ASvvjJ4dOcHst5FWDJ9D562UQ0nN1pAw0l13Z58RNQA")
+        self.assertEqual(fi_xhttp["reality-opts"]["short-id"], "a1b2c3d4e5f60718")
 
         # Check Hysteria2 Salamander Obfs
         nl_hy2 = next(p for p in proxies if p["name"] == "🇳🇱 NL Speed Hysteria2")
@@ -320,7 +274,7 @@ class EmpiricalChallengerTest(unittest.TestCase):
 
     def test_07_streisand_base64_decode_and_param_validation(self):
         """Decode Streisand Base64 and parse all URIs & query parameters."""
-        b64_str = subjson_app.build_streisand_bundle("MainDefConf", "sub.example.com")
+        b64_str = subjson_app.build_streisand_bundle("MainDefConf", "sub.silentconnect.net")
         self.assertTrue(len(b64_str) > 100, "Base64 bundle is too short")
 
         raw_text = base64.b64decode(b64_str).decode("utf-8")
@@ -345,12 +299,12 @@ class EmpiricalChallengerTest(unittest.TestCase):
         # URI 0: NL Classic Reality TCP
         u0 = parsed_uris[0]
         self.assertEqual(u0["scheme"], "vless")
-        self.assertEqual(u0["hostname"], "edge.example.com")
+        self.assertEqual(u0["hostname"], "edge.silentconnect.net")
         self.assertEqual(u0["port"], 443)
         self.assertEqual(u0["query"]["type"][0], "tcp")
         self.assertEqual(u0["query"]["security"][0], "reality")
-        self.assertEqual(u0["query"]["pbk"][0], subjson_app.TCP_REALITY_PUBLIC_KEY)
-        self.assertEqual(u0["query"]["sid"][0], subjson_app.TCP_REALITY_SHORT_ID)
+        self.assertEqual(u0["query"]["pbk"][0], "2JCWlJ5M8OxWsp8YLWZqtlkyJGMbdRSwVishk8mIuEo")
+        self.assertEqual(u0["query"]["sid"][0], "9a2f7c6d1e4b8a30")
         self.assertEqual(u0["query"]["flow"][0], "xtls-rprx-vision")
         self.assertEqual(u0["query"]["sni"][0], "sber.ru")
         self.assertIn("🇳🇱 1. Классический TCP (NL)", u0["tag"])
@@ -358,18 +312,18 @@ class EmpiricalChallengerTest(unittest.TestCase):
         # URI 2: NL Speed Hysteria2
         u2 = parsed_uris[2]
         self.assertEqual(u2["scheme"], "hy2")
-        self.assertEqual(u2["hostname"], "sub.example.com")
+        self.assertEqual(u2["hostname"], "sub.silentconnect.net")
         self.assertEqual(u2["port"], 443)
-        self.assertEqual(u2["query"]["sni"][0], "sub.example.com")
+        self.assertEqual(u2["query"]["sni"][0], "sub.silentconnect.net")
         self.assertEqual(u2["query"]["alpn"][0], "h3")
-        self.assertEqual(u2["query"]["obfs"][0], "gecko")
+        self.assertEqual(u2["query"]["obfs"][0], "salamander")
         self.assertEqual(u2["query"]["obfs-password"][0], "485a96779d1ad79d0fa80ca0")
         self.assertIn("🇳🇱 3. Скоростной Hysteria2 (NL)", u2["tag"])
 
         # URI 3: NL Backup Reality gRPC
         u3 = parsed_uris[3]
         self.assertEqual(u3["scheme"], "vless")
-        self.assertEqual(u3["hostname"], "edge.example.com")
+        self.assertEqual(u3["hostname"], "edge.silentconnect.net")
         self.assertEqual(u3["port"], 29443)
         self.assertEqual(u3["query"]["type"][0], "grpc")
         self.assertEqual(u3["query"]["security"][0], "reality")
@@ -378,18 +332,18 @@ class EmpiricalChallengerTest(unittest.TestCase):
         # URI 9: FI Stealth XHTTP Reality
         u9 = parsed_uris[9]
         self.assertEqual(u9["scheme"], "vless")
-        self.assertEqual(u9["hostname"], "fi.example.com")
-        self.assertEqual(u9["port"], subjson_app.FI_XHTTP_REALITY_PORT)
+        self.assertEqual(u9["hostname"], "fi.silentconnect.net")
+        self.assertEqual(u9["port"], 39443)
         self.assertEqual(u9["query"]["type"][0], "xhttp")
         self.assertEqual(u9["query"]["security"][0], "reality")
-        self.assertEqual(u9["query"]["pbk"][0], subjson_app.FI_XHTTP_REALITY_PUBLIC_KEY)
-        self.assertEqual(u9["query"]["sid"][0], subjson_app.FI_XHTTP_REALITY_SHORT_ID)
-        self.assertEqual(u9["query"]["sni"][0], subjson_app.FI_XHTTP_REALITY_SNI)
+        self.assertEqual(u9["query"]["pbk"][0], "ASvvjJ4dOcHst5FWDJ9D562UQ0nN1pAw0l13Z58RNQA")
+        self.assertEqual(u9["query"]["sid"][0], "a1b2c3d4e5f60718")
+        self.assertEqual(u9["query"]["sni"][0], "sber.ru")
         self.assertIn("🇫🇮 10. Незаметный XHTTP Reality (FI)", u9["tag"])
 
     def test_08_streisand_expired_sub_empty_bundle(self):
         """Streisand bundle for expired subscription returns empty Base64."""
-        b64_str = subjson_app.build_streisand_bundle("expired-sub-id", "sub.example.com")
+        b64_str = subjson_app.build_streisand_bundle("expired-sub-id", "sub.silentconnect.net")
         self.assertEqual(b64_str, "")
 
     # ==========================================
@@ -398,7 +352,7 @@ class EmpiricalChallengerTest(unittest.TestCase):
 
     def test_09_adversarial_cyrillic_remarks_and_tags(self):
         """Verify URI fragment encoding handles Cyrillic, emoji flags, and special characters cleanly."""
-        b64_str = subjson_app.build_streisand_bundle("MainDefConf", "sub.example.com")
+        b64_str = subjson_app.build_streisand_bundle("MainDefConf", "sub.silentconnect.net")
         raw = base64.b64decode(b64_str).decode("utf-8")
         for line in raw.splitlines():
             fragment = line.split("#", 1)[1] if "#" in line else ""
@@ -410,12 +364,12 @@ class EmpiricalChallengerTest(unittest.TestCase):
         """Nonexistent sub ID generates syntactically valid configs using fallback UUID."""
         nonexistent_id = "nonexistent-client-id-xyz-999"
         # 1. Clash Meta (global mode test)
-        yaml_out = subjson_app.build_clash_meta_config(nonexistent_id, "sub.example.com", "global")
+        yaml_out = subjson_app.build_clash_meta_config(nonexistent_id, "sub.silentconnect.net", "global")
         res = self._run_mihomo_validate(yaml_out)
         self.assertEqual(res.returncode, 0, f"Mihomo validation failed on nonexistent sub_id:\n{res.stdout}\n{res.stderr}")
 
         # 2. Streisand
-        b64_out = subjson_app.build_streisand_bundle(nonexistent_id, "sub.example.com")
+        b64_out = subjson_app.build_streisand_bundle(nonexistent_id, "sub.silentconnect.net")
         raw = base64.b64decode(b64_out).decode("utf-8")
         lines = [l for l in raw.splitlines() if l.strip()]
         self.assertEqual(len(lines), 10)
@@ -435,21 +389,21 @@ class EmpiricalChallengerTest(unittest.TestCase):
         for case in extreme_cases:
             with self.subTest(extreme_sub_id=case):
                 # 1. Clash Meta YAML (using global mode to isolate sub_id formatting from rules bug)
-                yaml_out = subjson_app.build_clash_meta_config(case, "sub.example.com", "global")
+                yaml_out = subjson_app.build_clash_meta_config(case, "sub.silentconnect.net", "global")
                 self.assertTrue(len(yaml_out) > 200)
 
                 res = self._run_mihomo_validate(yaml_out)
                 self.assertEqual(res.returncode, 0, f"Mihomo failed on sub ID '{case[:30]}': {res.stdout} {res.stderr}")
 
                 # 2. Streisand Base64
-                b64_out = subjson_app.build_streisand_bundle(case, "sub.example.com")
+                b64_out = subjson_app.build_streisand_bundle(case, "sub.silentconnect.net")
                 raw = base64.b64decode(b64_out).decode("utf-8")
                 lines = [l for l in raw.splitlines() if l.strip()]
                 self.assertEqual(len(lines), 10)
 
     def test_12_adversarial_streisand_unpadded_base64_decoding(self):
         """Verify decoder handles unpadded Base64 bundles gracefully."""
-        b64_str = subjson_app.build_streisand_bundle("MainDefConf", "sub.example.com")
+        b64_str = subjson_app.build_streisand_bundle("MainDefConf", "sub.silentconnect.net")
         unpadded = b64_str.rstrip("=")
         missing = len(unpadded) % 4
         padded = unpadded + ("=" * (4 - missing) if missing else "")

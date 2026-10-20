@@ -1,120 +1,66 @@
-# =============================================================================
-# SilentConnect GitHub Export - Clean Repository .gitignore
-# =============================================================================
-
-# Environment configuration & credentials
-.env*
+# ==== Секреты и окружения ====
+*.env
+*.env.*
 !.env.example
-!.env.silentconnect.example
-!subjson.env.example
-*.local.env
-*.prod.env
-*.dev.env
-subjson.env
-.env.platega
+!*.env.example
 
-# Logs & runtime outputs
-*.log
-*.log*
-logs/
-*.out
-*.out*
+# ==== Ключи, токены, сертификаты ====
+*.key
+*.pem
+*.crt
+*.p12
+*_token*
+*_secret*
+gdrive_token.txt
 
-# SQLite Databases, WAL, SHM and dumps
+# ==== Данные клиентов и бэкапы ====
 *.db
 *.db*
-*.db-shm
-*.db-wal
-*.db-journal
-*.sqlite
-*.sqlite*
-*.sqlite3
-*.dump
-*.dump*
-бэкапы_баз_данных/
-data/
-data-silentconnect/
-
-# Backups, archives and compressed dumps
+*.save
 *.bak
-*.bak*
-*.bak_*
 *.old
-*.old*
-*.orig
-*.orig*
-*.tar
-*.tar.*
+*.out
+*.log
+*.log.*
+logs/
 *.tar.gz
-*.tgz
 *.zip
 *.7z
-*.rar
-*.gz
-*.bz2
-*.xz
-
-# Certificates, private keys and keystores
-*.pem
-*.pem*
-*.key
-*.key*
-*.crt
-*.crt*
-*.cer
-*.cer*
-*.pfx
-*.p12
-*.csr
-
-# Executables, binary tools and compiled libraries
 *.exe
 *.dll
-*.so
-*.dylib
-*.bin
-*.iso
-v2rayN/
-разное_не_проверено/
-sing-box
-mihomo
-xray
-
-# Python bytecode, caches and virtual environments
-__pycache__/
-*.py[cod]
-*$py.class
-.pytest_cache/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-venv/
-.venv/
-env/
-ENV/
-build/
-dist/
-*.egg-info/
-
-# Metrics, visual screenshots & outage simulation runtime artifacts
 outage_metrics.json
 screenshots/
-*.svg.tmp
-
-# Agent metadata and working directories
+.pytest_cache/
 .agents/
-.gemini/
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.db-wal
+*.db-shm
+backups/
+бэкапы_баз_данных/
 
-# OS, IDE and Editor metadata
-.DS_Store
+# ==== Рабочие и личные папки (не для публикации) ====
+scratch/
+архив_экспериментов/
+chat_archives/
+история_переписок_ии/
+планы_и_переписка_с_cline_по_проекту/
+happ_логи_и_настройки/
+конфиги_клиентов_архив/
+разное_не_проверено/
+скрипты_обслуживания/
+
+# ==== Клиентские конфиги (могут содержать ключи/UUID) ====
+multi-configs.json
+v2rayN_configs/
+
+# ==== Python ====
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ==== ОС / IDE ====
 Thumbs.db
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+.DS_Store

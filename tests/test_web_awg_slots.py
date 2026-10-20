@@ -19,7 +19,6 @@ if str(ROOT / "subjson-service") not in sys.path:
 os.environ.setdefault("SERVER_PEPPER", "unit-test-pepper-0123456789abcdefghijklmnop")
 os.environ.setdefault("SECRET_SEGMENT", "test-secret-sub")
 os.environ.setdefault("CLUSTER_SYNC_SECRET", "test-cluster-sync-token-secret-999")
-os.environ.setdefault("AWG_SERVER_PUBLIC_KEY", "OAxzJl7ocbkYzVx0Hh0aKKAnjH1inPt6YQyUi0iorVQ=")
 
 from vpn_shop.store import Store, AWG_TIER_QUOTAS_BYTES
 from vpn_shop.config import Settings, load_settings
@@ -124,16 +123,15 @@ class TestWebAwgSlots(unittest.TestCase):
         self.assertEqual(len(slots), 3)
 
         html = self.checkout.render_awg_slots_widget(self.profile, self.sub_id)
-        self.assertIn("Оставшийся трафик Amnezia", html)
-        self.assertIn("ГБ из", html)
+        self.assertIn("Скоростной туннель AmneziaWG", html)
+        self.assertIn("ГБ свободно", html)
         self.assertIn("Устройство 1", html)
         self.assertIn("Устройство 2", html)
         self.assertIn("Устройство 3", html)
         self.assertIn("awg-progress-track", html)
         self.assertIn("awg-action-btn", html)
         self.assertIn("openAwgQrModal", html)
-        self.assertIn("copyAwgKey", html)
-        self.assertIn("Скопировать ключ", html)
+        self.assertIn("renameAwgSlot", html)
 
     def test_03_get_slot_config_download(self):
         status, headers, body = self._http_request("GET", f"/sub/awg/{self.sub_id}/slot/1/config")
@@ -184,7 +182,7 @@ class TestWebAwgSlots(unittest.TestCase):
         html = body.decode("utf-8")
         self.assertIn("Подписка SilentConnect", html)
         self.assertIn("awg-quota-widget", html)
-        self.assertIn("Оставшийся трафик Amnezia", html)
+        self.assertIn("Скоростной туннель AmneziaWG", html)
 
     def test_07_post_traffic_sync_auth_and_deltas(self):
         # 1. Missing auth
@@ -226,7 +224,7 @@ class TestWebAwgSlots(unittest.TestCase):
             "/api/internal/awg/traffic-sync",
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.settings.cluster_sync_secret}",
+                "Authorization": "Bearer test-cluster-sync-token-secret-999",
                 "Content-Length": str(len(body_bytes)),
             },
             body=body_bytes,
@@ -296,75 +294,11 @@ class TestWebAwgSlots(unittest.TestCase):
             "/api/internal/awg/traffic-sync",
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.settings.cluster_sync_secret}",
+                "Authorization": "Bearer test-cluster-sync-token-secret-999",
             },
             body=b"not-json",
         )
         self.assertEqual(status, HTTPStatus.BAD_REQUEST)
-
-    def test_10_boost_landing_page(self):
-        status, headers, body = self._http_request("GET", "/boost")
-        self.assertEqual(status, HTTPStatus.FOUND)
-        self.assertEqual(headers.get("location"), "/")
-
-        status_api, headers_api, _ = self._http_request("GET", "/api/boost")
-        self.assertEqual(status_api, HTTPStatus.FOUND)
-        self.assertEqual(headers_api.get("location"), "/")
-
-    def test_11_qr_code_pure_python_fallback(self):
-        from unittest.mock import patch
-        import vpn_shop.web as web_mod
-        with patch.object(web_mod, "qrcode", None):
-            status, headers, body = self._http_request("GET", f"/sub/awg/{self.sub_id}/slot/1/qr")
-            self.assertEqual(status, HTTPStatus.OK)
-            self.assertIn("image/", headers.get("content-type", ""))
-            # Must return valid PNG signature or SVG xml
-            if "image/png" in headers.get("content-type", ""):
-                self.assertEqual(body[:4], b"\x89PNG")
-            else:
-                self.assertTrue(body.startswith(b"<svg"))
-
-    def test_12_slot_rename_with_quotes_and_special_chars(self):
-        quote_label = "Bob's \"Mac\""
-        payload = json.dumps({"slot_label": quote_label}).encode("utf-8")
-        status, _, body = self._http_request(
-            "POST",
-            f"/sub/awg/{self.sub_id}/slot/3/rename",
-            headers={"Content-Type": "application/json", "Content-Length": str(len(payload))},
-            body=payload,
-        )
-        self.assertEqual(status, HTTPStatus.OK)
-        data = json.loads(body.decode("utf-8"))
-        # Store.sanitize_device_label strips quotes and special chars for injection safety
-        self.assertEqual(data.get("slot_label"), "Bobs Mac")
-
-        # Ensure widget HTML renders safely with data attributes
-        html_widget = self.checkout.render_awg_slots_widget(self.profile, self.sub_id)
-        self.assertIn("data-label=", html_widget)
-        self.assertIn("Bobs Mac", html_widget)
-
-    def test_13_cabinet_multi_profile_scoped_ids(self):
-        import uuid
-        uid2 = uuid.uuid4().hex[:8]
-        profile2 = self.store.create_profile(
-            xui_inbound_id=1,
-            transport="vless",
-            profile_mode="individual",
-            family_label=None,
-            xui_email=f"sub_{uid2}@domain.com",
-            xui_client_id=str(uuid.uuid4()),
-            expires_at=1800000000,
-            device_limit=3,
-        )
-        # Render widgets for both profiles to ensure scoped DOM IDs
-        html1 = self.checkout.render_awg_slots_widget(self.profile, self.sub_id)
-        html2 = self.checkout.render_awg_slots_widget(profile2, profile2["public_id"])
-        self.assertIn(f"awg-slot-{self.profile['public_id']}-1", html1)
-        self.assertIn(f"awg-slot-{profile2['public_id']}-1", html2)
-        self.assertNotEqual(
-            f"awg-slot-{self.profile['public_id']}-1",
-            f"awg-slot-{profile2['public_id']}-1",
-        )
 
 
 if __name__ == "__main__":

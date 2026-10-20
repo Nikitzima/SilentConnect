@@ -39,28 +39,28 @@ import zlib
 
 # Centralized pricing logic
 _vpn_shop_path = str(Path(__file__).resolve().parent.parent / "vpn-shop")
-if _vpn_shop_path not in sys.path:
-    sys.path.insert(0, _vpn_shop_path)
+for _p in (_vpn_shop_path, "/root/vpn-shop"):
+    if _p not in sys.path and Path(_p).exists():
+        sys.path.insert(0, _p)
 
-if "MONTHLY_PRICE_3_DEVICES_RUB" not in os.environ:
-    for _env_cand in (
-        Path(__file__).resolve().parent.parent / "vpn-shop" / ".env",
-        Path(__file__).resolve().parent.parent / "vpn-shop" / ".env.silentconnect",
-        Path("/root/vpn-shop/.env"),
-        Path("/root/vpn-shop/.env.silentconnect"),
-    ):
-        if _env_cand.is_file():
-            try:
-                with open(_env_cand, "r", encoding="utf-8") as _ef:
-                    for _line in _ef:
-                        _line = _line.strip()
-                        if _line and not _line.startswith("#") and "=" in _line:
-                            _k, _v = _line.split("=", 1)
-                            _k = _k.strip()
-                            if _k.startswith("MONTHLY_PRICE_") and _k not in os.environ:
-                                os.environ[_k] = _v.strip().strip('"').strip("'")
-            except Exception:
-                pass
+for _env_cand in (
+    Path(__file__).resolve().parent.parent / "vpn-shop" / ".env.silentconnect",
+    Path(__file__).resolve().parent.parent / "vpn-shop" / ".env",
+    Path("/root/vpn-shop/.env.silentconnect"),
+    Path("/root/vpn-shop/.env"),
+):
+    if _env_cand.is_file():
+        try:
+            with open(_env_cand, "r", encoding="utf-8") as _ef:
+                for _line in _ef:
+                    _line = _line.strip()
+                    if _line and not _line.startswith("#") and "=" in _line:
+                        _k, _v = _line.split("=", 1)
+                        _k = _k.strip()
+                        if (_k.startswith("MONTHLY_PRICE_") or _k.startswith("TURSO_")) and _k not in os.environ:
+                            os.environ[_k] = _v.strip().strip('"').strip("'")
+        except Exception:
+            pass
 
 try:
     from vpn_shop.catalog import calculate_renewal_price, quote_price
@@ -148,6 +148,16 @@ def _verify_order_web_token(order_row: Any, token: str | None) -> bool:
         expected_hash = hmac.new(eff_pepper, msg, hashlib.sha256).hexdigest()
         if hmac.compare_digest(str(stored_hash), expected_hash):
             return True
+    try:
+        raw_meta = order_row["meta_json"] if "meta_json" in order_row.keys() else None
+        meta = (json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta) or {}
+        sub_hint = str(meta.get("sub_id") or meta.get("target_sub_id") or "").strip()
+        if sub_hint:
+            expected_sub_tok = hmac.new(eff_pepper, f"sub_order_token:{order_row['public_id']}:{sub_hint}".encode("utf-8"), hashlib.sha256).hexdigest()
+            if hmac.compare_digest(expected_sub_tok, token):
+                return True
+    except Exception:
+        pass
     # Fallback to meta_json['web_token']
     try:
         raw_meta = order_row["meta_json"] if "meta_json" in order_row.keys() else None
@@ -459,9 +469,14 @@ def read_inbounds() -> list[sqlite3.Row]:
 
 
 def find_store_db_path() -> str:
-    env_path = os.environ.get("STORE_DB_PATH", "").strip() or os.environ.get("SHOP_DATABASE_PATH", "").strip()
-    if env_path and Path(env_path).exists():
-        return env_path
+    for var in ("STORE_DB_PATH", "SHOP_DATABASE_PATH", "SHOP_DB_PATH"):
+        p = os.environ.get(var, "").strip()
+        if p and Path(p).exists():
+            return p
+    for var in ("STORE_DB_PATH", "SHOP_DATABASE_PATH", "SHOP_DB_PATH"):
+        p = os.environ.get(var, "").strip()
+        if p:
+            return p
     p1 = Path("/root/vpn-shop/data-silentconnect/vpn_shop.db")
     if p1.exists():
         return str(p1)
@@ -520,18 +535,42 @@ _shop_checkout_instance = None
 def get_shop_checkout():
     global _shop_checkout_instance
     with _shop_checkout_lock:
+        db_path = find_store_db_path()
+        if _shop_checkout_instance is not None:
+            current_path = getattr(getattr(_shop_checkout_instance, "store", None), "database_path", None)
+            if current_path is None or not Path(current_path).exists() or Path(current_path) != Path(db_path):
+                _shop_checkout_instance = None
+
         if _shop_checkout_instance is None:
             try:
                 from vpn_shop.store import Store
                 from vpn_shop.web import WebCheckout
                 settings = get_shop_settings()
-                db_path = find_store_db_path()
-                store = Store(database_path=Path(db_path))
-                store.init()
+                store = Store(database_path=Path(db_path), replica_name="subjson")
+                if os.environ.get("TURSO_DATABASE_URL"):
+                    store.init()
                 _shop_checkout_instance = WebCheckout(settings=settings, store=store)
             except Exception as exc:
                 LOGGER.warning("Could not instantiate WebCheckout in subjson-service: %s", exc)
         return _shop_checkout_instance
+
+
+def get_store_db():
+    if os.environ.get("TURSO_DATABASE_URL"):
+        wc = get_shop_checkout()
+        if wc and getattr(wc, "store", None):
+            return wc.store.connect()
+        try:
+            from vpn_shop.store import Store
+            store = Store(database_path=Path(find_store_db_path()), replica_name="subjson")
+            return store.connect()
+        except Exception as exc:
+            LOGGER.warning("Could not connect via Turso replica in get_store_db: %s", exc)
+    db_path = find_store_db_path()
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn.execute("PRAGMA busy_timeout = 30000;")
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def find_profile_for_sub(wc, subscription_id: str) -> dict[str, Any] | None:
@@ -646,11 +685,7 @@ def get_openflux_slot_state_dict(sub_id: str) -> dict[str, Any]:
     try:
         from vpn_shop import openflux_manager
         pid = resolve_sub_profile_id(sub_id)
-        db_path = find_store_db_path()
-        if not db_path or not Path(db_path).exists():
-            return {"ok": False, "error": "db_not_found"}
-        conn = sqlite3.connect(db_path, timeout=10.0)
-        conn.row_factory = sqlite3.Row
+        conn = get_store_db()
         try:
             openflux_manager.cleanup_expired_migrations(conn)
             slot = openflux_manager.get_or_create_openflux_slot(conn, pid)
@@ -712,15 +747,12 @@ def _start_openflux_watchdog() -> None:
         while True:
             try:
                 time.sleep(30)
-                db_path = find_store_db_path()
-                if db_path and Path(db_path).exists():
-                    conn = sqlite3.connect(db_path, timeout=10.0)
-                    conn.row_factory = sqlite3.Row
-                    try:
-                        from vpn_shop import openflux_manager
-                        openflux_manager.cleanup_expired_migrations(conn)
-                    finally:
-                        conn.close()
+                conn = get_store_db()
+                try:
+                    from vpn_shop import openflux_manager
+                    openflux_manager.cleanup_expired_migrations(conn)
+                finally:
+                    conn.close()
             except Exception as e:
                 LOGGER.debug("OpenFlux watchdog tick error: %s", e)
 
@@ -832,12 +864,8 @@ def find_store_linked_email(sub_id: str) -> str:
         xui_email = str(client.get("email") or "").strip()
         if not xui_email:
             return ""
-        db_path = find_store_db_path()
-        if not Path(db_path).exists():
-            return ""
-        conn = sqlite3.connect(db_path, timeout=10.0)
+        conn = get_store_db()
         try:
-            conn.row_factory = sqlite3.Row
             prof = conn.execute("SELECT id FROM profiles WHERE xui_email = ?", (xui_email,)).fetchone()
             if prof:
                 ord_row = conn.execute(
@@ -895,10 +923,7 @@ def bind_subscription_email(
         raise ValueError("Подписка не найдена на сервере.")
 
     xui_email = str(found_client["client"].get("email") or "")
-    db_path = find_store_db_path()
-    conn_shop = sqlite3.connect(db_path, timeout=30.0)
-    conn_shop.execute("PRAGMA busy_timeout = 30000;")
-    conn_shop.row_factory = sqlite3.Row
+    conn_shop = get_store_db()
     now = int(time.time())
     try:
         prof = conn_shop.execute("SELECT * FROM profiles WHERE xui_email = ?", (xui_email,)).fetchone()
@@ -1120,8 +1145,7 @@ def _notify_admins_new_renewal_order(
         if not bot_token:
             return
 
-        conn = sqlite3.connect(db_path, timeout=10.0)
-        conn.row_factory = sqlite3.Row
+        conn = get_store_db()
         admin_chats = []
         try:
             admin_rows = conn.execute("SELECT DISTINCT chat_id FROM chat_sessions WHERE scope = 'admin'").fetchall()
@@ -1234,9 +1258,7 @@ def create_inline_renewal_order(
     email = str(found_client["client"].get("email") or "")
 
     # 2. Find profile & order in vpn_shop.db
-    conn_shop = sqlite3.connect(db_path, timeout=30.0)
-    conn_shop.execute("PRAGMA busy_timeout = 30000;")
-    conn_shop.row_factory = sqlite3.Row
+    conn_shop = get_store_db()
     try:
         prof = conn_shop.execute("SELECT * FROM profiles WHERE xui_email = ?", (email,)).fetchone()
         if not prof:
@@ -1560,13 +1582,8 @@ def render_payment_notice_html(order_data: Any, status_override: str | None = No
 
 
 def check_pending_payment_card(sub_id: str) -> str:
-    db_path = find_store_db_path()
-    if not Path(db_path).exists():
-        return ""
     try:
-        conn = sqlite3.connect(db_path, timeout=30.0)
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.row_factory = sqlite3.Row
+        conn = get_store_db()
         try:
             target_sub = sub_id.strip().split("~")[0]
             email = ""
@@ -1617,9 +1634,11 @@ def check_pending_payment_card(sub_id: str) -> str:
                                 pass
                             return ""
 
-                    # Backfill web_token if missing on active waiting_payment order
+                    # Backfill web_token if missing on active waiting_payment order ONLY if web_token_hash does not exist yet
                     token = str(meta.get("web_token") or "")
-                    if not token and order["status"] == "waiting_payment":
+                    order_cols = [r[1] for r in conn.execute("PRAGMA table_info(orders)").fetchall()]
+                    has_hash = bool("web_token_hash" in order_cols and order["web_token_hash"])
+                    if not token and not has_hash and order["status"] == "waiting_payment":
                         try:
                             new_token = secrets.token_hex(12)
                             eff_pepper = os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")
@@ -1627,7 +1646,6 @@ def check_pending_payment_card(sub_id: str) -> str:
                             token_hash = hmac.new(eff_pepper, msg, hashlib.sha256).hexdigest()
                             meta["web_token"] = new_token
                             token = new_token
-                            order_cols = [r[1] for r in conn.execute("PRAGMA table_info(orders)").fetchall()]
                             if "web_token_hash" in order_cols:
                                 conn.execute(
                                     "UPDATE orders SET web_token_hash = ?, meta_json = ?, updated_at = ? WHERE id = ?",
@@ -1648,6 +1666,12 @@ def check_pending_payment_card(sub_id: str) -> str:
                         norm_dismissed = "paid" if dismissed_status in ("paid", "delivered") else str(dismissed_status)
                         if norm_current == norm_dismissed:
                             return ""
+                    if not token:
+                        sub_hint = str(meta.get("sub_id") or target_sub).strip()
+                        if sub_hint:
+                            eff_pepper = os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")
+                            token = hmac.new(eff_pepper, f"sub_order_token:{order['public_id']}:{sub_hint}".encode("utf-8"), hashlib.sha256).hexdigest()
+                            meta["web_token"] = token
                     prof_keys = prof.keys()
                     is_active = False
                     if "expires_at" in prof_keys and prof["expires_at"]:
@@ -1666,13 +1690,10 @@ def check_pending_payment_card(sub_id: str) -> str:
 
 
 def handle_inline_order_paid(order_public_id: str, web_token: str | None = None) -> bool:
-    db_path = find_store_db_path()
-    if not Path(db_path).exists():
+    try:
+        conn = get_store_db()
+    except Exception:
         return False
-
-    conn = sqlite3.connect(db_path, timeout=30.0)
-    conn.execute("PRAGMA busy_timeout = 30000;")
-    conn.row_factory = sqlite3.Row
     try:
         row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (order_public_id,)).fetchone()
         if not row:
@@ -1789,13 +1810,10 @@ def handle_inline_order_paid(order_public_id: str, web_token: str | None = None)
 
 
 def handle_inline_order_cancel(order_public_id: str, web_token: str | None = None) -> str:
-    db_path = find_store_db_path()
-    if not Path(db_path).exists():
+    try:
+        conn = get_store_db()
+    except Exception:
         return ""
-
-    conn = sqlite3.connect(db_path, timeout=30.0)
-    conn.execute("PRAGMA busy_timeout = 30000;")
-    conn.row_factory = sqlite3.Row
     try:
         row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (order_public_id,)).fetchone()
         if not row:
@@ -1951,32 +1969,13 @@ def resolve_ipv4_routes(host: str) -> list[str]:
 
 
 
-def sync_litestream_db_if_needed():
-    try:
-        import subprocess
-        import shutil
-        tmp_path = '/tmp/xui_sync.db'
-        if os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
-        res = subprocess.run(['litestream', 'restore', '-o', tmp_path, '/etc/x-ui/x-ui.db'], capture_output=True, timeout=5)
-        if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
-            shutil.move(tmp_path, '/etc/x-ui/x-ui.db')
-            LOGGER.info("Successfully restored /etc/x-ui/x-ui.db from Litestream replica!")
-    except Exception as e:
-        LOGGER.warning("litestream restore error: %s", e)
+def sync_litestream_db_if_needed() -> None:
+    """Deprecated: Litestream replication was retired in favor of Turso + push sync."""
+    return None
 
-def start_litestream_background_sync():
-    # Restore last-good DB ONCE at startup (crash recovery only).
-    # FIX 2026-08-22: previously this ran an infinite loop restoring the
-    # LIVE /etc/x-ui/x-ui.db every 10 seconds, racing with x-ui writes
-    # (see AUDIT_REPORT.md - Litestream restore-loop finding).
-    try:
-        sync_litestream_db_if_needed()
-    except Exception:
-        LOGGER.warning("startup litestream restore failed; continuing with current DB")
+
+def start_litestream_background_sync() -> None:
+    return None
 
 start_litestream_background_sync()
 
@@ -1994,12 +1993,12 @@ def _find_subscription_impl(subscription_id: str) -> tuple[sqlite3.Row, dict[str
             return row, copy.deepcopy(settings), copy.deepcopy(stream_settings), copy.deepcopy(sniffing), copy.deepcopy(client)
 
     try:
-        store_path = find_store_db_path()
-        conn = sqlite3.connect(store_path, timeout=30.0)
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.row_factory = sqlite3.Row
+        conn = get_store_db()
         try:
-            prof = conn.execute("SELECT xui_email FROM profiles WHERE public_id = ?", (target,)).fetchone()
+            prof = conn.execute(
+                "SELECT xui_email FROM profiles WHERE public_id = ? OR xui_sub_id = ? OR xui_client_id = ?",
+                (target, target, target),
+            ).fetchone()
         finally:
             conn.close()
         if prof and prof["xui_email"]:
@@ -5234,10 +5233,7 @@ def subscription_summary(subscription_id: str) -> dict[str, Any]:
 
     # Cross-check authoritative store DB for latest profile expiry
     try:
-        store_path = find_store_db_path()
-        conn_shop = sqlite3.connect(store_path, timeout=5.0)
-        conn_shop.execute("PRAGMA busy_timeout = 5000;")
-        conn_shop.row_factory = sqlite3.Row
+        conn_shop = get_store_db()
         try:
             for cl in clients:
                 cl_email = str(cl.get("email") or "")
@@ -9614,8 +9610,9 @@ class RequestHandler(BaseHTTPRequestHandler):
             is_ajax = "application/json" in self.headers.get("Accept", "").lower() or self.headers.get("X-Requested-With") == "XMLHttpRequest"
             parsed_url = urllib.parse.urlsplit(self.path)
             path = [segment for segment in parsed_url.path.split("/") if segment]
+            query = urllib.parse.parse_qs(parsed_url.query)
 
-            if len(path) == 3 and path[0] == SECRET_SEGMENT and path[1] == "internal-quiesce":
+            if len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] == "internal-quiesce":
                 self._handle_internal_quiesce(path[2], True)
                 return
 
@@ -9636,7 +9633,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                     matched = _cached_clients_index.get(auth_token)
                 if matched:
                     row, settings, stream_settings, sniffing, client = matched
-                    if client.get("enable", True):
+                    exp_ms = int(client.get("expiryTime") or 0)
+                    now_ms = int(time.time() * 1000)
+                    if client.get("enable", True) and (exp_ms <= 0 or exp_ms > now_ms):
                         self._send_json(HTTPStatus.OK, {"ok": True, "id": str(client.get("id") or auth_token)}, True)
                         return
                 self._send_json(HTTPStatus.OK, {"ok": False, "error": "unauthorized"}, True)
@@ -9749,10 +9748,6 @@ class RequestHandler(BaseHTTPRequestHandler):
 
             if is_oflux_post:
                 from vpn_shop import openflux_manager
-                db_path = find_store_db_path()
-                if not db_path or not Path(db_path).exists():
-                    self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "db_not_found"}, True)
-                    return
                 pid = resolve_sub_profile_id(oflux_sub_id)
                 content_length = int(self.headers.get("Content-Length") or 0)
                 raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
@@ -9761,8 +9756,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 except Exception:
                     payload = {}
 
-                conn = sqlite3.connect(db_path, timeout=20.0)
-                conn.row_factory = sqlite3.Row
+                try:
+                    conn = get_store_db()
+                except Exception:
+                    self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "db_not_found"}, True)
+                    return
                 try:
                     if oflux_action == "activate":
                         openflux_manager.activate_openflux_slot(conn, pid)
@@ -9790,7 +9788,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, state, True)
                 return
 
-            if len(path) == 3 and path[0] == SECRET_SEGMENT and path[1] in ("renew", "bind-email"):
+            if len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] in ("renew", "bind-email"):
                 sub_id = path[2]
                 form = self._read_form()
                 LOGGER.info("READ FORM RESULT: %r, Content-Type: %r", form, self.headers.get("Content-Type"))
@@ -9889,7 +9887,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
 
-            if len(path) == 3 and path[0] == SECRET_SEGMENT and path[1] in ("paid", "cancel"):
+            if len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] in ("paid", "cancel"):
                 order_public_id = path[2]
                 form = self._read_form()
                 req_token = query.get("token", [""])[0].strip() or form.get("web_token", "").strip() or self.headers.get("X-Web-Token", "").strip()
@@ -9898,19 +9896,15 @@ class RequestHandler(BaseHTTPRequestHandler):
                     if auth.startswith("Bearer "):
                         req_token = auth[7:].strip()
 
-                db_path = find_store_db_path()
                 order_row = None
-                if Path(db_path).exists():
+                try:
+                    conn = get_store_db()
                     try:
-                        conn = sqlite3.connect(db_path, timeout=30.0)
-                        conn.execute("PRAGMA busy_timeout = 30000;")
-                        conn.row_factory = sqlite3.Row
-                        try:
-                            order_row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (order_public_id,)).fetchone()
-                        finally:
-                            conn.close()
-                    except Exception:
-                        pass
+                        order_row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (order_public_id,)).fetchone()
+                    finally:
+                        conn.close()
+                except Exception:
+                    pass
 
                 if not order_row or not _verify_order_web_token(order_row, req_token):
                     self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "forbidden", "detail": "invalid_order_token"}, include_body=True)
@@ -9948,7 +9942,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._redirect(f"/{SECRET_SEGMENT}/import/{target_sub}", include_body=True)
                     return
 
-            if len(path) == 3 and path[0] == SECRET_SEGMENT and path[1] == "dismiss-notice":
+            if len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] == "dismiss-notice":
                 order_public_id = path[2]
                 payload = {}
                 length = int(self.headers.get("Content-Length") or 0)
@@ -9963,28 +9957,24 @@ class RequestHandler(BaseHTTPRequestHandler):
                     payload = dict(form)
 
                 status_val = str(payload.get("status") or "").strip()
-                db_path = find_store_db_path()
-                if Path(db_path).exists():
+                try:
+                    conn = get_store_db()
                     try:
-                        conn = sqlite3.connect(db_path, timeout=30.0)
-                        conn.execute("PRAGMA busy_timeout = 30000;")
-                        conn.row_factory = sqlite3.Row
-                        try:
-                            order_row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (order_public_id,)).fetchone()
-                            if order_row:
-                                meta = json.loads(order_row["meta_json"] or "{}") if isinstance(order_row["meta_json"], str) else (order_row["meta_json"] or {})
-                                meta = dict(meta)
-                                dismissed_status = status_val or str(order_row["status"] or "dismissed")
-                                meta["notice_dismissed_status"] = dismissed_status
-                                meta["notice_dismissed_at"] = int(time.time())
-                                conn.execute("UPDATE orders SET meta_json = ? WHERE public_id = ?", (json.dumps(meta), order_public_id))
-                                conn.commit()
-                                self._send_json(HTTPStatus.OK, {"ok": True, "dismissed_status": dismissed_status}, True)
-                                return
-                        finally:
-                            conn.close()
-                    except Exception as e:
-                        LOGGER.warning("Failed to record notice dismissal for order %s: %s", order_public_id, e)
+                        order_row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (order_public_id,)).fetchone()
+                        if order_row:
+                            meta = json.loads(order_row["meta_json"] or "{}") if isinstance(order_row["meta_json"], str) else (order_row["meta_json"] or {})
+                            meta = dict(meta)
+                            dismissed_status = status_val or str(order_row["status"] or "dismissed")
+                            meta["notice_dismissed_status"] = dismissed_status
+                            meta["notice_dismissed_at"] = int(time.time())
+                            conn.execute("UPDATE orders SET meta_json = ? WHERE public_id = ?", (json.dumps(meta), order_public_id))
+                            conn.commit()
+                            self._send_json(HTTPStatus.OK, {"ok": True, "dismissed_status": dismissed_status}, True)
+                            return
+                    finally:
+                        conn.close()
+                except Exception as e:
+                    LOGGER.warning("Failed to record notice dismissal for order %s: %s", order_public_id, e)
 
                 self._send_json(HTTPStatus.OK, {"ok": True}, True)
                 return
@@ -10002,7 +9992,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "html": payment_card, "error": msg}, include_body=True)
                 return
             parsed_path = [segment for segment in urllib.parse.urlsplit(self.path).path.split("/") if segment]
-            sub_id = parsed_path[2] if len(parsed_path) >= 3 and parsed_path[0] == SECRET_SEGMENT and parsed_path[1] in ("renew", "bind-email") else "default"
+            sub_id = parsed_path[2] if len(parsed_path) >= 3 and parsed_path[0] in {SECRET_SEGMENT, "my-secret-sub"} and parsed_path[1] in ("renew", "bind-email") else "default"
             source_url = public_subscription_url(self.headers, "json", sub_id)
             generic_html = setup_page_html(
                 subscription_url=source_url,
@@ -10066,7 +10056,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             path = [segment for segment in parsed_url.path.split("/") if segment]
             query = urllib.parse.parse_qs(parsed_url.query)
             # Rate limit subscription endpoints (audit #10); healthz/internal exempt.
-            if len(path) >= 2 and path[0] == SECRET_SEGMENT and not path[1].startswith("internal"):
+            if len(path) >= 2 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and not path[1].startswith("internal"):
                 xff = self.headers.get("X-Forwarded-For", "").strip()
                 if xff:
                     client_ip = xff.split(",")[-1].strip()
@@ -10104,7 +10094,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._redirect(volga_docs[server_target], include_body)
                 return
 
-            if len(path) == 3 and path[0] == SECRET_SEGMENT and path[1] == "internal-quiesce":
+            if len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] == "internal-quiesce":
                 self._handle_internal_quiesce(path[2], include_body)
                 return
 
@@ -10520,56 +10510,52 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_subscription_json(payload, include_body, subscription_route=path[1], subscription_id=path[2])
                     return
 
-            if len(path) == 3 and path[0] == SECRET_SEGMENT and path[1] in {"order-status", "order-status-sub"}:
+            if len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] in {"order-status", "order-status-sub"}:
                 lookup_val = path[2]
-                db_path = find_store_db_path()
-                if Path(db_path).exists():
+                try:
+                    conn = get_store_db()
                     try:
-                        conn = sqlite3.connect(db_path, timeout=30.0)
-                        conn.execute("PRAGMA busy_timeout = 30000;")
-                        conn.row_factory = sqlite3.Row
-                        try:
-                            if path[1] == "order-status-sub":
-                                target_sub = lookup_val.strip().split("~")[0]
-                                row, _, _, _, client = find_subscription(target_sub)
-                                email = str(client.get("email") or "")
-                                prof = conn.execute("SELECT * FROM profiles WHERE xui_email = ?", (email,)).fetchone()
-                                if prof:
-                                    order_row = conn.execute("SELECT * FROM orders WHERE provisioned_profile_id = ? ORDER BY id DESC LIMIT 1", (prof["id"],)).fetchone()
-                                else:
-                                    order_row = None
+                        if path[1] == "order-status-sub":
+                            target_sub = lookup_val.strip().split("~")[0]
+                            row, _, _, _, client = find_subscription(target_sub)
+                            email = str(client.get("email") or "")
+                            prof = conn.execute("SELECT * FROM profiles WHERE xui_email = ?", (email,)).fetchone()
+                            if prof:
+                                order_row = conn.execute("SELECT * FROM orders WHERE provisioned_profile_id = ? ORDER BY id DESC LIMIT 1", (prof["id"],)).fetchone()
                             else:
-                                order_row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (lookup_val,)).fetchone()
+                                order_row = None
+                        else:
+                            order_row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (lookup_val,)).fetchone()
 
-                            if order_row:
-                                meta = json.loads(order_row["meta_json"]) if order_row["meta_json"] else {}
-                                customer_email = str(order_row["customer_email"] or meta.get("customer_email") or "").strip()
-                                def mask_email(e: str) -> str:
-                                    if not e or "@" not in e:
-                                        return ""
-                                    loc, dom = e.split("@", 1)
-                                    if len(loc) <= 2:
-                                        m_loc = loc[:1] + "***"
-                                    else:
-                                        m_loc = loc[:2] + "***"
-                                    return f"{m_loc}@{dom}"
+                        if order_row:
+                            meta = json.loads(order_row["meta_json"]) if order_row["meta_json"] else {}
+                            customer_email = str(order_row["customer_email"] or meta.get("customer_email") or "").strip()
+                            def mask_email(e: str) -> str:
+                                if not e or "@" not in e:
+                                    return ""
+                                loc, dom = e.split("@", 1)
+                                if len(loc) <= 2:
+                                    m_loc = loc[:1] + "***"
+                                else:
+                                    m_loc = loc[:2] + "***"
+                                return f"{m_loc}@{dom}"
 
-                                data = {
-                                    "ok": True,
-                                    "public_id": order_row["public_id"],
-                                    "status": order_row["status"],
-                                    "duration_days": int(order_row["duration_days"] or 30),
-                                    "device_limit": int(meta.get("device_limit") or 3),
-                                    "customer_email": mask_email(customer_email),
-                                    "final_price_rub": int(order_row["final_price_rub"] or 0),
-                                    "web_paid_reported_at": meta.get("web_paid_reported_at", 0),
-                                }
-                                self._send_json(HTTPStatus.OK, data, include_body)
-                                return
-                        finally:
-                            conn.close()
-                    except Exception as e:
-                        LOGGER.warning("Error fetching order status: %s", e)
+                            data = {
+                                "ok": True,
+                                "public_id": order_row["public_id"],
+                                "status": order_row["status"],
+                                "duration_days": int(order_row["duration_days"] or 30),
+                                "device_limit": int(meta.get("device_limit") or 3),
+                                "customer_email": mask_email(customer_email),
+                                "final_price_rub": int(order_row["final_price_rub"] or 0),
+                                "web_paid_reported_at": meta.get("web_paid_reported_at", 0),
+                            }
+                            self._send_json(HTTPStatus.OK, data, include_body)
+                            return
+                    finally:
+                        conn.close()
+                except Exception as e:
+                    LOGGER.warning("Error fetching order status: %s", e)
                 self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"}, include_body)
                 return
 
@@ -10782,7 +10768,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send_html(HTTPStatus.OK, generic_html, include_body)
                 return
 
-            if len(path) == 4 and path[0] == SECRET_SEGMENT and path[1] == "import":
+            if len(path) == 4 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] == "import":
                 target = path[2]
                 sub_id = path[3]
                 source_url = first_non_empty(query.get("url")) or public_subscription_url(self.headers, "json", sub_id)

@@ -66,6 +66,18 @@ def hash_token(token: str, *, purpose: str) -> str:
     return hmac.new(effective_pepper, msg, hashlib.sha256).hexdigest()
 
 
+
+
+def derive_sub_order_token(order_public_id: str, sub_id: str) -> str:
+    """Derive a deterministic HMAC bearer token for an order viewed from a personal cabinet."""
+    oid = (order_public_id or "").strip()
+    sid = (sub_id or "").strip()
+    if not oid or not sid:
+        return ""
+    effective_pepper = _get_effective_pepper()
+    msg = f"sub_order_token:{oid}:{sid}".encode("utf-8")
+    return hmac.new(effective_pepper, msg, hashlib.sha256).hexdigest()
+
 def constant_time_equals(a: str | bytes | None, b: str | bytes | None) -> bool:
     if a is None or b is None:
         return False

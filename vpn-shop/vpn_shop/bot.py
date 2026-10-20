@@ -2948,6 +2948,10 @@ class ShopBot:
             )
 
     def _execute_periodic_tasks(self) -> None:
+        holder_node = os.environ.get("CURRENT_SERVER_CODE") or os.environ.get("AWG_LOCAL_SERVER") or (os.uname().nodename if hasattr(os, "uname") else "localhost")
+        if not self.store.try_acquire_cluster_lease("periodic_tasks", str(holder_node), ttl_seconds=90):
+            LOGGER.debug("Skipping periodic tasks: cluster lease held by another node")
+            return
         try:
             self.reap_expired_subscriptions()
         except Exception:
@@ -2968,6 +2972,102 @@ class ShopBot:
             self.recover_stale_orders()
         except Exception:
             LOGGER.exception("Periodic stale orders recovery failed")
+        try:
+            self.reconcile_digiseller_orders()
+        except Exception:
+            LOGGER.exception("Periodic Digiseller reconciliation failed")
+
+    def reconcile_digiseller_orders(self) -> None:
+        """Periodic background reconciliation of Digiseller purchases and deliveries."""
+        if not getattr(self.settings, "digiseller_enabled", False):
+            return
+        if not getattr(self.settings, "digiseller_api_key", ""):
+            return
+
+        digiseller_client = getattr(self, "digiseller", None)
+        if not digiseller_client:
+            from .digiseller import DigisellerClient
+            digiseller_client = DigisellerClient(
+                seller_id=self.settings.digiseller_seller_id,
+                api_key=self.settings.digiseller_api_key,
+                secret_key=self.settings.digiseller_secret_key,
+            )
+
+        # 1. Retry uncompleted unique_code deliveries for orders in last 7 days
+        recent_digiseller_orders = self.store.list_recent_digiseller_orders(limit=50)
+        for order in recent_digiseller_orders:
+            meta = dict(order.get("meta_json") or {})
+            invoice_id = str(meta.get("digiseller_invoice_id") or "")
+            unique_code = str(meta.get("digiseller_unique_code") or "")
+            delivered = meta.get("digiseller_delivered")
+            prof = self.store.get_profile_for_order(order["public_id"])
+            profile_public_id = prof["public_id"] if prof else (meta.get("profile_public_id") or order.get("provisioned_profile_id"))
+
+            # A. If delivery to oplata.info failed, retry it
+            if unique_code and not delivered and profile_public_id and order.get("status") == "delivered":
+                base_sub = (self.settings.subscription_base_url or "").rstrip("/")
+                segment = getattr(self.settings, "secret_segment", "my-secret-sub") or "my-secret-sub"
+                sub_url = f"{base_sub}/{segment}/import/{profile_public_id}"
+                email = str(order.get("customer_email") or meta.get("customer_email") or "")
+                delivery_text = (
+                    f"Благодарим за покупку!\n\n"
+                    f"Ваша персональная ссылка на Личный кабинет:\n"
+                    f"{sub_url}\n\n"
+                    f"Подробная инструкция также отправлена на вашу почту: {email or 'почту'}.\n"
+                    f"Служба заботы: https://t.me/SilentConnectVPNBot"
+                )
+                try:
+                    digiseller_client.deliver_unique_code(unique_code, delivery_text)
+                    meta["digiseller_delivered"] = True
+                    self.store.update_order_meta(order["public_id"], meta)
+                    LOGGER.info("Reconciliation: delivered unique code for order %s", order["public_id"])
+                except Exception as exc:
+                    LOGGER.warning("Reconciliation: retry delivery failed for %s: %s", order["public_id"], exc)
+
+            # B. Check for refunds/disputes in Digiseller API
+            if invoice_id and order.get("status") == "delivered":
+                try:
+                    purchase_info = digiseller_client.get_purchase_info(invoice_id, timeout=5)
+                    parsed = digiseller_client.parse_purchase_info(purchase_info)
+                    raw_data = parsed.get("raw") or {}
+                    lock_state = str(raw_data.get("lock_state") or "").lower()
+                    inv_state = parsed.get("invoice_state")
+                    is_disputed = lock_state in ("blocked", "locked", "disputed") or (inv_state is not None and int(inv_state) in (2, 5))
+                    if is_disputed:
+                        LOGGER.warning("Reconciliation: order %s is locked/disputed in Digiseller (lock=%s, state=%s)", order["public_id"], lock_state, inv_state)
+                        self.store.update_order_status(order["public_id"], "cancelled", closed=True)
+                        if profile_public_id:
+                            self.revoke_profile_access(str(profile_public_id))
+                except Exception:
+                    pass
+
+    def revoke_profile_access(self, profile_id: str) -> None:
+        """Revoke profile in store, disable AWG slots, and deactivate client in X-UI."""
+        try:
+            self.store.mark_profile_expired(profile_id)
+        except Exception as exc:
+            LOGGER.warning("Could not mark profile %s expired: %s", profile_id, exc)
+
+        try:
+            slots = self.store.list_awg_slots(profile_id)
+            for s in slots:
+                self.store.set_awg_slot_enabled(s["id"], False)
+        except Exception as exc:
+            LOGGER.warning("Could not disable AWG slots for profile %s: %s", profile_id, exc)
+
+        try:
+            xui_db = getattr(self, "xui_db", None) or getattr(getattr(self, "provisioner", None), "xui_db", None)
+            if xui_db:
+                prof = self.store.get_profile(profile_id)
+                if prof and prof.get("xui_email"):
+                    xui_db.update_client_expiry_direct(
+                        inbound_id=int(prof.get("xui_inbound_id") or 2),
+                        email=str(prof["xui_email"]),
+                        new_expiry_ms=1,
+                        enable=False,
+                    )
+        except Exception as exc:
+            LOGGER.warning("Could not disable X-UI client for profile %s: %s", profile_id, exc)
 
     def run_periodic_tasks(self, async_dispatch: bool = False) -> None:
         now = now_ts()
@@ -3001,15 +3101,31 @@ class ShopBot:
     def run_forever(self) -> None:
         offset = None
         consecutive_errors = 0
+        serverless_mode = (
+            getattr(self.settings, "serverless_mode", False)
+            or os.environ.get("SERVERLESS_MODE", "").strip().lower() in {"1", "true", "yes"}
+        )
+        if serverless_mode:
+            LOGGER.info("Starting bot in SERVERLESS_MODE worker mode (periodic tasks only, no get_updates)")
+
         while True:
             try:
                 self.run_periodic_tasks(async_dispatch=True)
+                if serverless_mode:
+                    time.sleep(15)
+                    continue
+
                 updates = self.telegram.get_updates(offset=offset, timeout=30)
                 consecutive_errors = 0
                 for update in updates:
                     offset = update["update_id"] + 1
                     self.handle_update(update)
-            except TelegramApiError:
+            except TelegramApiError as ex:
+                if "409" in str(ex) or "conflict" in str(ex).lower():
+                    LOGGER.warning("Telegram get_updates 409 Conflict detected (webhook/tgcloud active). Auto-switching to SERVERLESS_MODE background worker!")
+                    serverless_mode = True
+                    time.sleep(15)
+                    continue
                 consecutive_errors += 1
                 backoff = min(1.0 * (2 ** (consecutive_errors - 1)), 30.0)
                 LOGGER.exception("Telegram polling error (backoff %.1fs, streak %d)", backoff, consecutive_errors)
