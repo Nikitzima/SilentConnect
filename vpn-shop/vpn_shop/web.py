@@ -194,7 +194,8 @@ def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool 
         endpoint_port = srv.get("endpoint_port") or endpoint_port
         client_dns = srv.get("client_dns") or client_dns
         client_mtu = srv.get("client_mtu") or client_mtu
-        if not for_qr:
+        use_allowed_file = os.environ.get("AWG_USE_ALLOWED_IPS_FILE", "").lower() in ("1", "true", "yes")
+        if not for_qr and use_allowed_file:
             allowed_ips_file = srv.get("allowed_ips_file") or ""
             if allowed_ips_file and os.path.exists(allowed_ips_file):
                 lst = Path(allowed_ips_file).read_text(encoding="utf-8").strip()
