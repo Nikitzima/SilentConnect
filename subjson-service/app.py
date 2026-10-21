@@ -477,15 +477,18 @@ def find_store_db_path() -> str:
         p = os.environ.get(var, "").strip()
         if p:
             return p
-    p1 = Path("/root/vpn-shop/data-silentconnect/vpn_shop.db")
-    if p1.exists():
-        return str(p1)
-    p2 = Path(__file__).resolve().parent.parent / "vpn-shop" / "data-silentconnect" / "vpn_shop.db"
-    if p2.exists():
-        return str(p2)
-    p3 = Path("/root/vpn-shop/data/vpn_shop.db")
-    if p3.exists():
-        return str(p3)
+    for candidate in (
+        Path("/root/vpn-shop/data-silentconnect/vpn_shop.db"),
+        Path(__file__).resolve().parent.parent / "vpn-shop" / "data-silentconnect" / "vpn_shop.db",
+        Path("/root/vpn-shop/data/vpn_shop.db"),
+        Path.cwd() / "data-silentconnect" / "vpn_shop.db",
+        Path.cwd() / "data" / "vpn_shop.db",
+    ):
+        try:
+            if candidate.is_file():
+                return str(candidate)
+        except (PermissionError, OSError):
+            pass
     return "/root/vpn-shop/data-silentconnect/vpn_shop.db"
 
 

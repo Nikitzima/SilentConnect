@@ -231,13 +231,18 @@ class TestOutageSimulationRunnerExecution(unittest.TestCase):
     """Test full OutageSimulationRunner execution with real binary."""
 
     def test_singbox_outage_simulation_lifecycle(self):
-        runner = OutageSimulationRunner(
-            engine="sing-box",
-            proxy_port=20815,
-            poll_interval=0.05,
-            max_failover_sec=3.0,
-            verbose=False,
-        )
+        try:
+            runner = OutageSimulationRunner(
+                engine="sing-box",
+                proxy_port=20815,
+                poll_interval=0.05,
+                max_failover_sec=3.0,
+                verbose=False,
+            )
+        except RuntimeError as exc:
+            if "Sing-box binary not found" in str(exc):
+                self.skipTest("Sing-box binary not found in test environment")
+            raise
         metrics = runner.run_simulation()
 
         self.assertTrue(metrics["baseline_success"], "Baseline connectivity failed")

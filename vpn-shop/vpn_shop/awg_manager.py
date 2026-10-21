@@ -93,14 +93,25 @@ SERVERS: dict[str, dict[str, Any]] = {
     },
 }
 
-DB_PATH = (
-    os.environ.get("SHOP_DB_PATH")
-    or (
-        "/root/vpn-shop/data-silentconnect/vpn_shop.db"
-        if Path("/root/vpn-shop/data-silentconnect/vpn_shop.db").exists()
-        else "/root/vpn-shop/data/vpn_shop.db"
-    )
-)
+def _resolve_default_db_path() -> str:
+    env_p = os.environ.get("SHOP_DB_PATH")
+    if env_p:
+        return env_p
+    for candidate in (
+        Path("/root/vpn-shop/data-silentconnect/vpn_shop.db"),
+        Path("/root/vpn-shop/data/vpn_shop.db"),
+        Path.cwd() / "data-silentconnect" / "vpn_shop.db",
+        Path.cwd() / "data" / "vpn_shop.db",
+    ):
+        try:
+            if candidate.is_file():
+                return str(candidate)
+        except (PermissionError, OSError):
+            pass
+    return "data/vpn_shop.db"
+
+
+DB_PATH = _resolve_default_db_path()
 WG_KEY_REGEX = re.compile(r"^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$")
 CLUSTER_KNOWN_HOSTS_PATH = os.environ.get("CLUSTER_KNOWN_HOSTS_PATH", "/root/.ssh/cluster_known_hosts")
 
@@ -970,8 +981,12 @@ def _resolve_db_path(db_path: str | Path | None = None) -> str:
         str(Path.cwd() / "vpn_shop.db"),
     ]
     for c in candidates:
-        if c and Path(c).is_file():
-            return str(c)
+        if c:
+            try:
+                if Path(c).is_file():
+                    return str(c)
+            except (PermissionError, OSError):
+                pass
     return env_path or "/root/vpn-shop/data-silentconnect/vpn_shop.db"
 
 
