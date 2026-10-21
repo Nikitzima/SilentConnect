@@ -1,40 +1,36 @@
-# Руководство по развёртыванию и восстановлению узлов SilentConnect
+# Руководство по развёртыванию и восстановлению узлов SilentConnect (Active-Active Mesh)
 
 > **Статус документа**: Актуальная боевая спецификация (Production Verified)  
-> **Дата последней верификации**: 14.10.2026  
-> **Целевая операционная система**: **Debian GNU/Linux 13 (Trixie)** (ядро Linux 6.12+)  
-> **Связанные документы**: [ARCHITECTURE.md](ARCHITECTURE.md) • [README.md](README.md) • [WHITELIST_SPEC.md](WHITELIST_SPEC.md) • [AMNEZIA_SLOTS.md](AMNEZIA_SLOTS.md)
+> **Дата последней верификации**: 21.10.2026  
+> **Целевая операционная система**: **Debian GNU/Linux 13 (Trixie)** / **Ubuntu 24.04 LTS** (ядро Linux 6.12+)  
+> **Связанные документы**: [ARCHITECTURE.md](ARCHITECTURE.md) • [README.md](README.md) • [AMNEZIA_SLOTS.md](AMNEZIA_SLOTS.md) • [WHITELIST_SPEC.md](WHITELIST_SPEC.md)
 
 ---
 
 ## 1. Стандарт операционной системы и аппаратные требования
 
-Начиная с октября 2026 года в инфраструктуре SilentConnect утверждён переход на **Debian GNU/Linux 13 (Trixie)** в качестве единого базового дистрибутива (успешно введён в строй на узле PL Standby `<PL_IP>` с сетевым каналом 10 Gbps). Новые резервные узлы должны разворачиваться исключительно на Debian 13.
+В архитектуре **Active-Active Mesh** все узлы кластера (**NL**, **PL**, **FI**) являются равноправными боевыми серверами. Базовым стандартом для развёртывания новых узлов утверждён дистрибутив **Debian GNU/Linux 13 (Trixie)** (либо **Ubuntu 24.04 LTS**) с ядром Linux 6.12+.
 
-### Рекомендуемые характеристики сервера:
-- **CPU**: от 2 до 4 vCPU (поддержка AES-NI обязательна).
-- **RAM**: от 4 GB (минимум 2 GB для чистых Standby-нод).
-- **Диск**: NVMe от 40 GB.
-- **Сеть**: 1–10 Gbps безлимитный трафик. Прямой публичный IPv4 (без NAT провайдера).
-- **Поддержка ядра**: Linux 6.12+ (встроенная поддержка современных сетевых планировщиков BBR, eBPF и расширенных модулей WireGuard).
+### Рекомендуемые характеристики узла:
+- **CPU**: от 2 до 4 vCPU (обязательна аппаратная поддержка `AES-NI`).
+- **RAM**: от 4 GB.
+- **Диск**: NVMe от 40 GB (для хранения локальных реплик Turso `libSQL` со временем чтения `0.02 мс`).
+- **Сеть**: 1–10 Gbps безлимитный канал, прямой публичный IPv4 без NAT провайдера.
 
 ---
 
-## 2. Развёртывание нового Standby-узла с нуля (Step-by-Step)
+## 2. Пошаговое развёртывание нового Mesh-узла с нуля
 
-### Шаг 1: Первичная подготовка ОС и базовые пакеты
+### Шаг 1: Подготовка ОС, пакетов и сетевого стека BBR
 ```bash
-# Обновление индекса репозиториев Debian 13 Trixie
 apt-get update && apt-get dist-upgrade -y
 
-# Установка системных утилит и зависимостей ядра
 apt-get install -y \
     curl wget git jq ufw rsync htop net-tools \
     build-essential python3 python3-pip python3-venv \
     sqlite3 libsqlite3-dev ca-certificates gnupg lsb-release \
     iptables iptables-persistent fail2ban rclone
 
-# Включение BBR congestion control
 cat <<'EOF' > /etc/sysctl.d/99-silentconnect.conf
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
@@ -48,84 +44,75 @@ EOF
 sysctl --system
 ```
 
-### Шаг 2: Установка Docker и Docker Compose
+### Шаг 2: Триангуляция идентификации узла (`node_code`)
+> [!IMPORTANT]
+> Подсистема `awg_manager.py` и реконсилятор `xui_reconciler.py` проверяют консистентность кода ноды по трём источникам: файлу `/etc/silentconnect/node_code`, переменной `AWG_LOCAL_SERVER` и системному `hostname`. При расхождении срабатывает защита `NodeIdentityConflictError`.
+
 ```bash
+# Укажите код текущей ноды: nl, pl или fi
+NODE_CODE="pl"
+
+mkdir -p /etc/silentconnect
+echo "${NODE_CODE}" > /etc/silentconnect/node_code
+chmod 644 /etc/silentconnect/node_code
+```
+
+### Шаг 3: Установка Docker, 3X-UI, Caddy и Hysteria 2
+```bash
+# 1. Установка Docker
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 chmod a+r /etc/apt/keyrings/docker.gpg
-
-echo \
-  "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian \
-  "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
-  tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-apt-get update
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 systemctl enable --now docker
-```
 
-### Шаг 3: Установка 3X-UI и ядра Xray
-```bash
-# Установка официального 3X-UI (поддерживающего XHTTP и Reality 0.0.0)
+# 2. Установка 3X-UI
 bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
 
-# Остановка сервиса для инициализации первичных каталогов
-systemctl stop x-ui
-```
-
-### Шаг 4: Установка веб-сервера Caddy
-```bash
-apt-get install -y debian-keyring debian-archive-keyring apt-transport-https
+# 3. Установка Caddy v2
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
-apt-get update
-apt-get install -y caddy
+apt-get update && apt-get install -y caddy
+
+# 4. Установка Hysteria 2
+bash <(curl -fsSL https://get.hy2.sh/)
 ```
 
-### Шаг 5: Установка Hysteria 2
+### Шаг 4: Настройка Python-окружения и драйвера `libsql`
 ```bash
-bash <(curl -fsSL https://get.hy2.sh/)
-systemctl stop hysteria-server
+cd /root/vpn-shop
+python3 -m venv venv
+/root/vpn-shop/venv/bin/pip install --upgrade pip
+/root/vpn-shop/venv/bin/pip install libsql cryptography qrcode pyyaml
+
+# Инициализация локальной реплики Turso
+/root/vpn-shop/venv/bin/python3 -m vpn_shop --env-file .env.silentconnect init-db
 ```
 
 ---
 
 ## 3. Каталог и конфигурация Systemd-сервисов
 
-На резервном Standby-узле действуют строгие правила изоляции: **Telegram-бот отключён**, веб-витрина запущена в режиме Standby, подписки и прокси-инбаунды активны.
+В архитектуре Active-Active на каждом узле работают:
+1. `subjson.service` — выдача подписок и мастер подключения (`:3088`).
+2. `vpn-shop-web.service` — веб-витрина, личный кабинет и вебхуки (`:3090`).
+3. `vpn-shop-xui-reconciler.service` — автономный демон Pull-реконсиляции 3X-UI и AmneziaWG из Turso.
+4. `vpn-shop-silentconnect.service` — демон бота и периодических задач (координируется через `cluster_leases`).
 
-### 3.1. Сервис подписок: `/etc/systemd/system/subjson.service`
+### 3.1. Автономный реконсилятор: `/etc/systemd/system/vpn-shop-xui-reconciler.service`
 ```ini
 [Unit]
-Description=SilentConnect SubJSON Subscription Service
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/root/subjson-service
-EnvironmentFile=/root/subjson-service/subjson.env
-ExecStart=/root/subjson-service/venv/bin/python3 -m uvicorn app:app --host 127.0.0.1 --port 3088 --workers 2
-Restart=always
-RestartSec=3
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### 3.2. Сервис веб-витрины: `/etc/systemd/system/vpn-shop-web.service`
-```ini
-[Unit]
-Description=SilentConnect VPN Shop Web Cabinet & SBP Checkout
-After=network.target
+Description=SilentConnect Autonomous 3X-UI & AWG Pull Reconciler (Turso Mesh)
+After=network-online.target x-ui.service docker.service
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/root/vpn-shop
 EnvironmentFile=/root/vpn-shop/.env.silentconnect
-ExecStart=/root/vpn-shop/venv/bin/python3 -m vpn_shop.web --port 3090
+ExecStart=/root/vpn-shop/venv/bin/python3 -m vpn_shop --env-file .env.silentconnect reconcile-xui --daemon --interval 15.0
 Restart=always
 RestartSec=3
 LimitNOFILE=65535
@@ -134,17 +121,74 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 ```
 
-### 3.3. Telegram-бот: `/etc/systemd/system/vpn-shop-silentconnect.service`
-> **ВАЖНО**: На Standby-узлах этот юнит обязан быть **ОТКЛЮЧЁН**, чтобы избежать конкуренции за Telegram Long Polling / Webhook с NL Master!
-```bash
-systemctl disable --now vpn-shop-silentconnect.service
+### 3.2. Сервис подписок: `/etc/systemd/system/subjson.service`
+```ini
+[Unit]
+Description=SilentConnect SubJSON Subscription Service
+After=network.target x-ui.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/subjson-service
+EnvironmentFile=/root/subjson-service/subjson.env
+ExecStart=/root/vpn-shop/venv/bin/python3 /root/subjson-service/app.py
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-### 3.4. SNI Мультиплексор порта 443: `/etc/systemd/system/xray-multiplexer.service`
-Бинарник Xray слушает сокет `0.0.0.0:443` и разделяет Reality SNI и Web SNI:
+### 3.3. Сервис веб-витрины и чекаута: `/etc/systemd/system/vpn-shop-web.service`
+```ini
+[Unit]
+Description=SilentConnect VPN Shop Web Cabinet & Checkout
+After=network-online.target x-ui.service subjson.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/vpn-shop
+EnvironmentFile=/root/vpn-shop/.env.silentconnect
+ExecStart=/root/vpn-shop/venv/bin/python3 -m vpn_shop --env-file .env.silentconnect run-web
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 3.4. Сервис бота и фоновых лизов: `/etc/systemd/system/vpn-shop-silentconnect.service`
+> [!TIP]
+> Благодаря таблице `cluster_leases` в Turso и автоматическому переключению в `SERVERLESS_MODE` при `HTTP 409 Conflict`, юнит `vpn-shop-silentconnect.service` безопасен при работе совместно с `tgcloud` и на нескольких нодах: фоновые задачи рассылки и очистки всегда выполняет ровно один узел, удерживающий активный лиз.
+
+```ini
+[Unit]
+Description=VPN Shop Bot & Cluster Lease Worker - SilentConnect
+After=network-online.target x-ui.service subjson.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/vpn-shop
+EnvironmentFile=/root/vpn-shop/.env.silentconnect
+ExecStart=/root/vpn-shop/venv/bin/python3 -m vpn_shop --env-file .env.silentconnect run-bot
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 3.5. SNI Мультиплексор порта 443: `/usr/local/etc/xray-multiplexer/config.json`
 ```json
 {
-  "log": { "loglevel": "warning" },
+  "log": { "loglevel": "warning", "access": "none" },
   "inbounds": [
     {
       "port": 443,
@@ -164,31 +208,21 @@ systemctl disable --now vpn-shop-silentconnect.service
   "outbounds": [
     {
       "protocol": "freedom",
-      "tag": "direct"
-    },
-    {
-      "protocol": "freedom",
       "tag": "to-xray-reality",
-      "settings": {
-        "redirect": "127.0.0.1:23385"
-      }
+      "settings": { "redirect": "127.0.0.1:23385" }
     },
     {
       "protocol": "freedom",
       "tag": "to-caddy-web",
-      "settings": {
-        "redirect": "127.0.0.1:4430"
-      }
+      "settings": { "redirect": "127.0.0.1:4430" }
     }
   ],
   "routing": {
-    "domainStrategy": "IPIfNonMatch",
+    "domainStrategy": "AsIs",
     "rules": [
       {
         "type": "field",
-        "domain": [
-          "<REALITY_SNI_1>", "<REALITY_SNI_2>", "<REALITY_SNI_3>"
-        ],
+        "domain": ["<REALITY_SNI_1>", "<REALITY_SNI_2>", "<REALITY_SNI_3>"],
         "outboundTag": "to-xray-reality"
       },
       {
@@ -201,40 +235,36 @@ systemctl disable --now vpn-shop-silentconnect.service
 }
 ```
 
-### 3.5. Конфигурация Caddy: `/etc/caddy/Caddyfile`
+### 3.6. Конфигурация Caddy: `/etc/caddy/Caddyfile`
 ```caddy
 {
     https_port 4430
+    http_port 80
     admin 127.0.0.1:2019
 }
 
-# Прямой доступ по IP (резервный HTTP)
-:80, :8080 {
-    reverse_proxy 127.0.0.1:3088
-}
-
-# Основной шлюз доменов подписок и чекаута
-<PL_DOMAIN>, <SUB_DOMAIN>, <EDGE_DOMAIN> {
-    # WebSocket туннель VLESS 443
+<PL_DOMAIN>, <SUB_DOMAIN>, <EDGE_DOMAIN>, <SHOP_DOMAIN>, www.<SHOP_DOMAIN> {
     @ws_inbound path /sc-ws-9c3d7f1e*
     handle @ws_inbound {
         reverse_proxy 127.0.0.1:10010
     }
 
-    # API заказов и чекаут
-    @shop_api path /order/* /api/payment/*
-    handle @shop_api {
+    @shop_routes {
+        path / /order/* /api/* /cabinet/* /legal/* /about /contact /assets/telegram/*
+    }
+    handle @shop_routes {
+        encode zstd gzip
         reverse_proxy 127.0.0.1:3090
     }
 
-    # Подписки и общие API
     handle {
+        encode zstd gzip
         reverse_proxy 127.0.0.1:3088
     }
 }
 ```
 
-### 3.6. Конфигурация Hysteria 2: `/etc/hysteria/config.yaml`
+### 3.7. Конфигурация Hysteria 2: `/etc/hysteria/config.yaml`
 ```yaml
 listen: :38443
 
@@ -261,128 +291,80 @@ quic:
 bandwidth:
   up: 1 Gbps
   down: 1 Gbps
-
-ignoreClientBandwidth: false
-disableUDP: false
 ```
 
 ---
 
-## 4. Сетевая безопасность и правила Iptables
+## 4. Сетевая безопасность, UFW и правила Iptables
 
-### 4.1. UFW Rate Limiting и блокировка внутренних портов
+### 4.1. Настройка UFW и отключение шумного логирования
 ```bash
 ufw default deny incoming
 ufw default allow outgoing
+ufw logging off
 
-# Защита SSH от перебора (hitcount 6 / 30s)
 ufw limit 22/tcp
-
-# Публичные порты веб-сервисов и мультиплексора
 ufw allow 80/tcp
 ufw allow 443/tcp
 ufw allow 4430/tcp
-ufw allow 8080/tcp
+ufw allow 8443/tcp
+ufw allow 23385/tcp
+ufw allow 29443/tcp
+ufw allow 38443/udp
+ufw allow 44121/udp          # На узле FI: 49752/udp
+ufw allow 30000:40000/udp    # Port Hopping для Hysteria 2
 
-# Публичные порты протоколов туннелирования
-ufw allow 8443/tcp     # XHTTP Reality
-ufw allow 23385/tcp    # TCP Reality Vision
-ufw allow 29443/tcp    # gRPC Reality
-ufw allow 38443/udp    # Hysteria 2 UDP
-ufw allow 44121/udp    # AmneziaWG (на FI: 49752/udp)
-ufw allow 30000:40000/udp # Диапазон скачкообразных портов Hysteria
-
-# Запрет доступа к внутренним портам извне
-ufw deny 2053/tcp      # X-UI панель
-ufw deny 2096/tcp      # X-UI панель доп.
-ufw deny 3088/tcp      # SubJSON API
-ufw deny 3090/tcp      # VPN Shop Web (доступен только через Caddy)
+# Блокировка прямого внешнего доступа к внутренним портам
+ufw deny 2053/tcp
+ufw deny 2096/tcp
+ufw deny 3088/tcp
+ufw deny 3090/tcp
 
 ufw --force enable
 ```
 
-### 4.2. Настройка NAT PREROUTING и редиректов Hysteria 2
-Добавьте в `/etc/iptables/rules.v4` (или выполните команды `iptables` с сохранением через `netfilter-persistent save`):
-
+### 4.2. Редиректы портов Hysteria 2 и NAT AmneziaWG
 ```bash
-# Редирект UDP 443 и диапазона 30000:40000 на сокет Hysteria 38443
 iptables -t nat -A PREROUTING -p udp --dport 30000:40000 -j REDIRECT --to-ports 38443
 iptables -t nat -A PREROUTING -p udp --dport 443 -j REDIRECT --to-ports 38443
 
-# Проброс AmneziaWG в Docker контейнер (IP amn0: 172.17.0.2)
 iptables -t nat -A DOCKER ! -i docker0 -p udp --dport 44121 -j DNAT --to-destination 172.17.0.2:44121
 iptables -t nat -A POSTROUTING -s 172.17.0.2/32 -d 172.17.0.2/32 -p udp --dport 44121 -j MASQUERADE
 
-# Сохранение правил
 netfilter-persistent save
 ```
 
 ---
 
-## 5. Восстановление узла из резервной копии (Disaster Recovery)
+## 5. Аварийное восстановление узла (Disaster Recovery)
 
-Бэкапы выгружаются в Google Drive через `rclone`. При выходе сервера из строя или необходимости ввода новой ноды процедура восстановления выглядит следующим образом:
+В архитектуре Active-Active с **Turso (libSQL)** восстановление данных при полной замене сервера происходит автоматически:
 
-### Шаг 1: Настройка rclone на целевом сервере
-Создайте файл `/root/.config/rclone/rclone.conf` с валидным токеном Google Drive:
-```ini
-[gdrive]
-type = drive
-scope = drive
-token = {"access_token":"<GDRIVE_ACCESS_TOKEN>","token_type":"Bearer","refresh_token":"<GDRIVE_REFRESH_TOKEN>"}
-```
-
-Проверьте доступность хранилища бэкапов:
-```bash
-rclone lsd gdrive:<GDRIVE_BACKUP_FOLDER_ID>/
-# Ожидаемый вывод: backup_nl, backup_pl, backup_fi
-```
-
-### Шаг 2: Скачивание актуального Stack-архива
-```bash
-# Просмотр последних архивов
-rclone ls gdrive:<GDRIVE_BACKUP_FOLDER_ID>/backup_pl/ | grep stack
-
-# Загрузка последнего архива (например, pl_stack_2026-10-14_01-00-01.tar.gz)
-rclone copy gdrive:<GDRIVE_BACKUP_FOLDER_ID>/backup_pl/pl_stack_LATEST.tar.gz /var/tmp/
-```
-
-### Шаг 3: Распаковка и развёртывание конфигураций
-```bash
-cd /var/tmp
-tar -xzvf pl_stack_LATEST.tar.gz
-
-# Восстановление базы X-UI
-cp -f etc/x-ui/x-ui.db /etc/x-ui/x-ui.db
-chmod 600 /etc/x-ui/x-ui.db
-
-# Восстановление базы магазина
-mkdir -p /root/vpn-shop/data-silentconnect
-cp -f root/vpn-shop/data-silentconnect/vpn_shop.db /root/vpn-shop/data-silentconnect/vpn_shop.db
-
-# Восстановление конфигураций Caddy, Hysteria, Xray
-cp -rf etc/caddy/Caddyfile /etc/caddy/Caddyfile
-cp -rf etc/hysteria/config.yaml /etc/hysteria/config.yaml
-cp -rf usr/local/etc/xray-* /usr/local/etc/
-
-# Перезапуск всех сервисов
-systemctl restart x-ui caddy hysteria-server subjson vpn-shop-web
-```
+1. **Восстановление системных конфигураций из Google Drive**:
+   ```bash
+   rclone copy gdrive:<GDRIVE_BACKUP_FOLDER_ID>/backup_pl/pl_stack_LATEST.tar.gz /var/tmp/
+   cd /var/tmp && tar -xzvf pl_stack_LATEST.tar.gz
+   cp -f etc/x-ui/x-ui.db /etc/x-ui/x-ui.db
+   cp -f etc/caddy/Caddyfile /etc/caddy/Caddyfile
+   cp -f etc/hysteria/config.yaml /etc/hysteria/config.yaml
+   ```
+2. **Автоматическое стягивание БД и клиентов из Turso**:
+   При запуске `vpn-shop-xui-reconciler.service` узел автоматически:
+   - Скачивает актуальную реплику `vpn_shop` из облака Turso на NVMe.
+   - Догоняет все новые/продлённые профили в локальную панель `3X-UI` через REST API.
+   - Генерирует и применяет актуальный `/opt/amnezia/awg/awg0.conf` со всеми активными слотами AmneziaWG для данной локации.
 
 ---
 
 ## 6. Чеклист валидации после развёртывания (Post-Deployment Checklist)
 
-После завершения настройки выполните следующие команды для проверки корректности функционирования:
-
-| Шаг проверки | Команда терминала | Ожидаемый результат |
-|---|---|---|
-| **1. Сокеты TCP** | `ss -tulpn \| grep -E '443\|4430\|8443\|23385\|3088\|3090'` | Все порты активны, 443 слушает Xray multiplexer, 4430 — Caddy |
-| **2. Сокеты UDP** | `ss -tulpn \| grep -E '38443\|44121'` | 38443 занят hysteria, 44121 занят docker-proxy (AWG) |
-| **3. Правила NAT** | `iptables -t nat -S \| grep REDIRECT` | Редиректы UDP 443 и 30000:40000 на 38443 присутствуют |
-| **4. Статус служб** | `systemctl is-active subjson vpn-shop-web x-ui caddy hysteria-server` | Все службы возвращают `active` |
-| **5. Проверка Standby**| `systemctl is-active vpn-shop-silentconnect` | Возвращает `inactive` (бот не должен работать на standby) |
-| **6. База данных** | `sqlite3 -readonly /etc/x-ui/x-ui.db "SELECT count(*) FROM inbounds;"` | Число инбаундов >= 3 (Reality, XHTTP, gRPC) |
-| **7. Hysteria Auth** | `curl -s http://127.0.0.1:3088/internal/hysteria-auth -d '{"user":"test"}'` | Возвращает корректный HTTP-ответ от SubJSON |
-| **8. Web Checkout** | `curl -sI http://127.0.0.1:3090/healthz \| head -n 1` | `HTTP/1.1 200 OK` |
-| **9. Приём бэкапа** | `ls -l --full-time /root/vpn-shop/data-silentconnect/vpn_shop.db` | Время обновления базы соответствует последнему 3-минутному циклу |
+| № | Проверка | Команда терминала | Ожидаемый результат |
+|---|---|---|---|
+| **1** | Идентификация ноды | `cat /etc/silentconnect/node_code` | Выводит точный код узла (`nl`, `pl` или `fi`) |
+| **2** | Службы Systemd | `systemctl is-active subjson vpn-shop-web vpn-shop-xui-reconciler x-ui caddy hysteria-server` | Все службы в статусе `active` |
+| **3** | Реплика Turso | `ls -lh /root/vpn-shop/data-silentconnect/vpn_shop_replica_*.db` | Присутствуют файлы локальных реплик `web`, `subjson`, `xui_reconcile` |
+| **4** | Тест реконсилятора | `python3 -m vpn_shop --env-file .env.silentconnect reconcile-xui --once --dry-run` | Возвращает JSON `{"ok": true, "profiles_checked": N, ...}` |
+| **5** | Сокеты TCP/UDP | `ss -tulpn \| grep -E '443\|4430\|23385\|3088\|3090\|38443\|44121'` | Все порты прослушиваются штатными демонами |
+| **6** | Hysteria 2 Auth | `curl -s -X POST http://127.0.0.1:3088/internal/hysteria-auth -d '{"auth":"test"}'` | Возвращает валидный JSON-ответ от `subjson` |
+| **7** | Healthcheck Web | `curl -s http://127.0.0.1:3090/healthz` | `{"status":"ok"}` |
+| **8** | Тихий режим логов | `grep -F '"access": "none"' /usr/local/x-ui/bin/config.json` | Логирование пользовательских подключений отключено |
