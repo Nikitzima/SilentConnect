@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies & Ruff
         run: |
           python -m pip install --upgrade pip
-          pip install ruff cryptography qrcode
+          pip install ruff cryptography qrcode pyyaml
 
       - name: Static analysis for undefined names & syntax errors (Ruff F821/E999)
         run: |
