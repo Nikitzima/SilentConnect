@@ -1,287 +1,351 @@
-# SilentConnect: Мультипротокольная Active-Active VPN-платформа и автоматизация подписок
+# SilentConnect: Мультипротокольная Active-Active VPN-платформа и распределённая сеть подписок
 
-[![Security Audit](https://img.shields.io/badge/Security_Audit-Zero_Leaks_Passed-10b981.svg?style=flat-square)](#автоматическая-безопасность-и-верификация)
-[![Tests](https://img.shields.io/badge/Tests-128_passed_(0_leaks)-10b981.svg?style=flat-square)](#автоматическая-безопасность-и-верификация)
-[![Architecture](https://img.shields.io/badge/Topology-Active--Active_Mesh_%7C_Turso_libSQL-0ea5e9.svg?style=flat-square)](#обзор-архитектуры)
-[![Версия Python](https://img.shields.io/badge/Python-3.11+-3b82f6.svg?style=flat-square)](https://www.python.org/)
-[![Лицензия](https://img.shields.io/badge/License-MIT-64748b.svg?style=flat-square)](LICENSE)
-[![Протоколы](https://img.shields.io/badge/Protocols-VLESS_%7C_Reality_%7C_XHTTP_%7C_Hysteria2_%7C_AmneziaWG_%7C_OpenFlux-8b5cf6.svg?style=flat-square)](#поддержка-протоколов-и-доставка-подписок)
+[![Security Audit](https://img.shields.io/badge/Security_Audit-Zero_Leaks_Verified-10b981.svg?style=flat-square)](#автоматизированный-контроль-безопасности-и-zero-leak)
+[![Test Suite](https://img.shields.io/badge/Tests-128_Passed-10b981.svg?style=flat-square)](#автоматизированный-контроль-безопасности-и-zero-leak)
+[![Topology](https://img.shields.io/badge/Topology-Active--Active_Mesh_%7C_Turso_libSQL-0ea5e9.svg?style=flat-square)](#обзор-архитектуры)
+[![Cloudflare](https://img.shields.io/badge/Cloudflare-DNS--Only_%E2%9A%AA-slate.svg?style=flat-square)](#архитектура-маршрутизации-dns-и-входящего-трафика)
+[![Python Version](https://img.shields.io/badge/Python-3.11+-3b82f6.svg?style=flat-square)](https://www.python.org/)
+[![Protocols](https://img.shields.io/badge/Protocols-VLESS_%7C_Hysteria_2_%7C_AmneziaWG_%7C_OpenFlux-8b5cf6.svg?style=flat-square)](#матрица-протоколов-и-сетевых-сокетов)
+[![License](https://img.shields.io/badge/License-MIT-64748b.svg?style=flat-square)](LICENSE)
 
-**SilentConnect** — высокодоступная геораспределённая мультипротокольная платформа защищённого туннелирования и автоматизации подписок, построенная на базе архитектуры **Active-Active Mesh**. Платформа спроектирована для бесперебойной работы в условиях глубокой фильтрации трафика (DPI / ТСПУ), блокировок по белым спискам и отказов отдельных дата-центров.
-
-Экосистема объединяет серверлесс-совместимого Telegram-бота (`tgcloud` / `vpn_shop.bot`), веб-витрину с мгновенной оплатой по СБП / картам / Plati.market (`vpn_shop.web`), динамический генератор мультиформатных подписок (`subjson-service`), хаб выделенных слотов **AmneziaWG** с квотированием трафика и **автономный демон Pull-реконсиляции 3X-UI и WireGuard** (`xui_reconciler.py`) поверх облачной СУБД **Turso (libSQL)** с локальными NVMe-репликами.
+[English Portal (README.md)](README.md) • [Русская версия](README_RU.md)
 
 ---
 
-## Содержание
+## Резюме проекта
 
-1. [Обзор архитектуры](#обзор-архитектуры)
-2. [Инвентарь боевых узлов](#инвентарь-боевых-узлов)
-3. [Микросервисы и ключевые движки](#микросервисы-и-ключевые-движки)
-4. [Плоскость данных Active-Active и автономная реконсиляция](#плоскость-данных-active-active-и-автономная-реконсиляция)
-5. [Поддержка протоколов и доставка подписок](#поддержка-протоколов-и-доставка-подписок)
-6. [Поддерживаемые платформы и клиентская матрица](#поддерживаемые-платформы-и-клиентская-матрица)
-7. [Telegram-бот и сценарии управления](#telegram-бот-и-сценарии-управления)
-8. [Веб-витрина, платёжные шлюзы и личный кабинет](#веб-витрина-платёжные-шлюзы-и-личный-кабинет)
-9. [Конфигурация и каталог переменных окружения](#конфигурация-и-каталог-переменных-окружения)
-10. [Деплой и быстрый старт](#деплой-и-быстрый-старт)
-11. [Автоматическая безопасность и верификация](#автоматическая-безопасность-и-верификация)
-12. [Указатель детальной документации](#указатель-детальной-документации)
+**SilentConnect** — высокодоступная геораспределённая мультипротокольная платформа защищённого туннелирования и автоматизации подписок на базе архитектуры **Active-Active Mesh**, спроектированная для непрерывной работы в условиях глубокой фильтрации пакетов (DPI / ТСПУ), блокировок по белым спискам и аппаратных отказов дата-центров.
+
+Построенная по принципу распределённой архитектуры без разделяемых ресурсов (shared-nothing), SilentConnect объединяет глобальное авторитетное состояние в **Turso Cloud (libSQL)** с локальными встроенными NVMe-репликами (`libsql_replica.py`) на каждом узле, обеспечивая время отклика на чтение менее 0.02 мс. Автономный локальный pull-демон (`xui_reconciler.py`) опрашивает базу каждые 15 секунд (или в течение 100 мс по сигналу `SIGUSR1`) и обновляет состояние клиентов непосредственно в оперативной памяти 3X-UI через локальный REST API без перезапуска ядра Xray Core и без разрыва активных клиентских сессий.
+
+Входящий TCP-трафик на порту 443 демультиплексируется через `xray-dokodemo-door`, прозрачно разделяя скрытый трафик Reality от служебных веб-доменов, обслуживаемых TLS-прокси Caddy. Платформа включает автоматизированную веб-витрину с приёмом платежей через СБП, банковские карты и Digiseller (`vpn_shop.web`), асинхронный systemd-демон Telegram-бота (`vpn_shop.bot`), генератор мультиформатных клиентских подписок (`subjson-service`), хаб выделенных устройств **AmneziaWG** с монотонным 30-дневным квотированием и гарантией мягкого отключения, а также выделенные контейнеры **OpenFlux Sandbox** для работы в изолированных белых списках.
+
+---
+
+## Портал навигации по документации (Фреймворк Diátaxis)
+
+Вся техническая документация репозитория структурирована строго по стандарту **Diátaxis**:
+
+| Уровень Diátaxis | Документ | Область и назначение |
+|---|---|---|
+| **Обзор и портал** | [README.md](README.md) / [README_RU.md](README_RU.md) | Общая архитектурная сводка, руководство по быстрому старту, матрица протоколов и базис безопасности. |
+| **Объяснение (Explanation)** | [ARCHITECTURE.md](ARCHITECTURE.md) | Глубокий разбор архитектуры: Active-Active Mesh, репликация Turso WAL, встроенные реплики на NVMe, жизненный цикл реконсилятора и предохранители. |
+| **Инструкции (How-To)** | [DEPLOYMENT.md](DEPLOYMENT.md) | Эксплуатационное руководство: пошаговая инициализация узлов, шаблоны systemd, файрвол UFW, port hopping в iptables и playbook добавления `Node-N`. |
+| **Справочник (Reference)** | [AMNEZIA_SLOTS.md](AMNEZIA_SLOTS.md) | Топология слотов AmneziaWG, монотонный учёт 30-дневных квот, гарантия мягкого отключения и параметры обфускации пакетов (`Jc`, `S1-S4`, `H1-H4`). |
+| **Справочник (Reference)** | [WHITELIST_SPEC.md](WHITELIST_SPEC.md) | Спецификация изолированных Docker-песочниц OpenFlux v0.3.0, двухфазная миграция без простоя и распределение по узлам. |
 
 ---
 
 ## Обзор архитектуры
 
-В отличие от традиционных систем с одним мастер-сервером и периодическим копированием базы по SSH, **SilentConnect** функционирует как симметричный **Active-Active Mesh**. Каждый узел кластера (**NL**, **PL**, **FI**) одновременно обслуживает пользовательский трафик, читает данные из собственной локальной NVMe-реплики за `0.02 мс` и автономно синхронизирует свои прокси-инбаунды из облака **Turso (libSQL)**:
+SilentConnect функционирует как полностью делокализованная симметричная сеть **Active-Active Mesh** между модульными узлами (`Node-1`, `Node-2`, `Node-3` и универсальным `Node-N`). Каждый узел кластера является автономным пиром, одновременно обслуживает входящий VPN-трафик пользователей, читает данные из собственной встроенной NVMe-реплики и независимо синхронизирует локальные службы напрямую с базой Turso Cloud.
 
-```text
-                                       [ Пользователи, Клиенты и Вебхуки ]
-                                                        │
-                 ┌──────────────────────────────────────┴──────────────────────────────────────┐
-                 │                                                                             │
-  [ HTTPS: Магазин, Кабинет и Подписки ]                                        [ VPN-трафик (Обход DPI) ]
-                 │                                                                             │
-       https://<SUB_DOMAIN>                                                    https://<EDGE_DOMAIN> / <PL_DOMAIN>
- (Yandex Cloud API Gateway Anycast)                                                    / <FI_DOMAIN>
-  Авто-фэйловер: NL -> PL -> FI (3.5s)                                          (Прямые A-записи узлов)
-                 │                                                                             │
-       ┌─────────┴──────────────────────────────┬────────────────────────────────────┐         │
-       ▼                                        ▼                                    ▼         ▼
-┌───────────────────────────────┐      ┌───────────────────────────────┐      ┌───────────────────────────────┐
-│     NL NODE (1 Gbps Mesh)     │      │    PL NODE (10 Gbps Mesh)     │      │     FI NODE (1 Gbps Mesh)     │
-│                               │      │                               │      │                               │
-│ • Xray Dokodemo Mux (:443)    │      │ • Xray Dokodemo Mux (:443)    │      │ • Xray Dokodemo Mux (:443)    │
-│ • Caddy v2 TLS (:4430)        │      │ • Caddy v2 TLS (:4430)        │      │ • Caddy v2 TLS (:4430)        │
-│ • Web Shop (:3090) & SubJSON  │      │ • Web Shop (:3090) & SubJSON  │      │ • Web Shop (:3090) & SubJSON  │
-│ • Xray Reality / Hysteria 2   │      │ • Xray Reality / Hysteria 2   │      │ • Xray Reality / Hysteria 2   │
-│ • AmneziaWG (:44121)          │      │ • AmneziaWG (:44121)          │      │ • AmneziaWG (:49752)          │
-│ • OpenFlux v0.3.0 Worker      │      │ • OpenFlux v0.3.0 Worker      │      │ • Cluster Watchdog Daemon     │
-│ • xui_reconciler.py (Демон)   │      │ • xui_reconciler.py (Демон)   │      │ • xui_reconciler.py (Демон)   │
-│ • Локальная NVMe-реплика      │      │ • Локальная NVMe-реплика      │      │ • Локальная NVMe-реплика      │
-└───────────────┬───────────────┘      └───────────────┬───────────────┘      └───────────────┬───────────────┘
-                │                                      │                                      │
-                └──────────────────────────────────────┼──────────────────────────────────────┘
-                                                       │
-                                   [ Двунаправленная синхронизация libSQL (2.0s) ]
-                                                       ▼
-                                     ┌───────────────────────────────────┐
-                                     │     TURSO CLOUD (libSQL Primary)  │
-                                     │ • Глобальное состояние кластера   │
-                                     │ • Профили, заказы, слоты AWG      │
-                                     │ • Распределённые лизы (Leases)    │
-                                     └─────────────────┬─────────────────┘
-                                                       ▲
-                                                       │
-                                     ┌─────────────────┴─────────────────┐
-                                     │  Серверлесс Telegram-бот (tgcloud)│
-                                     │  + Фоновый исполнитель по лизу    │
-                                     └───────────────────────────────────┘
+В системе отсутствуют единые точки отказа (SPOF), нет блокирующих межсерверных SSH-вызовов при покупке тарифа и исключена синхронизация файлов баз данных по cron через SCP.
+
+### Диаграмма топологии системы
+
+```mermaid
+flowchart TD
+    subgraph Clients["Уровень клиентов и точек входа"]
+        CLI["VPN-клиенты\n(Streisand / Happ / Sing-box / Amnezia)"]
+        WEB_CLI["Пользователи Web и Telegram\n(Витрина / Кабинет / Оплата)"]
+        DNS["Cloudflare DNS-Only A-Records\n(SHOP / SUB / EDGE Домены)"]
+    end
+
+    subgraph Cluster["Кластерная сеть Active-Active Multi-Node Mesh"]
+        subgraph N1["Node-1 (Главный координатор и Control Plane - 1 Gbps)"]
+            MUX1["xray-dokodemo-door (:443 Mux)"]
+            CAD1["Реверс-прокси Caddy (:4430 TLS)"]
+            WEB1["vpn-shop-web (:3090 Активная витрина)"]
+            BOT1["vpn_shop.bot (Systemd-демон)"]
+            SUB1["subjson-service (:3088 Подписки)"]
+            VPN1["Xray Reality и Hysteria 2 и AWG (:44121)"]
+            OF1["Пул воркеров OpenFlux Sandbox"]
+            REC1["xui_reconciler.py (Pull-демон)"]
+            DB1[("Локальная NVMe-реплика (libsql)")]
+        end
+
+        subgraph N2["Node-2 (Высокоскоростной транзитный пир - 10 Gbps)"]
+            MUX2["xray-dokodemo-door (:443 Mux)"]
+            CAD2["Реверс-прокси Caddy (:4430 TLS)"]
+            WEB2["vpn-shop-web (:3090 Standby API)"]
+            SUB2["subjson-service (:3088 Подписки)"]
+            VPN2["Xray Reality и Hysteria 2 и AWG (:44121)"]
+            OF2["Пул воркеров OpenFlux Sandbox"]
+            REC2["xui_reconciler.py (Pull-демон)"]
+            DB2[("Локальная NVMe-реплика (libsql)")]
+        end
+
+        subgraph N3["Node-3 (Периферийный транзитный пир - 1 Gbps)"]
+            MUX3["xray-dokodemo-door (:443 Mux)"]
+            CAD3["Реверс-прокси Caddy (:4430 TLS)"]
+            WEB3["vpn-shop-web (:3090 Standby API)"]
+            SUB3["subjson-service (:3088 Подписки)"]
+            VPN3["Xray Reality и Hysteria 2 и AWG (:49752)"]
+            REC3["xui_reconciler.py (Pull-демон)"]
+            DB3[("Локальная NVMe-реплика (libsql)")]
+        end
+    end
+
+    subgraph State["Слой глобального авторитетного состояния"]
+        TURSO[("Turso Cloud Primary (libSQL)\nАвторитетная СУБД кластера")]
+        PROTO["tgcloud (Экспериментальный прототип)"]
+    end
+
+    %% Входной трафик и клиенты
+    WEB_CLI -->|"HTTPS Web / Кабинет"| DNS
+    DNS -->|"SHOP_DOMAIN -> Node-1 IP"| MUX1
+    DNS -->|"SUB_DOMAIN -> Node-1 IP"| MUX1
+
+    CLI -->|"EDGE_DOMAIN / Node-1 IP"| MUX1
+    CLI -->|"NODE2_DOMAIN / Node-2 IP"| MUX2
+    CLI -->|"NODE3_DOMAIN / Node-3 IP"| MUX3
+
+    %% Внутренняя демультиплексация на Node-1
+    MUX1 -->|"Reality SNI"| VPN1
+    MUX1 -->|"Служебный SNI"| CAD1
+    CAD1 --> WEB1
+    CAD1 --> SUB1
+
+    %% Внутренняя демультиплексация на Node-2
+    MUX2 -->|"Reality SNI"| VPN2
+    MUX2 -->|"Служебный SNI"| CAD2
+    CAD2 --> WEB2
+    CAD2 --> SUB2
+
+    %% Внутренняя демультиплексация на Node-3
+    MUX3 -->|"Reality SNI"| VPN3
+    MUX3 -->|"Служебный SNI"| CAD3
+    CAD3 --> WEB3
+    CAD3 --> SUB3
+
+    %% Синхронизация встроенных реплик libSQL NVMe
+    DB1 <-->|"sync_if_stale (2.0с) / force_sync"| TURSO
+    DB2 <-->|"sync_if_stale (2.0с) / force_sync"| TURSO
+    DB3 <-->|"sync_if_stale (2.0с) / force_sync"| TURSO
+
+    %% Автономные хуки реконсилятора
+    REC1 -.->|"pull 15с / SIGUSR1"| DB1
+    REC1 -.->|"Горячее обновление RAM"| VPN1
+
+    REC2 -.->|"pull 15с / SIGUSR1"| DB2
+    REC2 -.->|"Горячее обновление RAM"| VPN2
+
+    REC3 -.->|"pull 15с / SIGUSR1"| DB3
+    REC3 -.->|"Горячее обновление RAM"| VPN3
+
+    BOT1 <--> DB1
+    PROTO -.->|"Только тестирование"| TURSO
 ```
 
-> [!IMPORTANT]
-> **Отказ от межсерверного SSH и SCP-скриптов**: Узлы не копируют файлы баз данных друг другу по cron. Запись любого заказа или слота в Turso автоматически доставляется на все узлы кластера и применяется в оперативной памяти Xray и ядре WireGuard.
-
----
-
-## Инвентарь боевых узлов
-
-| Код узла | Регион | Канал связи | Размещённые службы | Роль в кластере |
-|---|---|---|---|---|
-| **NL (`nl`)** | Западная Европа (Нидерланды) | 1 Gbps | • `vpn-shop-web` (`:3090`) и `subjson` (`:3088`)<br>• `xui_reconciler.py` (Pull-демон)<br>• Xray Reality / Hysteria 2 (`gecko`)<br>• AmneziaWG (`10.8.1.0/24`, `:44121`)<br>• Воркеры OpenFlux v0.3.0 | **ACTIVE MESH PEER**<br>(Основной апстрим для YC API Gateway; локальная NVMe-реплика Turso) |
-| **PL (`pl`)** | Центральная Европа (Польша) | **10 Gbps** | • `vpn-shop-web` (`:3090`) и `subjson` (`:3088`)<br>• `xui_reconciler.py` (Pull-демон)<br>• Xray Reality / Hysteria 2 (`gecko`)<br>• AmneziaWG (`10.8.3.0/24`, `:44121`)<br>• Воркеры OpenFlux v0.3.0 | **ACTIVE MESH PEER**<br>(Второй апстрим в цепочке YC API Gateway; высокоскоростной 10 Gbps транзит) |
-| **FI (`fi`)** | Северная Европа (Финляндия) | 1 Gbps | • `vpn-shop-web` (`:3090`) и `subjson` (`:3088`)<br>• `xui_reconciler.py` (Pull-демон)<br>• Xray Reality / Hysteria 2 (`gecko`)<br>• AmneziaWG (`10.8.2.0/24`, `:49752`)<br>• Демон Cluster Watchdog | **ACTIVE MESH PEER**<br>(Третий апстрим в цепочке YC API Gateway; активный узел транзита трафика) |
-
----
-
-## Микросервисы и ключевые движки
-
-### 1. `vpn_shop.libsql_replica` (Менеджер встроенных реплик Turso)
-- **Путь**: [`vpn-shop/vpn_shop/libsql_replica.py`](vpn-shop/vpn_shop/libsql_replica.py)
-- **Описание**: Потокобезопасный драйвер встроенных реплик (`LibsqlReplicaManager` и `LibsqlConnectionProxy`) с полной эмуляцией `sqlite3.Row`.
-- **Возможности**:
-  - Чтение с локального NVMe-диска за `0.02 мс` без сетевых задержек.
-  - Фоновая неблокирующая синхронизация (`sync_if_stale` каждые `2.0 с`) под отдельным мьютексом `_sync_lock`.
-  - Принудительная синхронизация `force_sync()` сразу после `COMMIT` любой пишущей транзакции.
-
-### 2. `vpn_shop.xui_reconciler` (Автономный демон реконсиляции 3X-UI и AWG)
-- **Путь**: [`vpn-shop/vpn_shop/xui_reconciler.py`](vpn-shop/vpn_shop/xui_reconciler.py)
-- **Описание**: Фоновый демон (`python3 -m vpn_shop reconcile-xui --daemon --interval 15.0`), работающий на каждой ноде.
-- **Возможности**:
-  - **Zero-Downtime провижининг Xray**: Сравнивает профили из реплики Turso с локальной базой `/etc/x-ui/x-ui.db` и добавляет/обновляет клиентов через REST API 3X-UI прямо в RAM **без перезапуска службы Xray**.
-  - **Мгновенный отклик (`<100 мс`)**: Просыпается по сигналу `SIGUSR1` (`notify_local_reconciler()`) сразу после оплаты заказа.
-  - **Локальная само-реконсиляция AmneziaWG**: Синхронизирует пиров локального контейнера `amnezia-awg2` и отправляет дельты трафика в Turso без использования SSH.
-
-### 3. `vpn_shop.bot` и `tgcloud` (Движок Telegram-бота и кластерных лизов)
-- **Путь**: [`vpn-shop/vpn_shop/bot.py`](vpn-shop/vpn_shop/bot.py)
-- **Описание**: FSM-контроллер Telegram-бота с поддержкой серверлесс-инфраструктуры `tgcloud`.
-- **Распределённая идемпотентность**: Использует таблицу `cluster_leases` в Turso (`try_acquire_cluster_lease`), гарантируя, что фоновые рассылки уведомлений, отключение истёкших подписок и сверка платежей выполняются строго одним узлом в кластере.
-
-### 4. `vpn_shop.web` (Веб-витрина, платёжные шлюзы и личный кабинет)
-- **Путь**: [`vpn-shop/vpn_shop/web.py`](vpn-shop/vpn_shop/web.py), [`platega.py`](vpn-shop/vpn_shop/platega.py), [`digiseller.py`](vpn-shop/vpn_shop/digiseller.py), [`bridge.py`](vpn-shop/vpn_shop/bridge.py)
-- **Описание**: Асинхронный веб-сервер на порту `3090`.
-- **Возможности**:
-  - Автоматический приём платежей через **Platega.io** (СБП QR, карты МИР/Visa/Mastercard, крипто) и **Digiseller / Plati.market** (двухсторонняя сверка с API, защита от возвратов через `tombstone`).
-  - Вход в личный кабинет по одноразовым/временным HMAC-ссылкам (Magic Links на 30 минут) с защитой Cloudflare Turnstile.
-
-### 5. `subjson-service` (Мультиформатный генератор подписок)
-- **Путь**: [`subjson-service/app.py`](subjson-service/app.py)
-- **Описание**: Высокопроизводительный сервис выдачи конфигураций на порту `3088`.
-- **Возможности**:
-  - Генерация профилей с умной авто-балансировкой для **Sing-box**, **Clash Meta (Mihomo)**, **Happ**, **Streisand**, **v2rayN** и **NekoBox**.
-  - Интерактивный веб-мастер подключения (`/{SECRET_SEGMENT}/import/{sub_id}`) с управлением слотами **AmneziaWG** и персональными каналами **OpenFlux (Белые списки)**.
-
----
-
-## Плоскость данных Active-Active и автономная реконсиляция
+### Последовательность автономной активации клиента
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant User as "Покупатель (Сайт / Бот / Plati)"
-    participant Edge as "YC API Gateway (Anycast)"
-    participant Web as "vpn-shop-web (Активный узел)"
-    participant Turso as "Turso Cloud (libSQL Primary)"
-    participant Rec as "xui_reconciler.py (Все узлы: NL, PL, FI)"
-    participant XUI as "Локальные 3X-UI и AmneziaWG"
+    actor User as Клиент / Покупатель
+    participant Edge as Cloudflare DNS-Only
+    participant Web as Node-1 Web (:3090)
+    participant Turso as Turso Cloud Primary
+    participant Rec as xui_reconciler (Все узлы)
+    participant Core as Локальные Xray Core и AWG
 
-    User->>Edge: Оплата заказа или ввод промокода
-    Edge->>Web: Маршрутизация на доступный узел (таймаут 3.5с)
-    Web->>Turso: COMMIT заказа и профиля в Turso (force_sync)
-    Web->>Rec: Сигнал SIGUSR1 локальному демону (<100 мс)
-    Rec->>Turso: Чтение обновлённых профилей и слотов из реплики
-    Rec->>XUI: 3X-UI REST API addClient / updateClient (в RAM без рестарта)
-    Rec->>XUI: awg syncconf awg0 (атомарное обновление пиров)
-    Web-->>User: Выдача ссылки подписки и слотов AmneziaWG
+    User->>Edge: Оплата или запрос подписки
+    Edge->>Web: Прямой HTTPS на Node-1
+    Web->>Turso: Атомарный коммит транзакции (force_sync)
+    Web->>Rec: SIGUSR1 (Мгновенное локальное пробуждение <100мс)
+    Rec->>Turso: Выборка профилей из NVMe-реплики
+    Rec->>Core: 3X-UI REST API (Горячее обновление RAM, без рестарта)
+    Rec->>Core: Атомарная синхронизация AWG (awg syncconf)
+    Web-->>User: Выдача готовой подписки и конфигураций
 ```
 
 ---
 
-## Поддержка протоколов и доставка подписок
+## Модульная топология и инвентарь узлов
 
-| Протокол / Транспорт | Уровень L4 | Порты узлов | Маршрут подписки | Ключевые особенности |
-|---|---|---|---|---|
-| **VLESS Reality Vision** | TCP | `443` / `23385` | `/singbox/{id}`, `/happ/{id}` | Маскировка TLS 1.3 (`minClientVer: 0.0.0`), поток `xtls-rprx-vision` |
-| **VLESS Reality XHTTP** | TCP | `8443` / `39443` | `/singbox/{id}`, `/happ/{id}` | Мультиплексированный HTTP/2 поток (`packet-up`) |
-| **VLESS Reality gRPC** | TCP | `29443` | `/singbox/{id}`, `/happ/{id}` | Устойчивый транспорт для мобильных сетей |
-| **VLESS WebSocket TLS** | TCP | `443` (Caddy) | `/singbox/{id}`, `/happ/{id}` | WebSocket по пути `/sc-ws-path` за Caddy |
-| **Hysteria 2** | UDP | `38443` (редиректы `443`, `30k-40k`) | `/singbox/{id}`, `/streisand/{id}` | Обфускация `gecko`, QUIC port hopping (`30000:40000`) |
-| **AmneziaWG 3.1** | UDP | `44121` (NL/PL), `49752` (FI) | `/sub/awg/{id}/slot/{idx}/config` | Защита заголовков (`Jc/Jmin/Jmax/S1-S4/H1-H4`), слоты устройств |
-| **OpenFlux v0.3.0** | WSS | `443` (CDN) | `/sub/openflux/{id}/state` | Выделенный канал через облачные документы для «Белых Списков» |
+Все географические привязки в документации заменены модульными топологическими ролями:
+
+| Идентификатор узла | Топологическая роль | Канал связи | Режим веб-витрины (`:3090`) | SubJSON (`:3088`) | VPN-инбаунды и порты | Обязанности в кластере |
+|---|---|---|---|---|---|---|
+| **Node-1** | Главный координатор и Control Plane Origin | 1 Gbps | **Активный** (`DIGISELLER_ENABLED=true`, Витрина) | **Активный** | Reality (TCP 443 / 23385 / 29443 / 8443), Hysteria 2 (UDP 38443), AWG (`10.8.1.0/24`, UDP 44121) | Точка входа для `<SHOP_DOMAIN>`, `<SUB_DOMAIN>`, `<EDGE_DOMAIN>`. Демон `vpn_shop.bot` и воркеры OpenFlux. |
+| **Node-2** | Высокоскоростной транзитный пир Mesh | **10 Gbps** | **Standby** (`DIGISELLER_ENABLED=false`, Healthz / API) | **Активный** | Reality (TCP 443 / 23385 / 29443 / 8443), Hysteria 2 (UDP 38443), AWG (`10.8.3.0/24`, UDP 44121) | Высокопроизводительный транзитный пир 10 Gbps. Точка входа для `<NODE2_DOMAIN>`. Локальный реконсилятор и воркеры OpenFlux. |
+| **Node-3** | Периферийный транзитный пир Mesh | 1 Gbps | **Standby** (`DIGISELLER_ENABLED=false`, Healthz / API) | **Активный** | Reality (TCP 443 / 23385 / 29443 / 8443), Hysteria 2 (UDP 38443), AWG (`10.8.2.0/24`, UDP 49752) | Отказоустойчивый периферийный пир. Точка входа для `<NODE3_DOMAIN>`. Локальный реконсилятор. OpenFlux исключён из-за капчи апстрима. |
+| **Node-N** | Модульный узел расширения кластера | 1–10 Gbps | **Standby** (`DIGISELLER_ENABLED=false`, Healthz / API) | **Активный** | Reality, Hysteria 2, AmneziaWG (Выделенная подсеть и порт) | Разворачивается по плейбуку `DEPLOYMENT.md` Node-N. Автоматически синхронизируется через Turso Cloud mesh. |
 
 ---
 
-## Поддерживаемые платформы и клиентская матрица
+## Архитектура маршрутизации DNS и входящего трафика
 
-| Платформа | Рекомендуемый клиент | Альтернативные клиенты | Способ подключения |
+### Стандарт Cloudflare DNS-Only (⚪ Серое облако)
+Все DNS A-записи доменов кластера настроены строго в режиме **Cloudflare DNS-Only (⚪ серое облачко)**:
+- `<SHOP_DOMAIN>` &rarr; `<NODE1_IP>` (Веб-витрина и личный кабинет)
+- `<SUB_DOMAIN>` &rarr; `<NODE1_IP>` (Генератор мультиформатных подписок)
+- `<EDGE_DOMAIN>` &rarr; `<NODE1_IP>` (Прямой вход клиентов VPN на Node-1)
+- `<NODE1_DOMAIN>` &rarr; `<NODE1_IP>` (Прямой FQDN узла Node-1)
+- `<NODE2_DOMAIN>` &rarr; `<NODE2_IP>` (Прямой 10 Gbps FQDN узла Node-2)
+- `<NODE3_DOMAIN>` &rarr; `<NODE3_IP>` (Прямой FQDN узла Node-3)
+- `<NODE_N_DOMAIN>` &rarr; `<NODE_N_IP>` (Точка входа дополнительных узлов)
+
+> [!CAUTION]
+> **Проксирование Cloudflare (🟠 Оранжевое облако) Категорически Запрещено**:
+> Cloudflare CDN Proxy активно блокируется ТСПУ на территории РФ, что приводит к полной недоступности сервиса. Кроме того, Cloudflare Proxy поддерживает исключительно HTTP/HTTPS трафик и **полностью сбрасывает** произвольные UDP/TCP протоколы, критически важные для VPN-туннелей (Hysteria 2 UDP 38443, port hopping 30000:40000, AmneziaWG UDP 44121/49752 и VLESS Reality TCP 443/23385).
+> 
+> *Примечание об устаревшей инфраструктуре*: Устаревшие промежуточные шлюзы (такие как Yandex Cloud API Gateway) полностью ликвидированы из рабочей топологии в пользу прямой DNS-маршрутизации.
+
+### Входной мультиплексор порта 443 (`xray-dokodemo-door`)
+Каждый узел слушает публичный TCP-порт `443` единым процессом Xray по протоколу `dokodemo-door`:
+1. **Камуфляжные SNI Reality**: Пакеты с одобренными доменами маскировки перенаправляются локально на `127.0.0.1:23385` (VLESS Reality Vision).
+2. **Служебные и подписные домены**: Пакеты доменов кластера (`<SHOP_DOMAIN>`, `<SUB_DOMAIN>`, `<EDGE_DOMAIN>`) перенаправляются локально на `127.0.0.1:4430` (TLS-прокси Caddy).
+
+### Распределение службы `:3090` (`vpn-shop-web.service`) по узлам
+`vpn-shop-web.service` развёрнут на всех узлах кластера:
+- **Node-1 (Активная витрина)**: Обслуживает публичный интерфейс магазина `<SHOP_DOMAIN>`, корзину, промокоды, проверку Cloudflare Turnstile и автоматическую выдачу товаров через Digiseller (`DIGISELLER_ENABLED=true`).
+- **Node-2 и Node-3 (Режим Standby)**: Работают на `127.0.0.1:3090` с `DIGISELLER_ENABLED=false` за локальным Caddy. Они обрабатывают локальные проверки здоровья (`GET /healthz`), HMAC-подписанные RPC-вызовы кластера (`POST /api/bridge`), прямую проверку заказов (`GET /order/*`), резервные вебхуки платежей и переключение стран для AmneziaWG.
+
+---
+
+## Матрица протоколов и сетевых сокетов
+
+| Протокол / Компонент | Уровень | Публичный порт | Внутренняя цель | Обслуживающий демон | Маскировка и безопасность | Целевые клиенты |
+|---|---|---|---|---|---|---|
+| **Входной мультиплексор** | TCP | `443` | `127.0.0.1:443` | `xray-dokodemo-door` | SNI-демультиплексирование (Reality vs Caddy TLS) | Весь входящий TCP-трафик |
+| **Вход Caddy** | TCP | — (внутренний) | `127.0.0.1:4430` | `caddy` | Терминация TLS, сертификаты Let's Encrypt / ZeroSSL | Веб-браузеры, кабинет, подписки |
+| **VLESS Reality Vision** | TCP | `443` (через Mux) | `127.0.0.1:23385` | `xray` (3X-UI) | Flow: `xtls-rprx-vision`, фингерпринт uTLS Chrome/Edge | Happ, Sing-Box, v2rayN, Streisand |
+| **VLESS Reality gRPC** | TCP | `29443` | `0.0.0.0:29443` | `xray` (3X-UI) | Прямой gRPC Reality, `serviceName: grpc-maxru` | Мобильные сети, нестабильный LTE/5G |
+| **VLESS Reality XHTTP** | TCP | `8443` | `0.0.0.0:8443` | `xray` (3X-UI) | HTTP/2 двунаправленный поток (`/xh-7m-path`) | Сети с жёстким DPI и корпоративные файрволы |
+| **Hysteria 2 Core** | UDP | `38443` | `0.0.0.0:38443` | `hysteria-server` | Обязательная обфускация `gecko` (паддинг `64-1400` байт) | Streisand, Sing-Box, Nekobox |
+| **Hysteria 2 Hopping** | UDP | `30000:40000` | Редирект `38443`| `iptables` PREROUTING | Динамический port hopping против UDP rate-limiting | Streisand, Sing-Box |
+| **Hysteria 2 Direct** | UDP | `443` | Редирект `38443`| `iptables` PREROUTING | Прозрачный редирект QUIC с порта 443 | Streisand, Sing-Box |
+| **AmneziaWG (Node-1/2)** | UDP | `44121` | `172.17.0.2:44121` | Docker `amnezia-awg2`| Обфускация заголовков (`Jc=5, S1-S4=12, H1=1..4`) | Amnezia VPN, WG-Tunnel |
+| **AmneziaWG (Node-3)** | UDP | `49752` | `172.17.0.2:49752` | Docker `amnezia-awg2`| Специальный профиль обфускации (`Jc=5, S1=51, S2=30, S3=34`) | Amnezia VPN, WG-Tunnel |
+| **OpenFlux Dedicated** | WSS | `443` (через CDN) | Исходящий эгресс | Docker `openflux-worker`| Base64-фреймы в потоке совместных облачных документов | Клиенты OpenFlux (Node-1 и Node-2) |
+| **SubJSON Service** | TCP | — (внутренний) | `127.0.0.1:3088` | `subjson.service` | Динамический мультиформатный генератор подписок | Запросы подписок от всех клиентов |
+| **VPN Shop Web** | TCP | — (внутренний) | `127.0.0.1:3090` | `vpn-shop-web.service` | Магазин, приём платежей, RPC-мост кластера | Пользователи браузеров, платежи |
+| **3X-UI Admin API** | TCP | — (внутренний) | `127.0.0.1:2053` | `x-ui` | Локальный административный REST API (только localhost)| Автономный демон `xui_reconciler.py` |
+
+---
+
+## Ключевые подсистемы и механизмы отказоустойчивости
+
+### 1. Встроенные NVMe-реплики Turso Cloud libSQL (`libsql_replica.py`)
+- **Задержка чтения менее 0.02 мс**: Каждый узел хранит локальную базу данных SQLite непосредственно на быстром NVMe-накопителе. Операции чтения используют локальные потокобезопасные соединения в режиме `PRAGMA query_only = ON;`.
+- **Неблокирующий быстрый путь**: Метод `sync_if_stale()` выполняет фоновую синхронизацию с Turso Cloud только при устаревании данных более `TURSO_SYNC_INTERVAL` (`2.0с`). Блокировка `_sync_lock` не блокирует параллельные операции чтения.
+- **Атомарные коммиты в облако**: Соединения с правом записи отслеживают любые модифицирующие запросы (`INSERT`, `UPDATE`, `DELETE`). При вызове `commit()` транзакция фиксируется локально и мгновенно выталкивается в Turso Cloud через `force_sync()`.
+- **Изоляция процессов**: Каждый сервис использует отдельный файл локальной реплики (`vpn_shop_replica_bot.db`, `vpn_shop_replica_web.db`, `vpn_shop_replica_subjson.db`, `vpn_shop_replica_xui_reconcile.db`), полностью исключая межпроцессные файловые блокировки.
+
+### 2. Автономный реконсилятор 3X-UI и предохранители (`xui_reconciler.py`)
+- **Локальная модель Pull**: Работает как независимый systemd-сервис, опрашивая локальную реплику Turso каждые 15.0 секунд.
+- **Мгновенное пробуждение (<100 мс)**: Реагирует на сигнал `signal.SIGUSR1` при создании заказа, мгновенно применяя изменения без ожидания следующего тайм-аута.
+- **Горячее обновление памяти без простоя**: Передаёт изменения клиентов напрямую в REST API 3X-UI (`add_client`, `update_client`, `delete_client`), динамически обновляя память работающего Xray Core без перезапуска процесса.
+- **Предохранитель нулевых профилей (Zero-Profiles Circuit Breaker)**: Если Turso возвращает 0 профилей (при сетевом сбое или пустой реплике), реконсилятор немедленно прерывает работу, защищая пользователей от случайного удаления.
+- **Предохранитель массового удаления AWG**: Блокирует операцию, если одна итерация пытается удалить более 30% (при >3 пирах) или более 10 пиров суммарно.
+
+### 3. Выделенные слоты AmneziaWG и гарантия мягкого отключения
+- **Принцип «1 слот — 1 устройство»**: Устройствам назначаются фиксированные IP-адреса в подсетях `10.8.1.0/24` (Node-1), `10.8.3.0/24` (Node-2) и `10.8.2.0/24` (Node-3).
+- **Монотонный учёт 30-дневной квоты**: Модуль `CounterStateTracker` кэширует счётчики трафика в `/dev/shm/awg_last_counters.json`. Сбросы интерфейсов ядра и переполнения 64-битных счётчиков обрабатываются корректно с гарантией строго неотрицательного монотонного накопления объёма.
+- **Гарантия мягкого отключения (Soft-Disable Guarantee)**: При исчерпании месячной квоты трафика (250 ГБ на 3 устройства, 500 ГБ на 6 устройств, 1000 ГБ на 9 устройств) **из ядра отключается исключительно пир AmneziaWG**. Протоколы VLESS Reality Vision, Reality gRPC, Reality XHTTP и Hysteria 2 остаются **100% БЕЗЛИМИТНЫМИ И ПОЛНОСТЬЮ РАБОТОСПОСОБНЫМИ**. Пользователь никогда не теряет доступ в сеть полностью.
+
+### 4. Изолированные воркеры OpenFlux для белых списков (`openflux_manager.py`)
+- **Пул изолированных контейнеров**: Пользовательские слоты запускаются в отдельных контейнерах Docker (`openflux-worker-<uid>`) на базе `php:8.2-cli-alpine` (ограничения: 64 МБ RAM, 0.5 CPU) с монтированием томов только для чтения.
+- **Двухфазное переключение без простоя**: Миграция между серверами запускает параллельного воркера на 5 минут (`300с`), автоматически откатывая изменения, если пользователь не подтвердил переключение.
+- **Распределение по узлам**: Развёрнуто на Node-1 и Node-2 с умным балансировщиком (`choose_least_loaded_server`). Исключено на Node-3 из-за капчи на стороне CDN дата-центра.
+
+### 5. Движок Telegram-бота: Systemd-демон против прототипа TGCloud
+- **Боевой продакшн-движок**: Единственным авторитетным боевым сервисом является нативный systemd-демон Python 3 `vpn-shop-silentconnect.service`, запускающий `vpn_shop.bot` в режиме long-polling. Он координирует распределённые распределительные лизы в Turso Cloud (`try_acquire_cluster_lease`).
+- **Экспериментальный прототип**: Директория `tgcloud/` представляет собой экспериментальный серверлесс-прототип на JavaScript, взаимодействующий через REST API и `POST /api/bridge`.
+
+---
+
+## Клиентские платформы и интеграция
+
+| Платформа | Рекомендуемое приложение | Альтернативные клиенты | Способ подключения |
 |---|---|---|---|
-| **iOS / iPadOS** | **Happ**, **sing-box MT** | Streisand, Clash Mi | Импорт в 1 клик (`happ://`, `sing-box://`, `streisand://`) |
-| **Android** | **Happ**, **Sing-box** | Clash Meta, NekoBox, v2rayNG | Кнопка 1-Click Import / QR-код / скачивание APK |
-| **Windows** | **Happ**, **Clash Verge Rev** | Sing-box, v2rayN, AmneziaVPN | Автонастройка TUN и импорт подписки в 1 клик |
-| **macOS** | **Happ**, **sing-box MT** | Clash Verge Rev, Streisand | Нативная поддержка Apple Silicon и Intel |
-| **Linux / Роутеры** | **Sing-box CLI**, **AmneziaWG** | Mihomo CLI, Keenetic / OpenWrt | Скачивание `.conf` файлов или ссылка подписки |
+| **iOS / iPadOS** | **Happ**, **sing-box MT** | Streisand, Clash Mi | Глубокие ссылки в 1 клик (`happ://`, `sing-box://`, `streisand://`) |
+| **Android** | **Happ**, **Sing-box** | Clash Meta, NekoBox, v2rayNG | Кнопка импорта в 1 клик, QR-код, прямая загрузка APK |
+| **Windows** | **Happ**, **Clash Verge Rev** | Sing-box, v2rayN, AmneziaVPN | Автонастройка TUN-драйвера и импорт подписки в 1 клик |
+| **macOS** | **Happ**, **sing-box MT** | Clash Verge Rev, Streisand | Нативный импорт для процессоров Apple Silicon и Intel |
+| **Linux / Роутеры** | **Sing-box CLI**, **AmneziaWG** | Mihomo CLI, Keenetic / OpenWrt | Скачивание `.conf` или ссылки подписки JSON/YAML |
 
 ---
 
-## Telegram-бот и сценарии управления
+## Быстрый старт и эксплуатация
 
-### Команды для пользователей
-- `/start` — Главное меню, статус активной подписки и обработка ссылок (`open`, `ref_*`, `claim_*`).
-- `/prices` — Выбор тарифа (3, 6, 9 устройств на 1, 3, 6, 12 месяцев).
-- `/pay` — Оплата текущего заказа или переход к выбору тарифа.
-- `/cabinet` — Личный кабинет со ссылкой подключения и мастером настройки.
-- `/referral` — Партнёрская программа (10% скидка другу + 10% комиссия с каждой оплаты).
-- `/help`, `/faq`, `/rules`, `/support` — Инструкции, ответы на вопросы, оферта и связь с поддержкой.
+### Системные требования
+- **ОС**: Debian 13 (Trixie) или Ubuntu 24.04 LTS (ядро Linux 6.12+ с алгоритмом TCP BBR).
+- **Пакеты**: Python 3.11+, Docker, Xray Core, 3X-UI, Hysteria 2, Caddy v2, UFW, `iptables-persistent`.
 
-### Панель администратора (`/admin`)
-- **Мониторинг сервера и трафика**: Состояние служб systemd, Load Average, RAM, диск, число TCP-соединений, проверка DNS и топ-20 профилей по трафику.
-- **Управление профилями**: Просмотр статуса, отправка предупреждения владельцу, мгновенное отключение или включение профиля в Xray.
-- **Промокоды и инвайты**: Генерация подарочных кодов готового доступа и скидочных промокодов (`10%`–`100%`).
-- **Реферальные выплаты**: Учёт балансов партнёров и проведение полных или частичных выплат.
-- **Выдача AmneziaWG**: Прямая генерация `.conf` файлов для узлов NL, PL и FI.
-
----
-
-## Веб-витрина, платёжные шлюзы и личный кабинет
-
-- **Тарифная сетка** (`catalog.py`):
-  - **3 устройства (Личный)**: `149 ₽ / мес` (`250 ГБ` квота AmneziaWG + **безлимитный** VLESS / Hysteria 2)
-  - **6 устройств (Домашний)**: `199 ₽ / мес` (`500 ГБ` квота AmneziaWG + **безлимитный** VLESS / Hysteria 2)
-  - **9 устройств (Расширенный)**: `235 ₽ / мес` (`1000 ГБ` квота AmneziaWG + **безлимитный** VLESS / Hysteria 2)
-  - *Скидки за период*: `-10%` за 3 месяца, `-20%` за 6 месяцев, `-30%` за 12 месяцев (с округлением до цен, оканчивающихся на `9`).
-
----
-
-## Конфигурация и каталог переменных окружения
-
-| Переменная | Значение по умолчанию / Пример | Описание |
-|---|---|---|
-| `TURSO_DATABASE_URL` | `libsql://<db>-<org>.turso.io` | URL облачной базы данных Turso (libSQL). |
-| `TURSO_AUTH_TOKEN` | `""` | Токен авторизации Turso JWT. |
-| `TURSO_SYNC_INTERVAL` | `2.0` | Интервал фоновой синхронизации локальной реплики (сек). |
-| `SERVER_PEPPER` | *Обязателен в Prod* | Секретный ключ-пеппер для HMAC-хэширования токенов и промокодов. |
-| `SECRET_SEGMENT` | *Обязателен в Prod* | Секретный префикс URL для маршрутов `subjson-service`. |
-| `TELEGRAM_BOT_TOKEN` | `""` | Токен Telegram-бота от `@BotFather`. |
-| `SERVERLESS_MODE` | `false` | Режим фонового Lease-воркера (включается автоматически при 409). |
-| `SERVERLESS_BRIDGE_SECRET`| `""` | Секретный ключ HMAC-подписи для `/api/bridge`. |
-| `XUI_PANEL_URL` | `http://127.0.0.1:2053/...` | Внутренний адрес панели 3X-UI. |
-| `XUI_DB_PATH` | `/etc/x-ui/x-ui.db` | Путь к локальной базе SQLite панели 3X-UI. |
-| `AWG_NL_SERVER_PUBKEY` | `<BASE64_PUBKEY>` | Публичный ключ Curve25519 сервера AmneziaWG (NL). |
-| `AWG_PL_SERVER_PUBKEY` | `<BASE64_PUBKEY>` | Публичный ключ Curve25519 сервера AmneziaWG (PL). |
-| `AWG_FI_SERVER_PUBKEY` | `<BASE64_PUBKEY>` | Публичный ключ Curve25519 сервера AmneziaWG (FI). |
-| `PLATEGA_ENABLED` | `false` | Включение онлайн-оплаты через СБП и карты (Platega.io). |
-| `DIGISELLER_ENABLED` | `false` | Включение интеграции с Digiseller / Plati.market. |
-
----
-
-## Деплой и быстрый старт
-
+### Запуск сервисов на узле кластера
 ```bash
-# 1. Инициализация локальной реплики Turso
+# 1. Инициализация схемы локальной реплики Turso
 python3 -m vpn_shop --env-file .env.silentconnect init-db
 
-# 2. Тестовый прогон автономного реконсилятора 3X-UI
+# 2. Пробный запуск реконсилятора в режиме dry-run
 python3 -m vpn_shop --env-file .env.silentconnect reconcile-xui --dry-run
 
-# 3. Активация и запуск всех служб узла
+# 3. Активация и запуск основных сервисов узла
 systemctl enable --now subjson.service vpn-shop-web.service vpn-shop-xui-reconciler.service
 
-# 4. Проверка прослушиваемых сокетов
-ss -tulpn | grep -E '3088|3090|443|4430|38443|44121'
+# 4. Только на главном узле Node-1: запуск демона Telegram-бота
+systemctl enable --now vpn-shop-silentconnect.service
+```
+
+### Команды проверки работоспособности
+```bash
+# 1. Проверка доступности локального веб-магазина и API
+curl -fsS http://127.0.0.1:3090/healthz
+
+# 2. Проверка доступности генератора подписок SubJSON
+curl -fsS http://127.0.0.1:3088/healthz
+
+# 3. Диагностика активных сетевых портов кластера
+ss -tulpn | grep -E '443|4430|8443|23385|29443|38443|44121|49752|3088|3090'
+
+# 4. Проверка состояния автономного демона реконсиляции
+systemctl status vpn-shop-xui-reconciler.service --no-pager
 ```
 
 ---
 
-## Автоматическая безопасность и верификация
+## Автоматизированный контроль безопасности и Zero-Leak
 
-Репозиторий защищён автоматическим сканером утечек и набором регрессионных тестов, запускаемых в GitHub Actions и pre-push хуках:
+SilentConnect придерживается строгой политики Zero-Leak: любые реальные IP-адреса серверов, токены API, приватные ключи или строки подключения к базам данных запрещены к размещению в репозитории.
 
+### Спецификация стандартных плейсхолдеров
+- Публичные IP узлов: `<NODE1_IP>`, `<NODE2_IP>`, `<NODE3_IP>`, `<NODE_N_IP>` (или тестовые RFC 5737: `192.0.2.1`, `198.51.100.1`, `203.0.113.1`).
+- Доменные имена: `<SHOP_DOMAIN>`, `<SUB_DOMAIN>`, `<EDGE_DOMAIN>`, `<NODE1_DOMAIN>`, `<NODE2_DOMAIN>`, `<NODE3_DOMAIN>`, `<NODE_N_DOMAIN>`.
+- Секретные ключи: `<REALITY_PUBLIC_KEY>`, `<TURSO_AUTH_TOKEN>`, `<TELEGRAM_BOT_TOKEN>`, `<HYSTERIA_GECKO_PASSWORD>`.
+
+### Автоматический запуск проверок и тестов
 ```bash
-# 1. Запуск строгого сканера безопасности (Zero Leaks)
-python3 scripts/security_audit_scanner.py --strict
+# 1. Запуск строгого сканера безопасности Zero-Leak
+python3 scripts/security_audit_scanner.py --target-dir github_export --strict
 
-# Вывод:
+# Ожидаемый вывод:
+# Files Scanned: 177, Violations Found: 0.
 # [PASS] AUDIT PASSED: Zero leaks, zero binaries, zero untracked secrets detected.
 
-# 2. Запуск полного набора тестов
-python3 -m unittest discover -s tests -p "test_*.py"
+# 2. Прогон набора регрессионных тестов (128 тестов)
+python3 -m unittest discover -s github_export/tests -p "test_*.py"
 
-# Вывод:
-# Ran 128 tests
-# OK
+# Ожидаемый вывод:
+# Ran 128 tests ... OK (skipped=8)
 ```
 
 ---
 
-## Указатель детальной документации
+## Указатель детальной технической документации
 
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — Детальная спецификация Active-Active Mesh, реплик Turso libSQL, демона `xui_reconciler.py` и матрицы портов.
-- **[DEPLOYMENT.md](DEPLOYMENT.md)** — Руководство по развёртыванию узлов на Debian 13 / Ubuntu 24.04, каталогу systemd-юнитов и аварийному восстановлению.
-- **[AMNEZIA_SLOTS.md](AMNEZIA_SLOTS.md)** — Спецификация хаба слотов AmneziaWG, 30-дневного цикла квот UTC, механизма Soft-Disable и локальной реконсиляции.
-- **[WHITELIST_SPEC.md](WHITELIST_SPEC.md)** — Спецификация выделенных слотов OpenFlux v0.3.0 для обхода «Белых Списков».
-- **[README.md](README.md)** — Англоязычная версия документации.
+Полные спецификации компонентов доступны в специализированных технических руководствах:
+
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** &mdash; Системный дизайн: устройство Active-Active Mesh, репликация Turso libSQL, параллелизм embedded NVMe, предохранители реконсилятора и мультиплексирование TCP 443.
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** &mdash; Операционный регламент: пошаговая настройка узлов, юниты systemd, файрвол UFW и port hopping в iptables, режим тихих логов и playbook `Node-N`.
+- **[AMNEZIA_SLOTS.md](AMNEZIA_SLOTS.md)** &mdash; Архитектура слотов устройств AmneziaWG, монотонный движок 30-дневных квот, гарантии мягкого отключения и параметры обфускации пакетов.
+- **[WHITELIST_SPEC.md](WHITELIST_SPEC.md)** &mdash; Спецификация изолированных контейнеров OpenFlux v0.3.0, двухфазная миграция без простоя и ограничения узлов.
+- **[README.md](README.md)** &mdash; English primary overview and quickstart portal.
 
 ---
 
 ## Лицензия
 
-Распространяется под лицензией MIT. Подробности в файле [LICENSE](LICENSE).
+Проект распространяется под лицензией MIT. Подробности в файле [LICENSE](LICENSE).
