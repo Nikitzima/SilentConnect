@@ -345,6 +345,10 @@ def _get_server(server_code: str = "nl") -> dict[str, Any]:
             srv["ssh_host"] = srv["host"]
             srv["ssh_user"] = os.environ.get("AWG_FI_SSH_USER", "root")
             srv["ssh_port"] = int(os.environ.get("AWG_FI_SSH_PORT", "22"))
+    # Dynamically pick up updated endpoint host from environment if set
+    env_endpoint = os.environ.get(f"AWG_{code.upper()}_ENDPOINT_HOST")
+    if env_endpoint:
+        srv["endpoint_host"] = env_endpoint
     return srv
 
 

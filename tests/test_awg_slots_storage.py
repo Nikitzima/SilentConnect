@@ -380,6 +380,37 @@ class TestAwgSlotsStorage(unittest.TestCase):
         self.assertEqual(quota["awg_used_bytes"], 0)
         self.assertEqual(quota["awg_reset_at"], new_expiry)
 
+    def test_11_build_slot_conf_awg31_parameters(self) -> None:
+        """Verify build_slot_conf generates full AWG 3.1 parameters for all cluster nodes."""
+        from vpn_shop.web import build_slot_conf
+
+        slot_nl = {"client_ip": "10.8.1.10", "private_key_enc": "privNL==", "preshared_key": "pskNL==", "server_code": "nl"}
+        conf_nl = build_slot_conf(slot_nl, server_code="nl")
+        self.assertIn("HeaderProtectionKey = LmTA8iDZhs251jXb921wPUzPmrYJ4mTEn3xj6MuzupY=", conf_nl)
+        self.assertIn("44121", conf_nl)
+        self.assertIn("PublicKey = 70IPdY8HdG8GnzI6R5XfOFUSVlzuF19J615ohu/wxEI=", conf_nl)
+        self.assertIn("ContentPaddingAddition = 10-100", conf_nl)
+        self.assertIn("RandomTrailers = on", conf_nl)
+        self.assertIn("DisableCookies = on", conf_nl)
+
+        slot_pl = {"client_ip": "10.8.3.10", "private_key_enc": "privPL==", "preshared_key": "pskPL==", "server_code": "pl"}
+        conf_pl = build_slot_conf(slot_pl, server_code="pl")
+        self.assertIn("HeaderProtectionKey = CqymuFeL7ibiqrqIDF0jl3Mg1/vvl5Tmnqzl5C8IWhM=", conf_pl)
+        self.assertIn("44121", conf_pl)
+        self.assertIn("PublicKey = bi1igMRahaWDgvo7ClePLOwnXYjhdo+7PMaswXVtlAs=", conf_pl)
+        self.assertIn("S1 = 12", conf_pl)
+        self.assertIn("RandomTrailers = on", conf_pl)
+        self.assertIn("DisableCookies = on", conf_pl)
+
+        slot_fi = {"client_ip": "10.8.2.10", "private_key_enc": "privFI==", "preshared_key": "pskFI==", "server_code": "fi"}
+        conf_fi = build_slot_conf(slot_fi, server_code="fi")
+        self.assertIn("HeaderProtectionKey = Q910gn5GO3TIVLDy5+3kuTJL5D7wcSHSbXBT7ldyNP8=", conf_fi)
+        self.assertIn("49752", conf_fi)
+        self.assertIn("PublicKey = Ddu8+r+rovOke5uONFDjt+R9iUPy6E5CCzaXNw+PJWQ=", conf_fi)
+        self.assertIn("ContentPaddingAddition = 10-100", conf_fi)
+        self.assertIn("RandomTrailers = on", conf_fi)
+        self.assertIn("DisableCookies = on", conf_fi)
+
 
 if __name__ == "__main__":
     unittest.main()
