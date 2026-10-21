@@ -65,6 +65,8 @@ FORBIDDEN_EXACT_FILENAMES = {
     "deploy_subjson_catalog.py", "deploy_ui_upgrade.py", "promote.sh", "demote.sh",
     "promote_fi.sh", "demote_fi.sh", "cf-failover-dns.sh", "live_audit_nl.py", "scan_fi.py",
     "apply_all_audit7_patches.py", "execute_deploy_nl.py", "pre_deploy_audit.py",
+    "restart_all_reconcilers.py", "sync_patch_to_nodes.py", "lookup_order.py",
+    "get_annotations.py", "get_ci_details.py", "get_run_steps.py", "check_ci_status.py",
 }
 
 ALLOWED_EXEMPT_NAMES = {
@@ -164,10 +166,14 @@ def assemble():
             for r, dirs, files in os.walk(dst_sub):
                 for f in files:
                     fp = Path(r) / f
-                    if not is_file_allowed(fp):
+                    rel = fp.relative_to(dst_sub)
+                    src_fp = src_sub / rel
+                    if not src_fp.exists() or not is_file_allowed(fp):
                         try:
                             fp.unlink()
                             print(f"[PURGE-REMOVED] {fp.relative_to(EXPORT_DIR)}")
+                        except Exception as e:
+                            print(f"[WARN] Failed to remove {fp}: {e}")
                         except Exception:
                             pass
         count = copy_tree_sanitized(src_sub, dst_sub)
