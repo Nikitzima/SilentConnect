@@ -99,15 +99,16 @@ class XuiReconciler:
             cols = {str(r["name"]) for r in conn.execute("PRAGMA table_info(profiles)").fetchall()}
             has_sub_col = "xui_sub_id" in cols
             sub_select = "p.xui_sub_id," if has_sub_col else "NULL AS xui_sub_id,"
+            dev_select = "p.device_limit," if "device_limit" in cols else "3 AS device_limit,"
             rows = conn.execute(
                 f"""
                 SELECT p.id, p.public_id, p.xui_inbound_id, p.transport, p.profile_mode,
                        p.family_label, p.xui_email, p.xui_client_id, {sub_select}
-                       p.status, p.expires_at, p.notes, p.device_limit,
+                       p.status, p.expires_at, p.notes, {dev_select}
                        o.meta_json AS order_meta_json
                 FROM profiles p
                 LEFT JOIN orders o ON o.provisioned_profile_id = p.id
-                ORDER BY p.id ASC
+                ORDER BY p.id ASC, o.id DESC
                 """
             ).fetchall()
 
@@ -115,7 +116,7 @@ class XuiReconciler:
         for r in rows:
             d = dict(r)
             email = str(d.get("xui_email") or "").strip()
-            if not email:
+            if not email or email in by_email:
                 continue
             meta = {}
             if d.get("order_meta_json"):
