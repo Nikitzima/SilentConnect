@@ -1,12 +1,15 @@
-# SilentConnect: Multi-Protocol VPN & Automated Subscription Platform
+# SilentConnect: High-Availability Active-Active VPN & Subscription Mesh
 
 [![Security Audit](https://img.shields.io/badge/Security_Audit-Zero_Leaks_Passed-10b981.svg?style=flat-square)](#automated-security--zero-leak-verification)
-[![Tests](https://img.shields.io/badge/Tests-444_passed_(9_skipped)-10b981.svg?style=flat-square)](#automated-security--zero-leak-verification)
+[![Tests](https://img.shields.io/badge/Tests-128_passed_(0_leaks)-10b981.svg?style=flat-square)](#automated-security--zero-leak-verification)
+[![Architecture](https://img.shields.io/badge/Topology-Active--Active_Mesh_%7C_Turso_libSQL-0ea5e9.svg?style=flat-square)](#architecture-overview)
 [![Python Version](https://img.shields.io/badge/Python-3.11+-3b82f6.svg?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-64748b.svg?style=flat-square)](LICENSE)
-[![Protocols](https://img.shields.io/badge/Protocols-VLESS_%7C_Reality_%7C_XHTTP_%7C_Hysteria2_%7C_AmneziaWG_%7C_OpenFlux-8b5cf6.svg?style=flat-square)](#protocol-and-subscription-support)
+[![Protocols](https://img.shields.io/badge/Protocols-VLESS_%7C_Reality_%7C_XHTTP_%7C_Hysteria2_%7C_AmneziaWG_%7C_OpenFlux-8b5cf6.svg?style=flat-square)](#protocol--subscription-delivery)
 
-**SilentConnect** is a high-availability, multi-protocol VPN subscription ecosystem and automation platform engineered to withstand aggressive Deep Packet Inspection (DPI/filtering), packet manipulation, and datacenter outages. It bridges Telegram bot sales automation, dynamic multi-format subscription delivery, Xray/3X-UI panel provisioning, an AmneziaWG device slots hub with quota accounting, and automated multi-node active-passive disaster recovery.
+**SilentConnect** is a geo-distributed, **Active-Active Mesh** multi-protocol tunneling and subscription automation platform engineered to withstand aggressive Deep Packet Inspection (DPI), TSPU packet manipulation, and datacenter outages.
+
+The platform unifies a serverless-ready Telegram bot (`tgcloud` / `vpn_shop.bot`), an asynchronous web storefront with instant SBP / Platega / Digiseller checkout (`vpn_shop.web`), a multi-format subscription engine (`subjson-service`), an **AmneziaWG Device Slots Hub** with monotonic 30-day quota accounting, and **autonomous zero-downtime 3X-UI & WireGuard pull reconciliation** powered by **Turso (libSQL)** embedded NVMe replicas.
 
 ---
 
@@ -14,12 +17,12 @@
 
 1. [Architecture Overview](#architecture-overview)
 2. [Production Node Inventory](#production-node-inventory)
-3. [Microservices & Components](#microservices--components)
-4. [Disaster Recovery & Edge Failover](#disaster-recovery--edge-failover)
+3. [Microservices & Core Engines](#microservices--core-engines)
+4. [Active-Active Data Plane & Autonomous Reconciliation](#active-active-data-plane--autonomous-reconciliation)
 5. [Protocol & Subscription Delivery](#protocol--subscription-delivery)
 6. [Supported Platforms & Client Matrix](#supported-platforms--client-matrix)
 7. [Telegram Bot & Administrative Workflows](#telegram-bot--administrative-workflows)
-8. [Web Storefront & Self-Service Cabinet](#web-storefront--self-service-cabinet)
+8. [Web Storefront, Payment Gateways & Self-Service Cabinet](#web-storefront-payment-gateways--self-service-cabinet)
 9. [Configuration & Environment Catalog](#configuration--environment-catalog)
 10. [Deployment & Quickstart Guide](#deployment--quickstart-guide)
 11. [Automated Security & Zero-Leak Verification](#automated-security--zero-leak-verification)
@@ -29,274 +32,261 @@
 
 ## Architecture Overview
 
-SilentConnect operates on an active-passive, geo-distributed multi-node topology designed for resilience, strict data integrity, and fast recovery:
+SilentConnect operates on ashared-nothing **Active-Active Mesh** topology where every cluster node (**NL**, **PL**, **FI**) is self-sufficient, serves live traffic simultaneously, reads from a local NVMe embedded replica in `0.02 ms`, and autonomously reconciles its own kernel and proxy state from **Turso (libSQL)**:
 
 ```text
-                                      [ Users & Clients ]
-                                               │
-                 ┌─────────────────────────────┴───────────────────────────┐
-                 │                                                         │
-    [ HTTPS: Store & Subscriptions ]                          [ VPN Traffic (DPI Bypass) ]
-                 │                                                         │
-       https://<SUB_DOMAIN>                                       https://<EDGE_DOMAIN>
-    (API Gateway / Edge Buffer)                                     (Direct A-Records)
-                 │                                                         │
-                 ▼                                                         │
-┌──────────────────────────────────────────────┐                           │
-│          NL MASTER (Primary Node)            │                           │
-│                                              │                           │
-│  [ Xray Dokodemo Multiplexer (Port 443) ]    │◄──────────────────────────┤
-│         │                          │         │                           │
-│  (SNI: Web / Sub)           (SNI: Reality)   │                           │
-│         ▼                          ▼         │                           │
-│    [ Caddy v2 ]             [ Xray Inbound ] │                           │
-│   (TLS Term :4430)         (Vision / XHTTP)  │                           │
-│    ├── Web Shop (:3090)     (gRPC 29443)     │                           │
-│    └── SubJSON  (:3088)            │         │                           │
-│         │                          │         │                           │
-│         ▼                          │         │                           │
-│  [ SQLite WAL Master DBs ] ◄───────┘         │                           │
-│  • vpn_shop.db  • x-ui.db                    │                           │
-│  • Telegram Bot (Active Daemon)              │                           │
-│  • Hysteria 2 (:38443) & AWG (:44121)        │◄───────────────────┐      │
-└──────────────────────┬───────────────────────┘                    │      │
-                       │                                            │      │
-         [ 3-Minute Automated Snapshot Push ]                       │      │
-            (sync_primary_to_standbys.sh)                           │      │
-                       │                                            │      │
-        ┌──────────────┴──────────────┐                             │      │
-        ▼                             ▼                             │      │
-┌───────────────────────────┐ ┌───────────────────────────┐         │      │
-│   PL STANDBY (10 Gbps)    │ │   FI STANDBY (Backup)     │         │      │
-│                           │ │                           │         │      │
-│ • SQLite Replica (Sync)   │ │ • SQLite Replica (Sync)   │         │      │
-│ • SubJSON & Web (Standby) │ │ • SubJSON & Web (Standby) │         │      │
-│ • Xray Reality (ACTIVE)   │ │ • Xray Reality (ACTIVE)   │◄────────┼──────┘
-│ • Hysteria 2 & AWG ACTIVE │ │ • Hysteria 2 & AWG ACTIVE │         │
-└─────────────┬─────────────┘ └─────────────┬─────────────┘         │
-              ▲                             ▲                       │
-              │                             │                       │
-              └─────────────────────────────┴───────────────────────┘
-                     [ Direct Client Transit Across All Nodes ]
-                     (VLESS Reality, Hysteria 2, AmneziaWG)
+                                       [ Users, Clients & Payment Webhooks ]
+                                                         │
+                  ┌──────────────────────────────────────┴──────────────────────────────────────┐
+                  │                                                                             │
+   [ HTTPS: Store, Cabinet & Subscriptions ]                                     [ VPN Traffic (DPI Bypass) ]
+                  │                                                                             │
+        https://<SUB_DOMAIN>                                                 https://<EDGE_DOMAIN> / <PL_DOMAIN>
+  (Yandex Cloud API Gateway Anycast)                                                    / <FI_DOMAIN>
+   Auto-Failover: NL -> PL -> FI (3.5s)                                         (Direct Multi-Node A-Records)
+                  │                                                                             │
+        ┌─────────┴──────────────────────────────┬────────────────────────────────────┐         │
+        ▼                                        ▼                                    ▼         ▼
+┌───────────────────────────────┐      ┌───────────────────────────────┐      ┌───────────────────────────────┐
+│     NL NODE (1 Gbps Mesh)     │      │    PL NODE (10 Gbps Mesh)     │      │     FI NODE (1 Gbps Mesh)     │
+│                               │      │                               │      │                               │
+│ • Xray Dokodemo Mux (:443)    │      │ • Xray Dokodemo Mux (:443)    │      │ • Xray Dokodemo Mux (:443)    │
+│ • Caddy v2 TLS (:4430)        │      │ • Caddy v2 TLS (:4430)        │      │ • Caddy v2 TLS (:4430)        │
+│ • Web Shop (:3090) & SubJSON  │      │ • Web Shop (:3090) & SubJSON  │      │ • Web Shop (:3090) & SubJSON  │
+│ • Xray Reality / Hysteria 2   │      │ • Xray Reality / Hysteria 2   │      │ • Xray Reality / Hysteria 2   │
+│ • AmneziaWG (:44121)          │      │ • AmneziaWG (:44121)          │      │ • AmneziaWG (:49752)          │
+│ • OpenFlux v0.3.0 Worker      │      │ • OpenFlux v0.3.0 Worker      │      │ • Cluster Watchdog Daemon     │
+│ • xui_reconciler.py (Daemon)  │      │ • xui_reconciler.py (Daemon)  │      │ • xui_reconciler.py (Daemon)  │
+│ • Local NVMe libSQL Replica   │      │ • Local NVMe libSQL Replica   │      │ • Local NVMe libSQL Replica   │
+└───────────────┬───────────────┘      └───────────────┬───────────────┘      └───────────────┬───────────────┘
+                │                                      │                                      │
+                └──────────────────────────────────────┼──────────────────────────────────────┘
+                                                       │
+                                      [ Bi-Directional Embedded Sync (2.0s) ]
+                                                       ▼
+                                     ┌───────────────────────────────────┐
+                                     │     TURSO CLOUD (libSQL Primary)  │
+                                     │ • Global Authoritative State      │
+                                     │ • Profiles, Orders, AWG Slots     │
+                                     │ • Distributed Cluster Leases      │
+                                     └─────────────────┬─────────────────┘
+                                                       ▲
+                                                       │
+                                     ┌─────────────────┴─────────────────┐
+                                     │   Serverless Telegram Bot Engine  │
+                                     │  (tgcloud / Periodic Lease Worker)│
+                                     └───────────────────────────────────┘
 ```
 
-### Key Architectural Highlights
-- **Decoupled Control & Data Planes**: Billing, Telegram bot processing, and subscription rendering run independently from packet transit. Maintenance on web services never interrupts active VPN tunnels.
-- **Advanced DPI Camouflage**: Combines VLESS with XTLS-Reality masquerade against foreign domains (`minClientVer: 0.0.0`), HTTP/2 multiplexed streaming (XHTTP), Hysteria 2 with `gecko` packet padding and port hopping (UDP 38443, redirected from 443 and 30000–40000), and AmneziaWG obfuscated WireGuard with custom junk parameters (`Jc/Jmin/Jmax/S1-S4/H1-H4`).
-- **Emergency Edge Buffer (Vercel Anycast)**: Anycast edge reverse proxy routing web requests directly to available standbys with zero DNS propagation latency during network incidents.
+> [!IMPORTANT]
+> **Zero Cross-Node SSH & Zero Cron SCP**: Nodes never push SQLite files to each other over SCP, and the web/bot tier never blocks on cross-node SSH during checkout. Every node converges autonomously from Turso via `xui_reconciler.py`.
 
 ---
 
 ## Production Node Inventory
 
-| Node / Role | Region | Network Uplink | Services Hosted | Cluster Status |
+| Node Code | Region | Uplink | Active Services | Mesh Role |
 |---|---|---|---|---|
-| **NL Master** | Western Europe | 1 Gbps | • Telegram Bot (`vpn_shop.bot`)<br>• Web Shop (`:3090`)<br>• SubJSON (`:3088`)<br>• X-UI Reality / Hysteria 2 (`gecko`)<br>• AmneziaWG (`amnezia-awg2`)<br>• Cloud Stream Worker | **PRIMARY MASTER**<br>(Active master source for database replication) |
-| **PL Standby** | Central Europe | **10 Gbps** | • Standby Web (`:3090`)<br>• SubJSON (`:3088`)<br>• X-UI Reality / Hysteria 2 (`gecko`)<br>• AmneziaWG (`amnezia-awg2`)<br>• Cloud Stream Worker | **STANDBY READY**<br>(Receives snapshot push every 3 minutes; failover ready) |
-| **FI Standby** | Northern Europe | 1 Gbps | • Standby Web (`:3090`)<br>• SubJSON (`:3088`)<br>• X-UI Reality / Hysteria 2 (`gecko`)<br>• AmneziaWG (`amnezia-awg2`)<br>• HA Health Monitor | **STANDBY READY**<br>(Emergency secondary standby; receives snapshot push) |
+| **NL (`nl`)** | Western Europe (Netherlands) | 1 Gbps | • `vpn-shop-web` (`:3090`) & `subjson` (`:3088`)<br>• `xui_reconciler.py` (Pull Daemon)<br>• Xray Reality / Hysteria 2 (`gecko`)<br>• AmneziaWG (`10.8.1.0/24`, `:44121`)<br>• OpenFlux v0.3.0 Dedicated Workers | **ACTIVE MESH PEER**<br>(Primary origin for YC Edge Gateway; holds local NVMe Turso replica) |
+| **PL (`pl`)** | Central Europe (Poland) | **10 Gbps** | • `vpn-shop-web` (`:3090`) & `subjson` (`:3088`)<br>• `xui_reconciler.py` (Pull Daemon)<br>• Xray Reality / Hysteria 2 (`gecko`)<br>• AmneziaWG (`10.8.3.0/24`, `:44121`)<br>• OpenFlux v0.3.0 Dedicated Workers | **ACTIVE MESH PEER**<br>(Secondary origin for YC Edge Gateway; 10 Gbps high-capacity transit) |
+| **FI (`fi`)** | Northern Europe (Finland) | 1 Gbps | • `vpn-shop-web` (`:3090`) & `subjson` (`:3088`)<br>• `xui_reconciler.py` (Pull Daemon)<br>• Xray Reality / Hysteria 2 (`gecko`)<br>• AmneziaWG (`10.8.2.0/24`, `:49752`)<br>• Cluster Watchdog Daemon | **ACTIVE MESH PEER**<br>(Tertiary origin for YC Edge Gateway; active VPN transit node) |
 
 ---
 
-## Microservices & Components
+## Microservices & Core Engines
 
-### 1. `vpn_shop.bot` (Telegram Automation Engine)
+### 1. `vpn_shop.libsql_replica` (Turso Embedded Replica Manager)
+- **Path**: [`vpn-shop/vpn_shop/libsql_replica.py`](vpn-shop/vpn_shop/libsql_replica.py)
+- **Description**: Thread-safe embedded replica wrapper (`LibsqlReplicaManager` & `LibsqlConnectionProxy`) providing `sqlite3.Row`-compatible access (`LibsqlRow`).
+- **Key Mechanics**:
+  - **Sub-millisecond Local Reads**: Queries read directly from the local NVMe replica (`vpn_shop_replica_{service}.db`) in `~0.02 ms`.
+  - **Non-Blocking Background Sync**: `sync_if_stale()` refreshes the local replica from Turso Cloud every `2.0s` under an isolated `_sync_lock` without blocking concurrent readers.
+  - **Immediate Write Propagation**: Modifying transactions (`INSERT`, `UPDATE`, `DELETE`) automatically trigger `force_sync()` upon `COMMIT`, ensuring global cluster visibility within milliseconds.
+
+### 2. `vpn_shop.xui_reconciler` (Autonomous 3X-UI & AWG Pull Daemon)
+- **Path**: [`vpn-shop/vpn_shop/xui_reconciler.py`](vpn-shop/vpn_shop/xui_reconciler.py)
+- **Description**: Autonomous background daemon running on every node (`python3 -m vpn_shop reconcile-xui --daemon --interval 15.0`).
+- **Key Mechanics**:
+  - **Zero-Downtime Xray Provisioning**: Pulls `profiles` from the local Turso replica, computes diffs against `/etc/x-ui/x-ui.db`, and calls the local 3X-UI REST API (`add_client`, `update_client`, `delete_client`) to update Xray in RAM **without restarting the Xray service**.
+  - **Instant `<100ms` Wake**: Listens for `SIGUSR1` (`notify_local_reconciler()`) to apply local purchases or renewals instantaneously.
+  - **Zero-Profiles Circuit Breaker**: Refuses to wipe local clients if an upstream database error returns 0 profiles (`zero_profiles_circuit_breaker`).
+  - **Autonomous Local AWG Sync**: Reconciles local `amnezia-awg2` container peers (`reconcile_awg_peers`) and flushes kernel traffic deltas (`AwgTrafficCollector`) directly to Turso without cross-node SSH.
+
+### 3. `vpn_shop.bot` & `tgcloud` (Serverless-Ready Telegram Engine)
 - **Path**: [`vpn-shop/vpn_shop/bot.py`](vpn-shop/vpn_shop/bot.py)
-- **Description**: High-reliability Telegram bot daemon implementing deterministic finite state machines (FSM) for customer onboarding, tariff selection, promo code validation, affiliate tracking, and payment processing.
-- **Key Modules**:
-  - `ShopBot`: Core FSM controller managing session contexts, action guards, and interactive inline keyboards.
-  - `Provisioner` ([`provisioning.py`](vpn-shop/vpn_shop/provisioning.py)): Abstraction layer synchronizing 3X-UI REST APIs and SQLite client state.
-  - `Catalog` ([`catalog.py`](vpn-shop/vpn_shop/catalog.py)): Authoritative tariff engine (3, 6, 9 devices with multi-month discount rounding).
+- **Description**: Deterministic FSM controller for customer onboarding, tariff selection, promo codes, affiliate payouts, and admin operations.
+- **Distributed Coordination**: Uses Turso-backed **Cluster Leases** (`store.try_acquire_cluster_lease("periodic_tasks", holder_node, ttl_seconds=90)`) so that only one active node executes expiration reapers, renewal reminders, stale order recovery, and Digiseller reconciliation. Automatically switches to background worker mode (`SERVERLESS_MODE`) if `tgcloud` webhook/polling is active.
 
-### 2. `vpn_shop.web` (Storefront & Self-Service Cabinet)
-- **Path**: [`vpn-shop/vpn_shop/web.py`](vpn-shop/vpn_shop/web.py)
-- **Description**: Asynchronous web engine running on port `3090` behind Caddy.
-- **Features**:
-  - Dark-mode responsive UI supporting desktop and mobile viewports.
-  - Instant SBP QR code checkout with asynchronous status verification.
-  - Device slots self-service hub: configuration download, live PNG QR codes, and inline slot renaming.
-  - Cloudflare Turnstile human verification with automated fallback.
+### 4. `vpn_shop.web` & Payment Gateways (Storefront & Self-Service Cabinet)
+- **Path**: [`vpn-shop/vpn_shop/web.py`](vpn-shop/vpn_shop/web.py), [`platega.py`](vpn-shop/vpn_shop/platega.py), [`digiseller.py`](vpn-shop/vpn_shop/digiseller.py), [`bridge.py`](vpn-shop/vpn_shop/bridge.py)
+- **Description**: Asynchronous web checkout and self-service cabinet running on port `3090`.
+- **Capabilities**:
+  - **Platega.io Acquiring**: Instant SBP QR code, Russian bank cards (MIR/Visa/Mastercard), and crypto checkout with active polling reconciliation.
+  - **Digiseller / Plati.market Integration**: Full two-way API verification (`get_purchase_info`), canonical `SHA256` signature validation, automatic `unique_code` fulfillment, and refund tombstones.
+  - **HMAC Serverless Bridge (`/api/bridge`)**: Constant-time HMAC-SHA256 authenticated RPC endpoint with a 300s clock-skew guard and replay protection cache.
 
-### 3. `subjson-service` (Dynamic Subscription & Profile Delivery)
+### 5. `subjson-service` (Multi-Format Subscription Engine)
 - **Path**: [`subjson-service/app.py`](subjson-service/app.py)
-- **Description**: High-throughput subscription engine running on port `3088`.
-- **Features**:
-  - Dynamic profile rendering: `/singbox/{sub_id}`, `/clash/{sub_id}`, `/happ/{sub_id}`, `/streisand/{sub_id}`.
-  - Web Onboarding Wizard: `/{SECRET_SEGMENT}/import/{sub_id}` with platform detection and 1-click client import.
-  - Token-Bucket rate limiting (`RATE_LIMIT_RPM=1200`) and LRU response caching.
-
-### 4. `awg_manager` & Device Slots Hub (AmneziaWG Mesh)
-- **Path**: [`vpn-shop/vpn_shop/awg_manager.py`](vpn-shop/vpn_shop/awg_manager.py) & [`vpn-shop/vpn_shop/awg_traffic.py`](vpn-shop/vpn_shop/awg_traffic.py)
-- **Description**: Multi-device slot allocator and traffic accounting engine.
-- **Features**:
-  - Allocates dedicated peer slots per subscriber (3, 6, or 9 slots) across `10.8.1.0/24`, `10.8.2.0/24`, and `10.8.3.0/24`.
-  - Enforces monthly bandwidth quotas (250 GB, 500 GB, 1000 GB per 30-day billing cycle UTC).
-  - Soft-disables WireGuard slots when quota is exceeded, while keeping VLESS Reality unmetered and fully operational.
+- **Description**: High-throughput subscription generator running on port `3088`.
+- **Capabilities**:
+  - Dynamic profile rendering for **Sing-box 1.10+**, **Clash Meta (Mihomo)**, **Happ**, **Streisand**, **v2rayN**, and **NekoBox**.
+  - Interactive Web Onboarding Wizard (`/{SECRET_SEGMENT}/import/{sub_id}`) with OS auto-detection, in-place renewal, AmneziaWG slot management, and OpenFlux White-List slot controls.
 
 ---
 
-## Disaster Recovery & Edge Failover
+## Active-Active Data Plane & Autonomous Reconciliation
 
-```text
-                 [ Outage on Primary Master ]
-                              │
-              (1) Run Orchestrator: switch_primary.py
-                  • Preflight check & target validation
-                  • Reconciles SQLite snapshots
-                  • Promotes Standby node to Primary
-                  • Switches Cloudflare DNS A records
-                              │
-                 [ Standby Serves Live Traffic ]
-                              │
-              (2) Living Edge Buffer (Vercel Anycast)
-                  • Instant reverse proxy for web and subscriptions
-                  • Eliminates client-side ISP DNS caching delays
+```mermaid
+sequenceDiagram
+    autonumber
+    participant User as "Customer (Web / Bot / Plati)"
+    participant Edge as "YC API Gateway (Anycast)"
+    participant Web as "vpn-shop-web (Active Node)"
+    participant Turso as "Turso Cloud (libSQL)"
+    participant Rec as "xui_reconciler.py (All Nodes: NL, PL, FI)"
+    participant XUI as "Local 3X-UI & AmneziaWG"
+
+    User->>Edge: Complete Payment / Activate Promo
+    Edge->>Web: Route to healthy node (timeout 3.5s)
+    Web->>Turso: COMMIT order='delivered' & profile (force_sync)
+    Web->>Rec: Send SIGUSR1 (instant local wake)
+    Rec->>Turso: Pull updated profiles & awg_slots from replica
+    Rec->>XUI: 3X-UI API addClient / updateClient (Zero-Downtime RAM)
+    Rec->>XUI: awg syncconf awg0 (Staged atomic peer sync)
+    Web-->>User: Return Subscription URL & AWG Device Slots
 ```
-
-- **Continuous Snapshot Replication**: `sync_primary_to_standbys.sh` runs every 3 minutes via cron, generating clean SQLite `.backup` snapshots of `vpn_shop.db` and pushing them alongside X-UI client keys to Poland and Finland.
-- **Cluster Failover**: Modern cluster failover is orchestrated via `switch_primary.py` (supporting `--dry-run` and `--preflight`). Legacy standalone failover scripts (`promote_fi.sh` / `demote_fi.sh`) remain available on the FI standby node.
-- **Emergency Reverse Proxy**: Documented in [`docs/EDGE_FAILOVER_ARCHITECTURE.md`](docs/EDGE_FAILOVER_ARCHITECTURE.md) and [`docs/HA_DISASTER_RECOVERY.md`](docs/HA_DISASTER_RECOVERY.md), providing zero-delay fallback through Anycast edge workers.
 
 ---
 
 ## Protocol & Subscription Delivery
 
-| Protocol / Transport | Transport Layer | Server Ports | Client Profile Route | Key Capabilities |
+| Protocol / Transport | Layer | Server Ports | Client Route | Key Capabilities |
 |---|---|---|---|---|
-| **VLESS Reality Vision** | TCP | `443` / `23385` | `/singbox/{id}`, `/happ/{id}` | Direct TLS masquerade (`minClientVer: 0.0.0`), Vision flow |
-| **VLESS Reality XHTTP** | TCP | `8443` | `/singbox/{id}`, `/happ/{id}` | Multiplexed HTTP/2 streaming |
-| **VLESS Reality gRPC** | TCP | `29443` | `/singbox/{id}`, `/happ/{id}` | gRPC transport for high-latency connections |
-| **Hysteria 2** | UDP | `38443` (redirect 443, 30k–40k) | `/singbox/{id}`, `/streisand/{id}` | Mandatory `gecko` obfuscation, port hopping |
-| **AmneziaWG** | UDP | `44121` / `49752` | `/sub/awg/{token}/slot/{idx}/config` | Obfuscated WireGuard headers, dedicated device slots |
-| **Cloud Stream** | WSS | `443` | Custom document link | Document-collaboration transport for extreme network isolation |
+| **VLESS Reality Vision** | TCP | `443` / `23385` | `/singbox/{id}`, `/happ/{id}` | TLS 1.3 masquerade (`minClientVer: 0.0.0`), `xtls-rprx-vision` |
+| **VLESS Reality XHTTP** | TCP | `8443` / `39443` | `/singbox/{id}`, `/happ/{id}` | Multiplexed HTTP/2 packet-up streaming against DPI |
+| **VLESS Reality gRPC** | TCP | `29443` | `/singbox/{id}`, `/happ/{id}` | Resilient gRPC transport for high-latency mobile links |
+| **VLESS WebSocket TLS** | TCP | `443` (via Caddy) | `/singbox/{id}`, `/happ/{id}` | Path `/sc-ws-path` behind Caddy TLS termination |
+| **Hysteria 2** | UDP | `38443` (redirects `443`, `30k-40k`) | `/singbox/{id}`, `/streisand/{id}` | Mandatory `gecko` obfuscation, QUIC port hopping (`30000:40000`) |
+| **AmneziaWG 3.1** | UDP | `44121` (NL/PL), `49752` (FI) | `/sub/awg/{id}/slot/{idx}/config` | Obfuscated WireGuard (`Jc/Jmin/Jmax/S1-S4/H1-H4`), dedicated slots |
+| **OpenFlux v0.3.0** | WSS | `443` (via CDN) | `/sub/openflux/{id}/state` | Dedicated Cloud Document Collaboration Stream for strict White-Lists |
 
 ---
 
 ## Supported Platforms & Client Matrix
 
-The web onboarding wizard automatically detects the visitor's operating system:
-
-| Platform | Recommended App | Alternative Apps | Integration Method |
+| Platform | Primary Recommended App | Alternative Apps | Integration Method |
 |---|---|---|---|
-| **Android** | **sing-box MT**, **Happ** | Clash Mi, v2rayNG | 1-Click Import button / subscription URL |
-| **iOS / iPadOS** | **sing-box MT**, **Happ**, **Streisand** | Shadowrocket, Clash Mi | Universal link / 1-Click Deep Link |
-| **Windows** | **Happ**, **sing-box MT** | Clash Meta, v2rayN | Native setup guide & profile import |
-| **macOS** | **sing-box MT**, **Happ** | Clash Verge Rev | Apple Silicon native client import |
-| **Linux / Routers** | **sing-box CLI**, **AmneziaWG** | Mihomo CLI, Keenetic AWG | Download `.conf` / JSON configuration |
+| **iOS / iPadOS** | **Happ**, **sing-box MT** | Streisand, Clash Mi | 1-Click Deep Link (`happ://`, `sing-box://`, `streisand://`) |
+| **Android** | **Happ**, **Sing-box** | Clash Meta, NekoBox, v2rayNG | 1-Click Import button / QR Code / APK direct download |
+| **Windows** | **Happ**, **Clash Verge Rev** | Sing-box, v2rayN, AmneziaVPN | Native TUN auto-setup & 1-Click subscription import |
+| **macOS** | **Happ**, **sing-box MT** | Clash Verge Rev, Streisand | Apple Silicon & Intel native client import |
+| **Linux / Routers** | **Sing-box CLI**, **AmneziaWG** | Mihomo CLI, Keenetic / OpenWrt | Direct `.conf` download or JSON/YAML subscription URL |
 
 ---
 
 ## Telegram Bot & Administrative Workflows
 
-### Public Commands
-- `/start` — Main menu, subscription status, and customer onboarding.
-- `/prices` — Tariff overview (3, 6, 9 devices across 1, 3, 6, 12 months).
-- `/pay` — Create an order or renew an active subscription.
-- `/cabinet` — Self-service links and connection wizard.
-- `/help` — Step-by-step setup instructions by platform.
-- `/faq` — Answers to common connection and billing questions.
-- `/rules` — Service terms of use and privacy policy.
-- `/support` — Customer support contact channel.
+### Customer Commands
+- `/start` — Main menu, active subscription summary, and deep-link handler (`open`, `ref_*`, `claim_*`).
+- `/prices` — Interactive tariff builder (3, 6, 9 devices for 1, 3, 6, 12 months).
+- `/pay` — Resume pending order payment or open tariff selector.
+- `/cabinet` — Self-service personal cabinet and 1-click connection wizard.
+- `/referral` — Affiliate dashboard (10% invitee discount + 10% lifetime referrer commission).
+- `/help`, `/faq`, `/rules`, `/support` — Onboarding guides, legal terms, and 24/7 support.
 
-### Administrative Command Suite (`/admin`)
-- **Server Health**: Real-time CPU, RAM, active sockets, and systemd service statuses.
-- **Traffic Top**: Top bandwidth consumers across billing periods.
-- **Profile Management**: Enable, soft-disable, or inspect user profiles by ID.
-- **Affiliate Ledger**: Review referral balances and process affiliate payouts.
-- **Invite & Promo Generator**: Mint multi-use promotional discount codes and invite tokens.
-- **Payment Approvals**: One-click confirmation and cancellation of pending orders.
+### Administrative Suite (`/admin`)
+- **Server & Traffic Diagnostics**: Live systemd service states, load average, RAM/disk, established TCP sockets, DNS probe, and top 20 bandwidth consumers.
+- **Profile Controls**: Inspect, warn owner, soft-disable, or re-enable any profile in Xray with 1 click.
+- **Promo & Invite Minting**: Create fixed-access gift codes or percentage discount codes (`10%`–`100%`).
+- **Affiliate Ledger**: Track partner balances and record manual or partial payouts (`admin:refpay`).
+- **AmneziaWG Direct Issuance**: Generate and send `.conf` files for NL, PL, or FI (`admin:share_warp`).
 
 ---
 
-## Web Storefront & Self-Service Cabinet
+## Web Storefront, Payment Gateways & Self-Service Cabinet
 
-- **Landing Page**: Modern cyberpunk interface featuring dynamic pricing cards and instant checkout.
-- **Authoritative Tariff Matrix** (from `catalog.py`):
-  - **3 devices**: 149 ₽ / month (250 GB AWG quota + unmetered VLESS)
-  - **6 devices**: 199 ₽ / month (500 GB AWG quota + unmetered VLESS)
-  - **9 devices**: 235 ₽ / month (1000 GB AWG quota + unmetered VLESS)
-  - *Duration discounts*: -10% for 3 months, -20% for 6 months, -30% for 12 months (rounded to psychological 9-ending prices).
-- **Device Slots Hub**: Dedicated slot management interface allowing customers to download individual `.conf` files, view live PNG QR codes, and rename devices.
+- **Authoritative Tariff Matrix** ([`catalog.py`](vpn-shop/vpn_shop/catalog.py)):
+  - **3 Devices (Personal)**: `149 ₽ / mo` (`250 GB` high-speed AmneziaWG + **Unmetered** VLESS/Hysteria2)
+  - **6 Devices (Home)**: `199 ₽ / mo` (`500 GB` high-speed AmneziaWG + **Unmetered** VLESS/Hysteria2)
+  - **9 Devices (Extended)**: `235 ₽ / mo` (`1000 GB` high-speed AmneziaWG + **Unmetered** VLESS/Hysteria2)
+  - *Multi-Month Discounts*: `-10%` (3 months), `-20%` (6 months), `-30%` (12 months), rounded to psychological `9`-ending prices.
+- **Passwordless Magic-Link Cabinet**: Customers request a 30-minute HMAC-signed access link (`/cabinet/{token}`) protected by Cloudflare Turnstile and rate limiting.
 
 ---
 
 ## Configuration & Environment Catalog
 
-All components are configured via environment variables. See [`.env.example`](.env.example) for defaults:
-
-| Variable | Default Value | Description |
+| Variable | Default / Example | Description |
 |---|---|---|
-| `TELEGRAM_BOT_TOKEN` | `""` | Telegram Bot API token from @BotFather. |
-| `TELEGRAM_BOT_USERNAME` | `""` | Bot username used to assemble deep-links. |
-| `SUBSCRIPTION_BASE_URL` | `http://127.0.0.1:3088/sub/json` | Base URL used by the subscription engine. |
-| `WEB_LISTEN_PORT` | `3090` | Port for the web storefront and checkout daemon. |
-| `LISTEN_PORT` | `3088` | Port for the `subjson-service` FastAPI engine. |
-| `SECRET_SEGMENT` | `my-secret-sub` | Obfuscated URL path prefix protecting subscription endpoints. |
-| `XUI_PANEL_URL` | `https://127.0.0.1:2053/` | 3X-UI internal administrative API URL. |
-| `XUI_DB_PATH` | `/etc/x-ui/x-ui.db` | Filesystem path to the primary 3X-UI SQLite database. |
-| `MONTHLY_PRICE_3_DEVICES_RUB`| `149` | Base monthly price for 3 concurrent devices. |
-| `MONTHLY_PRICE_6_DEVICES_RUB`| `199` | Base monthly price for 6 concurrent devices. |
-| `MONTHLY_PRICE_9_DEVICES_RUB`| `235` | Base monthly price for 9 concurrent devices. |
-| `CF_TURNSTILE_SITE_KEY` | `""` | Cloudflare Turnstile public site key. |
-| `CF_TURNSTILE_SECRET_KEY` | `""` | Cloudflare Turnstile private validation secret. |
-| `PLATEGA_MERCHANT_ID_WEB` | `""` | Platega.io merchant identifier for web checkout. |
-| `PLATEGA_SECRET_WEB` | `""` | Platega.io webhook validation secret. |
+| `TURSO_DATABASE_URL` | `libsql://<db>-<org>.turso.io` | Primary Turso Cloud database URL for Active-Active sync. |
+| `TURSO_AUTH_TOKEN` | `""` | Turso JWT authentication token. |
+| `TURSO_SYNC_INTERVAL` | `2.0` | Background embedded replica sync interval in seconds. |
+| `SERVER_PEPPER` | *Required in Prod* | High-entropy secret pepper for HMAC token & promo hashing. |
+| `SECRET_SEGMENT` | *Required in Prod* | Obfuscated URL path prefix for `subjson-service`. |
+| `TELEGRAM_BOT_TOKEN` | `""` | Telegram Bot API token from `@BotFather`. |
+| `SERVERLESS_MODE` | `false` | Run bot daemon in background lease-worker mode (auto-enabled on 409). |
+| `SERVERLESS_BRIDGE_SECRET`| `""` | Shared HMAC secret for `/api/bridge` RPC calls. |
+| `XUI_PANEL_URL` | `http://127.0.0.1:2053/...` | Local 3X-UI administrative URL (auto-toggles HTTP/HTTPS). |
+| `XUI_DB_PATH` | `/etc/x-ui/x-ui.db` | Path to local 3X-UI SQLite database. |
+| `AWG_NL_SERVER_PUBKEY` | `<BASE64_PUBKEY>` | Curve25519 public key for NL AmneziaWG node. |
+| `AWG_PL_SERVER_PUBKEY` | `<BASE64_PUBKEY>` | Curve25519 public key for PL AmneziaWG node. |
+| `AWG_FI_SERVER_PUBKEY` | `<BASE64_PUBKEY>` | Curve25519 public key for FI AmneziaWG node. |
+| `PLATEGA_ENABLED` | `false` | Enable Platega.io SBP & card acquiring. |
+| `DIGISELLER_ENABLED` | `false` | Enable Digiseller / Plati.market automated fulfillment. |
 
 ---
 
 ## Deployment & Quickstart Guide
 
 ### Prerequisites
-- **Operating System**: Ubuntu 24.04 LTS or Debian 13 (Trixie).
-- **Runtimes**: Python 3.11+, Docker, Caddy v2, SQLite 3.35+.
+- **OS**: Debian 13 (Trixie) or Ubuntu 24.04 LTS (Linux kernel 6.12+ with BBR).
+- **Stack**: Python 3.11+ (`libsql`, `cryptography`), Docker (`amnezia-awg2`), 3X-UI, Hysteria 2, Caddy v2.
 
-### Running Services with Systemd
+### Starting Active-Active Node Services
 ```bash
-# 1. Enable and start SubJSON subscription engine
-systemctl enable --now subjson.service
+# 1. Initialize local database / Turso replica
+python3 -m vpn_shop --env-file .env.silentconnect init-db
 
-# 2. Enable and start Web Storefront & Telegram Bot
-systemctl enable --now vpn-shop-web.service vpn-shop-silentconnect.service
+# 2. Run a dry-run check of the autonomous 3X-UI reconciler
+python3 -m vpn_shop --env-file .env.silentconnect reconcile-xui --dry-run
 
-# 3. Verify listening sockets
-ss -tulpn | grep -E '3088|3090|443|38443|44121'
+# 3. Enable and start all node services
+systemctl enable --now subjson.service vpn-shop-web.service vpn-shop-xui-reconciler.service
+
+# 4. Verify active sockets
+ss -tulpn | grep -E '3088|3090|443|4430|38443|44121'
 ```
 
 ---
 
 ## Automated Security & Zero-Leak Verification
 
-SilentConnect includes an automated security audit scanner and regression test suite enforced via a git pre-push hook:
+SilentConnect enforces a strict zero-leak policy via `scripts/security_audit_scanner.py` and git pre-commit / pre-push hooks:
 
 ```bash
-# 1. Run strict zero-leak security audit scanner
-python scripts/security_audit_scanner.py --strict
+# 1. Execute strict zero-leak security audit scanner
+python3 scripts/security_audit_scanner.py --strict
 
 # Output:
-# Files Scanned    : 190
-# Violations Found : 0
 # [PASS] AUDIT PASSED: Zero leaks, zero binaries, zero untracked secrets detected.
 
-# 2. Run complete regression test suite
-python -m unittest discover -s tests -p "test_*.py"
+# 2. Execute full unit & integration test suite
+python3 -m unittest discover -s tests -p "test_*.py"
 
 # Output:
-# Ran 444 tests in 68.478s
-# OK (skipped=9)
+# Ran 128 tests
+# OK
 ```
 
 ---
 
 ## In-Depth Documentation Index
 
-For exhaustive architecture blueprints, disaster recovery runbooks, and protocol details, refer to:
-
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — Comprehensive cluster topology, SQLite replication mechanics, port maps, and failover workflows.
-- **[DEPLOYMENT.md](DEPLOYMENT.md)** — Step-by-step standby node provisioning on Debian 13, systemd unit catalog, iptables rules, and disaster recovery.
-- **[AMNEZIA_SLOTS.md](AMNEZIA_SLOTS.md)** — AmneziaWG device slots hub, 250/500/1000 GB monthly quota accounting engine, and client configuration specs.
-- **[WHITELIST_SPEC.md](WHITELIST_SPEC.md)** — Dedicated slot architecture for cloud document stream transport.
-- **[docs/EDGE_FAILOVER_ARCHITECTURE.md](docs/EDGE_FAILOVER_ARCHITECTURE.md)** — Living Vercel Anycast edge reverse proxy design for instant failover.
-- **[docs/HA_DISASTER_RECOVERY.md](docs/HA_DISASTER_RECOVERY.md)** — Historical disaster recovery drill report (01.09.2026) and edge buffer specification.
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — Deep-dive Active-Active Mesh specification, Turso embedded replica mechanics, `xui_reconciler.py` flow, and port maps.
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** — Step-by-step node provisioning on Debian 13 / Ubuntu 24.04, systemd units, node identity triangulation, and disaster recovery.
+- **[AMNEZIA_SLOTS.md](AMNEZIA_SLOTS.md)** — Multi-Device Slot Hub specification, 30-day UTC quota engine, soft-disable guarantee, and local self-reconciliation.
+- **[WHITELIST_SPEC.md](WHITELIST_SPEC.md)** — OpenFlux v0.3.0 Dedicated Slots specification for strict white-list bypass via Cloud Document Stream.
+- **[README_RU.md](README_RU.md)** — Complete Russian architectural overview.
 
 ---
 
