@@ -239,11 +239,11 @@ class TestOutageSimulationRunnerExecution(unittest.TestCase):
                 max_failover_sec=3.0,
                 verbose=False,
             )
+            metrics = runner.run_simulation()
         except RuntimeError as exc:
             if "Sing-box binary not found" in str(exc):
                 self.skipTest("Sing-box binary not found in test environment")
             raise
-        metrics = runner.run_simulation()
 
         self.assertTrue(metrics["baseline_success"], "Baseline connectivity failed")
         self.assertTrue(metrics["failover_success"], "Failover assertion failed")
