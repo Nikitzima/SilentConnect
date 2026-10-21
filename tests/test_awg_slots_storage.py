@@ -398,7 +398,8 @@ class TestAwgSlotsStorage(unittest.TestCase):
         self.assertIn("HeaderProtectionKey = CqymuFeL7ibiqrqIDF0jl3Mg1/vvl5Tmnqzl5C8IWhM=", conf_pl)
         self.assertIn("44121", conf_pl)
         self.assertIn("PublicKey = bi1igMRahaWDgvo7ClePLOwnXYjhdo+7PMaswXVtlAs=", conf_pl)
-        self.assertIn("S1 = 12", conf_pl)
+        self.assertIn("S1 = 51", conf_pl)
+        self.assertIn("ContentPaddingAddition = 10-100", conf_pl)
         self.assertIn("RandomTrailers = on", conf_pl)
         self.assertIn("DisableCookies = on", conf_pl)
 
