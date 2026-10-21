@@ -1796,22 +1796,22 @@ class Store:
             ).fetchone()
         return self._row_to_dict(row)
 
-    def get_profile(self, public_id_value: str) -> dict[str, Any] | None:
+    def get_profile(self, public_id_value: str, sync_on_miss: bool = False) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM profiles WHERE public_id = ?", (public_id_value,)).fetchone()
-        if row is None and self._replica_mgr is not None:
+        if row is None and sync_on_miss and self._replica_mgr is not None:
             self._replica_mgr.force_sync()
             with self._connect() as conn:
                 row = conn.execute("SELECT * FROM profiles WHERE public_id = ?", (public_id_value,)).fetchone()
         return self._row_to_dict(row)
 
-    def get_profile_by_xui_email(self, xui_email: str) -> dict[str, Any] | None:
+    def get_profile_by_xui_email(self, xui_email: str, sync_on_miss: bool = False) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT * FROM profiles WHERE xui_email = ? ORDER BY id DESC LIMIT 1",
                 (xui_email,),
             ).fetchone()
-        if row is None and self._replica_mgr is not None:
+        if row is None and sync_on_miss and self._replica_mgr is not None:
             self._replica_mgr.force_sync()
             with self._connect() as conn:
                 row = conn.execute(

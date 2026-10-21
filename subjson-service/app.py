@@ -576,23 +576,40 @@ def get_store_db():
     return conn
 
 
+_sub_profile_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
+_sub_profile_cache_lock = threading.Lock()
+_PROFILE_CACHE_TTL = 30.0
+
+
 def find_profile_for_sub(wc, subscription_id: str) -> dict[str, Any] | None:
     if not wc:
         return None
     clean = str(subscription_id or "").strip()
-    prof = wc.get_profile_by_any_sub_id(clean)
-    if prof:
-        return prof
-    try:
-        _, _, _, _, client = find_subscription(clean)
-        xemail = str(client.get("email") or "").strip()
-        if xemail:
-            prof = wc.store.get_profile_by_xui_email(xemail)
-            if prof:
-                return prof
-    except Exception:
-        pass
-    return None
+    now = time.time()
+    with _sub_profile_cache_lock:
+        if clean in _sub_profile_cache:
+            ts, cached_val = _sub_profile_cache[clean]
+            if now - ts < _PROFILE_CACHE_TTL:
+                return cached_val
+
+    prof = None
+    if clean.startswith("prf_"):
+        prof = wc.store.get_profile(clean)
+    else:
+        # Fast path: resolve email from RAM x-ui cache (0.003s)
+        try:
+            _, _, _, _, client = find_subscription(clean)
+            xemail = str(client.get("email") or "").strip()
+            if xemail:
+                prof = wc.store.get_profile_by_xui_email(xemail)
+        except Exception:
+            pass
+        if not prof:
+            prof = wc.get_profile_by_any_sub_id(clean)
+
+    with _sub_profile_cache_lock:
+        _sub_profile_cache[clean] = (now, prof)
+    return prof
 
 
 OPENFLUX_CLUSTER_KEY = os.environ.get("OPENFLUX_CLUSTER_KEY", "sc_oflux_2026_mock_placeholder_key")
@@ -11201,11 +11218,30 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
 
+def _start_turso_sync_daemon() -> None:
+    """Background periodic syncer: keeps local NVMe replica fresh without blocking HTTP requests."""
+    def _worker():
+        while True:
+            time.sleep(15.0)
+            try:
+                wc = get_shop_checkout()
+                if wc and getattr(wc, "store", None):
+                    mgr = getattr(wc.store, "_replica_mgr", None)
+                    if mgr:
+                        mgr.force_sync()
+            except Exception as e:
+                LOGGER.debug("Background Turso sync exception: %s", e)
+
+    t = threading.Thread(target=_worker, daemon=True, name="subjson-turso-syncer")
+    t.start()
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    _start_turso_sync_daemon()
     server = ThreadingHTTPServer((LISTEN_HOST, LISTEN_PORT), RequestHandler)
     LOGGER.info("Listening on %s:%s using DB %s", LISTEN_HOST, LISTEN_PORT, XUI_DB_PATH)
     server.serve_forever()

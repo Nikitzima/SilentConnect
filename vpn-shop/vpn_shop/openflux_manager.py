@@ -75,37 +75,48 @@ def get_mailru_env() -> dict[str, str]:
     return env
 
 
+_openflux_db_initialized = False
+_openflux_init_lock = threading.Lock()
+
+
 def init_openflux_db(conn: sqlite3.Connection) -> None:
-    """Create openflux_slots table if not exists."""
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS openflux_slots (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            profile_public_id TEXT NOT NULL UNIQUE,
-            slot_label TEXT NOT NULL DEFAULT 'Белые списки (OpenFlux)',
-            status TEXT NOT NULL DEFAULT 'uninitialized',
-            active_server TEXT DEFAULT NULL,
-            active_doc_name TEXT DEFAULT NULL,
-            active_doc_url TEXT DEFAULT NULL,
-            active_container_name TEXT DEFAULT NULL,
-            pending_server TEXT DEFAULT NULL,
-            pending_doc_name TEXT DEFAULT NULL,
-            pending_doc_url TEXT DEFAULT NULL,
-            pending_container_name TEXT DEFAULT NULL,
-            pending_started_at INTEGER DEFAULT NULL,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL,
-            FOREIGN KEY (profile_public_id) REFERENCES profiles(public_id)
-        );
-        """
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS ix_openflux_slots_profile ON openflux_slots(profile_public_id);"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS ix_openflux_slots_status ON openflux_slots(status);"
-    )
-    conn.commit()
+    """Create openflux_slots table if not exists (executed at most once per process)."""
+    global _openflux_db_initialized
+    if _openflux_db_initialized:
+        return
+    with _openflux_init_lock:
+        if _openflux_db_initialized:
+            return
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS openflux_slots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_public_id TEXT NOT NULL UNIQUE,
+                slot_label TEXT NOT NULL DEFAULT 'Белые списки (OpenFlux)',
+                status TEXT NOT NULL DEFAULT 'uninitialized',
+                active_server TEXT DEFAULT NULL,
+                active_doc_name TEXT DEFAULT NULL,
+                active_doc_url TEXT DEFAULT NULL,
+                active_container_name TEXT DEFAULT NULL,
+                pending_server TEXT DEFAULT NULL,
+                pending_doc_name TEXT DEFAULT NULL,
+                pending_doc_url TEXT DEFAULT NULL,
+                pending_container_name TEXT DEFAULT NULL,
+                pending_started_at INTEGER DEFAULT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (profile_public_id) REFERENCES profiles(public_id)
+            );
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_openflux_slots_profile ON openflux_slots(profile_public_id);"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_openflux_slots_status ON openflux_slots(status);"
+        )
+        conn.commit()
+        _openflux_db_initialized = True
 
 
 def build_openflux_stream_link(public_url: str, country_code: str) -> str:
