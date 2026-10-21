@@ -7235,6 +7235,31 @@ def setup_page_html(
     </div>
   </div>
 
+  <!-- OpenFlux Switch Cancellation Modal (Yellow/Amber Warning) -->
+  <div id="wl-cancel-modal" class="awg-modal-overlay" style="display: none;" onclick="if (event.target === this) closeWlCancelModal();">
+    <div class="awg-modal-box" style="max-width: 480px; border: 2px solid #f59e0b; box-shadow: 0 0 35px rgba(245, 158, 11, 0.35);">
+      <div class="awg-modal-header" style="border-bottom: 1px solid rgba(245, 158, 11, 0.3);">
+        <div style="font-weight: 800; font-size: 16px; color: #f59e0b; display: flex; align-items: center; gap: 8px;">
+          <span>↩️</span> <span>Отмена смены сервера</span>
+        </div>
+        <button type="button" class="awg-modal-close" onclick="closeWlCancelModal()" aria-label="Закрыть">&times;</button>
+      </div>
+      <div class="awg-modal-body">
+        <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 10px; padding: 14px 16px; margin-bottom: 18px; font-size: 13.5px; color: #fde047; line-height: 1.5;">
+          Вы собираетесь отменить процедуру переезда. Временный сервер будет удалён, а ваша связь останется на текущем сервере (<b id="wl-cancel-current-name">Нидерланды</b>).
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap;">
+          <button type="button" class="button secondary" onclick="closeWlCancelModal()" style="min-height: 42px; padding: 8px 16px; font-size: 13px;">
+            ← Вернуться к переезду
+          </button>
+          <button type="button" id="wl-modal-cancel-btn" onclick="executeWlCancel()" style="background: #f59e0b; color: #000; min-height: 42px; padding: 8px 20px; font-size: 13px; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
+            <span>↩️</span> <span>Да, отменить переезд</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- OpenFlux Country Picker Modal -->
   <div id="wl-picker-modal" class="awg-modal-overlay" style="display: none;" onclick="if (event.target === this) closeWlPickerModal();">
     <div class="awg-modal-box" style="max-width: 420px;">
@@ -8482,7 +8507,7 @@ def setup_page_html(
       const btn = document.getElementById("wl-modal-confirm-btn");
       if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '<span>⏳</span> <span>Удаление...</span>';
+        btn.innerHTML = '<span>⏳</span> <span>Синхронизация шлюзов...</span>';
       }
       try {
         const res = await fetch("/sub/openflux/__SUB_ID__/switch/confirm", { method: "POST" });
@@ -8497,48 +8522,66 @@ def setup_page_html(
           renderWlSlot();
           return;
         }
-
-        // Double check live state in case of gateway timeout or double submission
-        await fetchWlState();
-        if (_wlSlot && _wlSlot.status === "active") {
-          closeWlConfirmModal();
-          renderWlSlot();
-          return;
-        }
-
-        closeWlConfirmModal();
-        const errMsg = (data && (data.error || data.message || data.errorMessage)) || "Не удалось завершить смену сервера";
-        alert("Ошибка финализации: " + errMsg);
       } catch (err) {
-        await fetchWlState();
-        if (_wlSlot && _wlSlot.status === "active") {
-          closeWlConfirmModal();
-          renderWlSlot();
-          return;
-        }
-        closeWlConfirmModal();
-        alert("Ошибка связи при подтверждении: " + err);
-      } finally {
-        if (btn) {
-          btn.disabled = false;
-          btn.innerHTML = '<span>🗑️</span> <span>Подтверждаю, удалить старый</span>';
-        }
+        // Slow tunnel or network hiccup: do not show a scary alert! Proceed to resilient backoff poll
+      }
+
+      // Resilient check: DB write takes <50ms. Poll live state over 5 seconds
+      for (let attempt = 0; attempt < 4; attempt++) {
+        await new Promise(r => setTimeout(r, 1200));
+        try {
+          await fetchWlState();
+          if (_wlSlot && _wlSlot.status === "active") {
+            closeWlConfirmModal();
+            renderWlSlot();
+            return;
+          }
+        } catch (e) {}
+      }
+
+      closeWlConfirmModal();
+      renderWlSlot();
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<span>🗑️</span> <span>Подтверждаю, удалить старый</span>';
       }
     };
 
-    window.cancelWlServerSwitch = async function() {
-      if (!confirm("Отменить процедуру смены сервера? Временный новый сервер будет удален, вы останетесь на " + (_wlSlot.active_server_name || "текущем сервере") + ".")) {
-        return;
+    window.cancelWlServerSwitch = function() {
+      const modal = document.getElementById("wl-cancel-modal");
+      const curName = document.getElementById("wl-cancel-current-name");
+      if (curName && _wlSlot) {
+        curName.textContent = _wlSlot.active_server_name || "текущем сервере";
+      }
+      if (modal) modal.style.display = "flex";
+    };
+
+    window.closeWlCancelModal = function() {
+      const modal = document.getElementById("wl-cancel-modal");
+      if (modal) modal.style.display = "none";
+    };
+
+    window.executeWlCancel = async function() {
+      const btn = document.getElementById("wl-modal-cancel-btn");
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span>⏳</span> <span>Отмена...</span>';
       }
       try {
-        const res = await fetch("/sub/openflux/__SUB_ID__/switch/cancel", { method: "POST" });
-        const data = await res.json();
-        if (data.ok && data.slot) {
-          _wlSlot = data.slot;
-          renderWlSlot();
-        }
-      } catch (err) {
-        alert("Ошибка при отмене: " + err);
+        await fetch("/sub/openflux/__SUB_ID__/switch/cancel", { method: "POST" });
+      } catch (err) {}
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await new Promise(r => setTimeout(r, 800));
+        try {
+          await fetchWlState();
+          if (_wlSlot && _wlSlot.status === "active") break;
+        } catch (e) {}
+      }
+      closeWlCancelModal();
+      renderWlSlot();
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<span>↩️</span> <span>Да, отменить переезд</span>';
       }
     };
 

@@ -558,6 +558,8 @@ def confirm_server_switch(conn: sqlite3.Connection, profile_id: str, async_clean
     # 2. Decommission old resources & rename worker
     def _do_cleanup():
         try:
+            # Grace period so the client's HTTP response is fully flushed over the tunnel before container manipulation
+            time.sleep(2.5)
             if old_srv:
                 if old_container:
                     stop_openflux_worker(old_srv, old_container)
