@@ -118,15 +118,15 @@ sequenceDiagram
     participant Watchdog as Background Watchdog (30s)
 
     Client->>Mgr: start_server_switch(profile_id, target='pl')
-    Mgr->>NewSrv: Создание документа PL_<uid>_pending.docx в Cloud API
-    Mgr->>NewSrv: Запуск Docker openflux-worker-<uid>-pending
+    Mgr->>NewSrv: Создание документа PL_uid_pending.docx в Cloud API
+    Mgr->>NewSrv: Запуск Docker openflux-worker-uid-pending
     Mgr->>DB: UPDATE: pending_server='pl', pending_expires_at=now+300s
     Note over OldSrv,NewSrv: Оба контейнера работают параллельно! Клиент переключает поток без разрыва связи.
     
     alt Клиент подтвердил успешное переключение
         Client->>Mgr: confirm_server_switch(profile_id)
         Mgr->>DB: UPDATE: active_server='pl', active_url=pending_url, pending=NULL
-        Mgr->>NewSrv: Переименование openflux-worker-<uid>-pending -> active
+        Mgr->>NewSrv: Переименование openflux-worker-uid-pending -> active
         Mgr->>OldSrv: Остановка и удаление старого Docker-контейнера
         Mgr->>OldSrv: Удаление старого документа Cloud
     else Таймаут 5 минут истёк без подтверждения

@@ -120,10 +120,10 @@
 sequenceDiagram
     autonumber
     participant Timer as db-sync-primary.timer
-    participant Script as sync_primary_to_standbys.sh (NL)
+    participant Script as "sync_primary_to_standbys.sh (NL)"
     participant MasterDB as vpn_shop.db (NL Master)
-    participant PL as PL Standby (<PL_IP>)
-    participant FI as FI Standby (<FI_IP>)
+    participant PL as "PL Standby (PL_IP)"
+    participant FI as "FI Standby (FI_IP)"
     participant XUISync as sync_xui_to_remote.py
 
     Timer->>Script: Срабатывание каждые 3 минуты
