@@ -1,6 +1,6 @@
 """
-OpenFlux 0.3.0 Mail.ru Stream Dedicated Slots & Worker Lifecycle Manager
-Supports lazy provisioning, smart balancing across NL/PL/FI, and two-phase server handover.
+OpenFlux 0.3.0 Cups.online Stream Dedicated Slots & Worker Lifecycle Manager
+Supports lazy provisioning, smart balancing across NL/PL, and two-phase server handover.
 """
 from __future__ import annotations
 
@@ -16,8 +16,10 @@ import sqlite3
 import subprocess
 import threading
 import time
+import urllib.request
 import zlib
 from typing import Any, Optional
+
 
 LOGGER = logging.getLogger("openflux_manager")
 
@@ -107,14 +109,14 @@ def init_openflux_db(conn: sqlite3.Connection) -> None:
 
 
 def build_openflux_stream_link(public_url: str, country_code: str) -> str:
-    """Encode an OpenFlux v1 stream link for a given public Mail.ru doc URL."""
+    """Encode an OpenFlux v1 stream link for a given public Cups.online room URL."""
     c_info = SERVERS.get(country_code.lower().strip(), SERVERS["nl"])
     payload = {
         "name": f"SilentConnect {c_info['flag']} {c_info['name']}",
         "mode": "stream",
         "transports": [
             {
-                "type": "mailru",
+                "type": "cupsonline",
                 "url": public_url.strip(),
             }
         ],
@@ -124,6 +126,31 @@ def build_openflux_stream_link(public_url: str, country_code: str) -> str:
     deflated = compressor.compress(json_bytes) + compressor.flush()
     b64 = base64.urlsafe_b64encode(deflated).decode("ascii").rstrip("=")
     return f"openflux://v1/{b64}"
+
+
+def create_cups_room() -> tuple[str, str]:
+    """
+    Generate an anonymous public live-coding interview room on cups.online.
+    Returns (room_uuid, room_url).
+    """
+    url = "https://interview.cups.online/live-coding/"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ru-RU,ru;q=0.9",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=12) as resp:
+        html_content = resp.read().decode("utf-8", errors="replace")
+    m = re.search(r'data-room="\{&quot;uuid&quot;:\s*&quot;([0-9a-f-]{36})&quot;', html_content)
+    if not m:
+        raise RuntimeError("Не удалось получить room UUID с cups.online")
+    room_uuid = m.group(1)
+    room_url = f"https://interview.cups.online/live-coding/?room={room_uuid}"
+    return room_uuid, room_url
+
 
 
 def get_server_ip(server_code: str) -> str:
@@ -270,16 +297,16 @@ def rclone_delete_user_doc(doc_name: str) -> bool:
 
 # Docker Worker Operations
 def start_openflux_worker(server_code: str, container_name: str, public_doc_url: str) -> bool:
-    """Launch a lightweight Docker container running mailruexit.php on target node."""
+    """Launch a lightweight Docker container running cupsexit.php via runner.php on target node."""
     clean_name = re.sub(r"[^\w\-]", "", container_name)
     quoted_url = shlex.quote(public_doc_url.strip())
     docker_cmd = (
         f"docker rm -f {clean_name} 2>/dev/null || true; "
         f"docker run -d --name {clean_name} --restart unless-stopped "
-        f"--memory=64m --cpus=0.5 "
+        f"--memory=32m --cpus=0.5 "
         f"-v /opt/openflux:/opt/openflux:ro "
         f"php:8.2-cli-alpine "
-        f"sh -c 'while true; do php -d memory_limit=48M /opt/openflux/runner.php \"$1\"; sleep 1; done' _ {quoted_url}"
+        f"sh -c 'while true; do php -d memory_limit=32M /opt/openflux/runner.php \"$1\"; sleep 1; done' _ {quoted_url}"
     )
     code, stdout, stderr = run_node_command(server_code, docker_cmd, timeout=20)
     if code == 0:
@@ -378,7 +405,7 @@ def activate_openflux_slot(conn: sqlite3.Connection, profile_id: str) -> dict[st
     """
     Activate an uninitialized slot:
     1. Smart Balancer picks optimal node.
-    2. Provisions unique doc <COUNTRY>_<USER_ID>.docx in Mail.ru Cloud.
+    2. Provisions unique live-coding room on cups.online.
     3. Starts docker container on chosen node.
     4. Updates slot to 'active'.
     """
@@ -388,25 +415,17 @@ def activate_openflux_slot(conn: sqlite3.Connection, profile_id: str) -> dict[st
 
     target_srv = choose_least_loaded_server(conn)
     clean_uid = re.sub(r"[^\w\-]", "", profile_id)
-    doc_name = f"{target_srv.upper()}_{clean_uid}.docx"
     container_name = f"openflux-worker-{clean_uid}"
 
-    # Step 1: Create doc in Mail.ru Cloud
-    if not rclone_create_user_doc(doc_name):
-        raise RuntimeError(f"Не удалось создать документ {doc_name} в Облаке Mail.ru")
+    # Step 1: Create room on cups.online
+    room_uuid, public_url = create_cups_room()
+    doc_name = f"cups_{room_uuid}"
 
-    # Step 2: Obtain public link
-    public_url = rclone_get_public_link(doc_name)
-    if not public_url:
-        rclone_delete_user_doc(doc_name)
-        raise RuntimeError(f"Не удалось получить публичную ссылку для {doc_name}")
-
-    # Step 3: Start Docker container on node
+    # Step 2: Start Docker container on node
     if not start_openflux_worker(target_srv, container_name, public_url):
-        rclone_delete_user_doc(doc_name)
         raise RuntimeError(f"Не удалось запустить рабочий контейнер OpenFlux на сервере {target_srv.upper()}")
 
-    # Step 4: Persist in database
+    # Step 3: Persist in database
     now = int(time.time())
     conn.execute(
         """
@@ -454,25 +473,17 @@ def start_server_switch(conn: sqlite3.Connection, profile_id: str, target_server
         raise ValueError("Слот должен быть активен для запуска смены сервера")
 
     clean_uid = re.sub(r"[^\w\-]", "", profile_id)
-    pending_doc_name = f"{target_srv.upper()}_{clean_uid}_pending.docx"
     pending_container = f"openflux-worker-{clean_uid}-pending"
 
-    # Step 1: Create doc in Mail.ru Cloud
-    if not rclone_create_user_doc(pending_doc_name):
-        raise RuntimeError(f"Не удалось создать документ {pending_doc_name} в Облаке Mail.ru")
+    # Step 1: Create parallel room on cups.online
+    pending_room_uuid, pending_public_url = create_cups_room()
+    pending_doc_name = f"cups_{pending_room_uuid}"
 
-    # Step 2: Obtain public link
-    pending_public_url = rclone_get_public_link(pending_doc_name)
-    if not pending_public_url:
-        rclone_delete_user_doc(pending_doc_name)
-        raise RuntimeError(f"Не удалось получить публичную ссылку для {pending_doc_name}")
-
-    # Step 3: Start parallel Docker worker on target server
+    # Step 2: Start parallel Docker worker on target server
     if not start_openflux_worker(target_srv, pending_container, pending_public_url):
-        rclone_delete_user_doc(pending_doc_name)
         raise RuntimeError(f"Не удалось запустить новый воркер на сервере {target_srv.upper()}")
 
-    # Step 4: Record pending migration state
+    # Step 3: Record pending migration state
     now = int(time.time())
     conn.execute(
         """
@@ -552,7 +563,7 @@ def confirm_server_switch(conn: sqlite3.Connection, profile_id: str, async_clean
                     stop_openflux_worker(old_srv, old_container)
                 if old_container != canonical_container:
                     stop_openflux_worker(old_srv, canonical_container)
-            if old_doc:
+            if old_doc and not old_doc.startswith("cups_"):
                 rclone_delete_user_doc(old_doc)
             if new_srv and new_container and new_container != canonical_container:
                 rename_openflux_worker(new_srv, new_container, canonical_container)
@@ -591,7 +602,7 @@ def cancel_server_switch(conn: sqlite3.Connection, profile_id: str) -> dict[str,
         if pending_container != f"openflux-worker-{clean_uid}-pending":
             stop_openflux_worker(pending_srv, f"openflux-worker-{clean_uid}-pending")
 
-    if pending_doc:
+    if pending_doc and not pending_doc.startswith("cups_"):
         rclone_delete_user_doc(pending_doc)
 
     now = int(time.time())
