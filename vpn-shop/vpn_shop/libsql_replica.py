@@ -151,20 +151,20 @@ class LibsqlReplicaManager:
         """Неблокирующая фоновая проверка устаревания реплики."""
         now = time.monotonic()
         if now - self._last_sync_at >= self._sync_interval:
-            # Неблокирующий захват: если другой поток уже синхронизирует, читаем локальную реплику сразу
+            # Неблокирующий захват: если фоновый синк уже запущен, читаем локальную реплику сразу
             if self._sync_lock.acquire(blocking=False):
-                try:
-                    if time.monotonic() - self._last_sync_at >= self._sync_interval:
-                        if self._exec_lock.acquire(blocking=False):
-                            try:
+                def _bg_sync():
+                    try:
+                        if time.monotonic() - self._last_sync_at >= self._sync_interval:
+                            with self._exec_lock:
                                 self._conn.sync()
-                                self._last_sync_at = time.monotonic()
-                            finally:
-                                self._exec_lock.release()
-                except Exception as exc:
-                    LOGGER.warning("Turso sync_if_stale failed: %s", exc)
-                finally:
-                    self._sync_lock.release()
+                            self._last_sync_at = time.monotonic()
+                    except Exception as exc:
+                        LOGGER.warning("Turso sync_if_stale background sync failed: %s", exc)
+                    finally:
+                        self._sync_lock.release()
+
+                threading.Thread(target=_bg_sync, daemon=True, name="turso-stale-syncer").start()
 
     def connect(self) -> LibsqlConnectionProxy:
         self.sync_if_stale()
