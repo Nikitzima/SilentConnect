@@ -74,40 +74,117 @@ def generate_wg_psk() -> str:
     return base64.b64encode(os.urandom(32)).decode("ascii")
 
 
-def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool = False) -> str:
-    srv_code = str(slot.get("server_code") or server_code or "nl").lower().strip()
-    endpoint_host = (
-        os.environ.get(f"AWG_{srv_code.upper()}_ENDPOINT_HOST")
-        or os.environ.get("AWG_ENDPOINT_HOST")
-        or "warp.example.com"
-    )
-    endpoint_port = (
-        os.environ.get(f"AWG_{srv_code.upper()}_ENDPOINT_PORT")
-        or os.environ.get("AWG_ENDPOINT_PORT")
-        or "44121"
-    )
-    server_pub = (
-        os.environ.get(f"AWG_{srv_code.upper()}_SERVER_PUBKEY")
-        or os.environ.get("AWG_SERVER_PUBLIC_KEY")
-        or ""
-    )
-    client_dns = "1.1.1.1, 1.0.0.1"
-    client_mtu = "1280"
-    allowed_ips = "0.0.0.0/0"
-
-    iface_params: dict[str, str] = {
+AWG_31_SERVER_DEFAULTS: dict[str, dict[str, str]] = {
+    "nl": {
         "Jc": "5",
         "Jmin": "10",
         "Jmax": "50",
-        "S1": "51" if srv_code == "fi" else "12",
-        "S2": "30" if srv_code == "fi" else "12",
-        "S3": "34" if srv_code == "fi" else "12",
+        "S1": "51",
+        "S2": "30",
+        "S3": "34",
         "S4": "12",
         "H1": "1",
         "H2": "2",
         "H3": "3",
         "H4": "4",
+        "HeaderProtectionKey": "MockHeaderProtectionKeyNL111111111111111111=",
+        "ContentPaddingAddition": "10-100",
+        "RekeyAfterTime": "100-120",
+        "RekeyTimeout": "3-7",
+        "RejectAfterTime": "150-180",
+        "KeepaliveTimeout": "5-15",
+        "MaxHandshakeAttempts": "15-20",
+        "RandomTrailers": "on",
+        "DisableCookies": "on",
+        "endpoint_host": "warp.example.com",
+        "endpoint_port": "44121",
+        "server_pubkey": "MockServerPublicKeyNL1111111111111111111111=",
+    },
+    "pl": {
+        "Jc": "5",
+        "Jmin": "10",
+        "Jmax": "50",
+        "S1": "12",
+        "S2": "12",
+        "S3": "12",
+        "S4": "12",
+        "H1": "1",
+        "H2": "2",
+        "H3": "3",
+        "H4": "4",
+        "HeaderProtectionKey": "CqymuFeL7ibiqrqIDF0jl3Mg1/vvl5Tmnqzl5C8IWhM=",
+        "RekeyAfterTime": "100-120",
+        "RekeyTimeout": "3-7",
+        "RejectAfterTime": "150-180",
+        "KeepaliveTimeout": "5-15",
+        "MaxHandshakeAttempts": "15-20",
+        "RandomTrailers": "on",
+        "DisableCookies": "on",
+        "endpoint_host": "pl.example.com",
+        "endpoint_port": "44121",
+        "server_pubkey": "bi1igMRahaWDgvo7ClePLOwnXYjhdo+7PMaswXVtlAs=",
+    },
+    "fi": {
+        "Jc": "5",
+        "Jmin": "10",
+        "Jmax": "50",
+        "S1": "51",
+        "S2": "30",
+        "S3": "34",
+        "S4": "12",
+        "H1": "1",
+        "H2": "2",
+        "H3": "3",
+        "H4": "4",
+        "HeaderProtectionKey": "MockHeaderProtectionKeyDE222222222222222222=",
+        "ContentPaddingAddition": "10-100",
+        "RekeyAfterTime": "100-120",
+        "RekeyTimeout": "3-7",
+        "RejectAfterTime": "150-180",
+        "KeepaliveTimeout": "5-15",
+        "MaxHandshakeAttempts": "15-20",
+        "RandomTrailers": "on",
+        "DisableCookies": "on",
+        "endpoint_host": "fi.example.com",
+        "endpoint_port": "49752",
+        "server_pubkey": "MockServerPublicKeyDE3333333333333333333333=",
+    },
+}
+
+
+def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool = False) -> str:
+    srv_code = str(slot.get("server_code") or server_code or "nl").lower().strip()
+    node_defaults = AWG_31_SERVER_DEFAULTS.get(srv_code, AWG_31_SERVER_DEFAULTS.get("nl", {}))
+
+    endpoint_host = (
+        os.environ.get(f"AWG_{srv_code.upper()}_ENDPOINT_HOST")
+        or os.environ.get("AWG_ENDPOINT_HOST")
+        or node_defaults.get("endpoint_host", "warp.example.com")
+    )
+    endpoint_port = (
+        os.environ.get(f"AWG_{srv_code.upper()}_ENDPOINT_PORT")
+        or os.environ.get("AWG_ENDPOINT_PORT")
+        or node_defaults.get("endpoint_port", "44121")
+    )
+    server_pub = (
+        os.environ.get(f"AWG_{srv_code.upper()}_SERVER_PUBKEY")
+        or os.environ.get("AWG_SERVER_PUBLIC_KEY")
+        or node_defaults.get("server_pubkey", "")
+    )
+    client_dns = os.environ.get("AWG_CLIENT_DNS", "1.1.1.1, 1.0.0.1")
+    client_mtu = os.environ.get("AWG_CLIENT_MTU", "1280")
+    allowed_ips = "0.0.0.0/0"
+
+    # Start with complete AWG 3.1 parameters for this specific node
+    iface_params: dict[str, str] = {
+        k: v for k, v in node_defaults.items()
+        if k not in ("endpoint_host", "endpoint_port", "server_pubkey")
     }
+
+    # Allow environment variable overrides for critical AWG 3.1 keys
+    env_hpk = os.environ.get(f"AWG_{srv_code.upper()}_HEADER_PROTECTION_KEY")
+    if env_hpk:
+        iface_params["HeaderProtectionKey"] = env_hpk
 
     try:
         from . import awg_manager
@@ -122,7 +199,7 @@ def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool 
                 lst = Path(allowed_ips_file).read_text(encoding="utf-8").strip()
                 if lst:
                     allowed_ips = lst
-        # Запрашиваем конфиг из контейнера только локально ИЛИ если ключ не задан в env
+        # Live refresh from container only if running locally or if server pubkey is missing
         if srv.get("mode") == "local" or not (server_pub and WG_KEY_REGEX.match(server_pub)):
             conf = awg_manager._server_conf(srv_code)
             if conf:
