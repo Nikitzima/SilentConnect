@@ -502,6 +502,15 @@ systemctl enable --now vpn-shop-xui-reconciler.service
 systemctl enable --now vpn-shop-silentconnect.service
 ```
 
+> [!IMPORTANT]
+> **Coupled Daemon Reload Requirement (`vpn-shop-web.service` & `subjson.service`)**:
+> `subjson.service` (port `3088`, serving `<SUB_DOMAIN>`) imports configuration builders (`build_slot_conf`, `ensure_awg_slot`, etc.) directly from `vpn_shop.web`.
+> Whenever modifying codebase files in `vpn_shop` (especially slot configuration generation, obfuscation parameters, or tariff rules), you **MUST restart both services simultaneously**:
+> ```bash
+> systemctl restart vpn-shop-web.service subjson.service
+> ```
+> Restarting only `vpn-shop-web.service` leaves `subjson.service` running stale modules in Python's memory cache (`sys.modules`), resulting in configuration skew between storefront domains and subscription endpoints.
+
 ---
 
 ## 6. Ingress Multiplexing & Inbound Protocol Configurations
