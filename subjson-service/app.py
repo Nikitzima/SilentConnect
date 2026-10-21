@@ -8400,24 +8400,35 @@ def setup_page_html(
       }
       try {
         const res = await fetch("/sub/openflux/__SUB_ID__/activate", { method: "POST" });
-        const data = await res.json();
-        if (data.ok && data.slot) {
-          _wlSlot = data.slot;
-          renderWlSlot();
-        } else {
-          alert("Ошибка активации: " + (data.error || "Неизвестная ошибка"));
-          if (btn) {
-            btn.disabled = false;
-            btn.innerHTML = '<span>⚡</span> <span>Активировать подключение (OpenFlux)</span>';
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data.ok && data.slot) {
+            _wlSlot = data.slot;
+            renderWlSlot();
+            return;
           }
         }
       } catch (err) {
-        alert("Ошибка связи с сервером: " + err);
-        if (btn) {
-          btn.disabled = false;
-          btn.innerHTML = '<span>⚡</span> <span>Активировать подключение (OpenFlux)</span>';
-        }
+        // Slow packet / network drop: do not alert, poll live state smoothly
       }
+
+      // Resilient poll: server takes 2-4 seconds to provision room and container
+      for (let attempt = 0; attempt < 4; attempt++) {
+        await new Promise(r => setTimeout(r, 1500));
+        try {
+          await fetchWlState();
+          if (_wlSlot && (_wlSlot.status === "active" || _wlSlot.status === "migrating")) {
+            renderWlSlot();
+            return;
+          }
+        } catch (e) {}
+      }
+
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<span>⚡</span> <span>Активировать подключение (OpenFlux)</span>';
+      }
+      renderWlSlot();
     };
 
     window.openWlPickerModal = function() {
@@ -8464,28 +8475,34 @@ def setup_page_html(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ target: targetCode })
         });
-        const data = await res.json();
-        closeWlPickerModal();
-        if (data.ok && data.slot) {
-          _wlSlot = data.slot;
-          renderWlSlot();
-        } else {
-          await fetchWlState();
-          if (_wlSlot && _wlSlot.status === "migrating") {
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data.ok && data.slot) {
+            _wlSlot = data.slot;
+            closeWlPickerModal();
             renderWlSlot();
             return;
           }
-          alert("Не удалось запустить смену сервера: " + (data.error || "Ошибка"));
         }
       } catch (err) {
-        closeWlPickerModal();
-        await fetchWlState();
-        if (_wlSlot && _wlSlot.status === "migrating") {
-          renderWlSlot();
-          return;
-        }
-        alert("Ошибка сети при подготовке сервера: " + err);
+        // Slow packet: do not panic with alert
       }
+
+      // Resilient check: check if migration slot was registered in DB
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await new Promise(r => setTimeout(r, 1200));
+        try {
+          await fetchWlState();
+          if (_wlSlot && _wlSlot.status === "migrating") {
+            closeWlPickerModal();
+            renderWlSlot();
+            return;
+          }
+        } catch (e) {}
+      }
+
+      closeWlPickerModal();
+      renderWlSlot();
     };
 
     window.openWlConfirmModal = function() {
