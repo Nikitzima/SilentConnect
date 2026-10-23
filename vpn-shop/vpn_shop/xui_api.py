@@ -191,16 +191,18 @@ class XuiApiClient:
         )
 
     def delete_client(self, inbound_id: int, client_key: str) -> None:
-        self._api(
+        response = self._api(
             "POST",
             f"/panel/api/clients/del/{urllib.parse.quote(client_key, safe='')}",
         )
+        self._unwrap(response)
 
     def reset_client_traffic(self, inbound_id: int, email: str) -> None:
-        self._api(
+        response = self._api(
             "POST",
             f"/panel/api/clients/resetTraffic/{urllib.parse.quote(email, safe='')}",
         )
+        self._unwrap(response)
 
     def restart_xray(self) -> None:
         self._api("POST", "/panel/api/server/restartXrayService")

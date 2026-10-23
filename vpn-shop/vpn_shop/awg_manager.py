@@ -44,7 +44,7 @@ SERVERS: dict[str, dict[str, Any]] = {
         "container": os.environ.get("AWG_NL_CONTAINER", os.environ.get("AWG_CONTAINER_NAME", "amnezia-awg2")),
         "conf_path": "/opt/amnezia/awg/awg0.conf",
         "subnet": os.environ.get("AWG_NL_SUBNET", "10.8.1"),
-        "endpoint_host": os.environ.get("AWG_NL_ENDPOINT_HOST", "warp.example.com"),
+        "endpoint_host": os.environ.get("AWG_NL_ENDPOINT_HOST", "warp.silentconnect.net"),  # PLACEHOLDER
         "endpoint_port": os.environ.get("AWG_NL_ENDPOINT_PORT", "44121"),
         "allowed_ips_file": os.environ.get("AWG_ALLOWED_IPS_FILE", "/root/vpn-shop/awg/allowed-ips.txt"),
         "client_dns": os.environ.get("AWG_CLIENT_DNS", "1.1.1.1, 1.0.0.1"),
@@ -57,14 +57,14 @@ SERVERS: dict[str, dict[str, Any]] = {
         "flag": "🇫🇮",
         "mode": "ssh",
         "exec_mode": "ssh",
-        "host": os.environ.get("AWG_FI_HOST", os.environ.get("AWG_REMOTE_SSH_FI", os.environ.get("FI_STANDBY_IP", "198.51.100.1"))),
-        "ssh_host": os.environ.get("AWG_FI_HOST", os.environ.get("AWG_REMOTE_SSH_FI", os.environ.get("FI_STANDBY_IP", "198.51.100.1"))),
+        "host": os.environ.get("AWG_FI_HOST", os.environ.get("AWG_REMOTE_SSH_FI", os.environ.get("FI_STANDBY_IP", "2.29.39.35"))),  # PLACEHOLDER
+        "ssh_host": os.environ.get("AWG_FI_HOST", os.environ.get("AWG_REMOTE_SSH_FI", os.environ.get("FI_STANDBY_IP", "2.29.39.35"))),  # PLACEHOLDER
         "ssh_user": os.environ.get("AWG_FI_SSH_USER", "root"),
         "ssh_port": int(os.environ.get("AWG_FI_SSH_PORT", "22")),
         "container": os.environ.get("AWG_FI_CONTAINER", "amnezia-awg2"),
         "conf_path": "/opt/amnezia/awg/awg0.conf",
         "subnet": os.environ.get("AWG_FI_SUBNET", "10.8.2"),
-        "endpoint_host": os.environ.get("AWG_FI_ENDPOINT_HOST", os.environ.get("AWG_FI_ENDPOINT", "fi.example.com")),
+        "endpoint_host": os.environ.get("AWG_FI_ENDPOINT_HOST", os.environ.get("AWG_FI_ENDPOINT", "fi.silentconnect.net")),  # PLACEHOLDER
         "endpoint_port": os.environ.get("AWG_FI_ENDPOINT_PORT", "49752"),
         "allowed_ips_file": os.environ.get("AWG_FI_ALLOWED_IPS_FILE", os.environ.get("AWG_ALLOWED_IPS_FILE", "/root/vpn-shop/awg/allowed-ips.txt")),
         "client_dns": os.environ.get("AWG_CLIENT_DNS", "1.1.1.1, 1.0.0.1"),
@@ -77,17 +77,17 @@ SERVERS: dict[str, dict[str, Any]] = {
         "flag": "🇵🇱",
         "mode": "ssh",
         "exec_mode": "ssh",
-        "host": os.environ.get("AWG_PL_HOST", os.environ.get("AWG_REMOTE_SSH_PL", os.environ.get("PL_STANDBY_IP", "198.51.100.2"))),
-        "ssh_host": os.environ.get("AWG_PL_HOST", os.environ.get("AWG_REMOTE_SSH_PL", os.environ.get("PL_STANDBY_IP", "198.51.100.2"))),
+        "host": os.environ.get("AWG_PL_HOST", os.environ.get("AWG_REMOTE_SSH_PL", os.environ.get("PL_STANDBY_IP", "2.56.125.250"))),  # PLACEHOLDER
+        "ssh_host": os.environ.get("AWG_PL_HOST", os.environ.get("AWG_REMOTE_SSH_PL", os.environ.get("PL_STANDBY_IP", "2.56.125.250"))),  # PLACEHOLDER
         "ssh_user": os.environ.get("AWG_PL_SSH_USER", "root"),
         "ssh_port": int(os.environ.get("AWG_PL_SSH_PORT", "22")),
         "container": os.environ.get("AWG_PL_CONTAINER", "amnezia-awg2"),
         "conf_path": "/opt/amnezia/awg/awg0.conf",
         "subnet": os.environ.get("AWG_PL_SUBNET", "10.8.3"),
-        "endpoint_host": os.environ.get("AWG_PL_ENDPOINT_HOST", "pl.example.com"),
+        "endpoint_host": os.environ.get("AWG_PL_ENDPOINT_HOST", "pl.silentconnect.net"),  # PLACEHOLDER
         "endpoint_port": os.environ.get("AWG_PL_ENDPOINT_PORT", "44121"),
         "allowed_ips_file": os.environ.get("AWG_PL_ALLOWED_IPS_FILE", os.environ.get("AWG_ALLOWED_IPS_FILE", "/root/vpn-shop/awg/allowed-ips.txt")),
-        "client_dns": os.environ.get("AWG_CLIENT_DNS", "1.1.1.1, 1.0.0.1"),
+        "client_dns": os.environ.get("AWG_PL_CLIENT_DNS", os.environ.get("AWG_CLIENT_DNS", "1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001")),
         "client_mtu": os.environ.get("AWG_CLIENT_MTU", "1280"),
         "reserved_ips": {"10.8.3.1", "10.8.3.2", "10.8.3.3", "10.8.3.4", "10.8.3.6"},
     },
@@ -331,17 +331,17 @@ def _get_server(server_code: str = "nl") -> dict[str, Any]:
         srv["mode"] = "ssh"
         srv["exec_mode"] = "ssh"
         if code == "nl":
-            srv["host"] = os.environ.get("AWG_NL_HOST", os.environ.get("NL_MASTER_IP", "192.0.2.1"))
+            srv["host"] = os.environ.get("AWG_NL_HOST", os.environ.get("NL_MASTER_IP", "213.165.41.144"))  # PLACEHOLDER
             srv["ssh_host"] = srv["host"]
             srv["ssh_user"] = os.environ.get("AWG_NL_SSH_USER", "root")
             srv["ssh_port"] = int(os.environ.get("AWG_NL_SSH_PORT", "22"))
         elif code == "pl":
-            srv["host"] = os.environ.get("AWG_PL_HOST", os.environ.get("AWG_REMOTE_SSH_PL", os.environ.get("PL_STANDBY_IP", "198.51.100.2")))
+            srv["host"] = os.environ.get("AWG_PL_HOST", os.environ.get("AWG_REMOTE_SSH_PL", os.environ.get("PL_STANDBY_IP", "2.56.125.250")))  # PLACEHOLDER
             srv["ssh_host"] = srv["host"]
             srv["ssh_user"] = os.environ.get("AWG_PL_SSH_USER", "root")
             srv["ssh_port"] = int(os.environ.get("AWG_PL_SSH_PORT", "22"))
         elif code == "fi":
-            srv["host"] = os.environ.get("AWG_FI_HOST", os.environ.get("AWG_REMOTE_SSH_FI", os.environ.get("FI_STANDBY_IP", "198.51.100.1")))
+            srv["host"] = os.environ.get("AWG_FI_HOST", os.environ.get("AWG_REMOTE_SSH_FI", os.environ.get("FI_STANDBY_IP", "2.29.39.35")))  # PLACEHOLDER
             srv["ssh_host"] = srv["host"]
             srv["ssh_user"] = os.environ.get("AWG_FI_SSH_USER", "root")
             srv["ssh_port"] = int(os.environ.get("AWG_FI_SSH_PORT", "22"))
@@ -666,15 +666,21 @@ def create_peer(sub_id: str, server_code: str = "nl") -> dict[str, Any]:
 
     # live add in container
     psk_file = "/tmp/.awg-psk.tmp"
+    peer_ips = f"{ip}/32"
+    if server_code == "pl":
+        peer_ips = f"{ip}/32,fd00:8:3::{ip.split('.')[-1]}/128"
     _dex(f"echo '{psk}' > {psk_file}", server_code=server_code)
-    _dex(f"awg set awg0 peer {pub} allowed-ips {ip}/32 preshared-key {psk_file}", server_code=server_code)
+    _dex(f"awg set awg0 peer {pub} allowed-ips {peer_ips} preshared-key {psk_file}", server_code=server_code)
     _dex(f"rm -f {psk_file}", server_code=server_code)
 
     # персистентность: дописать только блок [Peer] в awg0.conf внутри контейнера (если ещё не присутствует)
     if pub not in conf:
+        peer_ips_conf = f"{ip}/32"
+        if server_code == "pl":
+            peer_ips_conf = f"{ip}/32, fd00:8:3::{ip.split('.')[-1]}/128"
         block = (
             f"\n[Peer]\nPublicKey = {pub}\nPresharedKey = {psk}\n"
-            f"AllowedIPs = {ip}/32\n"
+            f"AllowedIPs = {peer_ips_conf}\n"
         )
         _dex(f"cat >> {srv['conf_path']}", inp=block, server_code=server_code)
 
@@ -754,14 +760,20 @@ def readd_peer(sub_id: str, server_code: str = "nl") -> bool:
         return False
     conf = _server_conf(server_code)
     psk_file = "/tmp/.awg-psk.tmp"
+    peer_ips = f"{peer['tunnel_ip']}/32"
+    if server_code == "pl":
+        peer_ips = f"{peer['tunnel_ip']}/32,fd00:8:3::{peer['tunnel_ip'].split('.')[-1]}/128"
     _dex(f"echo '{peer['preshared_key']}' > {psk_file}", server_code=server_code)
-    _dex(f"awg set awg0 peer {peer['public_key']} allowed-ips {peer['tunnel_ip']}/32 preshared-key {psk_file}", server_code=server_code)
+    _dex(f"awg set awg0 peer {peer['public_key']} allowed-ips {peer_ips} preshared-key {psk_file}", server_code=server_code)
     _dex(f"rm -f {psk_file}", server_code=server_code)
     
     if peer["public_key"] not in conf:
+        peer_ips_conf = f"{peer['tunnel_ip']}/32"
+        if server_code == "pl":
+            peer_ips_conf = f"{peer['tunnel_ip']}/32, fd00:8:3::{peer['tunnel_ip'].split('.')[-1]}/128"
         block = (
             f"\n[Peer]\nPublicKey = {peer['public_key']}\n"
-            f"PresharedKey = {peer['preshared_key']}\nAllowedIPs = {peer['tunnel_ip']}/32\n"
+            f"PresharedKey = {peer['preshared_key']}\nAllowedIPs = {peer_ips_conf}\n"
         )
         _dex(f"cat >> {srv['conf_path']}", inp=block, server_code=server_code)
 
@@ -794,9 +806,17 @@ def build_conf(sub_id: str, server_code: str = "nl") -> str:
     except OSError:
         pass
 
+    if server_code == "pl":
+        client_last_octet = peer['tunnel_ip'].split('.')[-1]
+        addr_str = f"{peer['tunnel_ip']}/32, fd00:8:3::{client_last_octet}/128"
+        if "::/0" not in allowed:
+            allowed = f"{allowed}, ::/0"
+    else:
+        addr_str = f"{peer['tunnel_ip']}/32"
+
     lines = [
         "[Interface]",
-        f"Address = {peer['tunnel_ip']}/32",
+        f"Address = {addr_str}",
         f"DNS = {srv['client_dns']}",
         f"PrivateKey = {peer['private_key']}",
     ]
@@ -913,12 +933,15 @@ def add_slot_peer(
         # 1. Live add in container
         psk_file = "/tmp/.awg-psk.tmp"
         try:
+            peer_ips = f"{ip}/32"
+            if server_code == "pl":
+                peer_ips = f"{ip}/32,fd00:8:3::{ip.split('.')[-1]}/128"
             if psk:
                 _dex(f"echo {shlex.quote(psk)} > {psk_file}", server_code=server_code)
-                _dex(f"awg set awg0 peer {shlex.quote(pub)} allowed-ips {shlex.quote(ip)}/32 preshared-key {psk_file}", server_code=server_code)
+                _dex(f"awg set awg0 peer {shlex.quote(pub)} allowed-ips {shlex.quote(peer_ips)} preshared-key {psk_file}", server_code=server_code)
                 _dex(f"rm -f {psk_file}", server_code=server_code)
             else:
-                _dex(f"awg set awg0 peer {shlex.quote(pub)} allowed-ips {shlex.quote(ip)}/32", server_code=server_code)
+                _dex(f"awg set awg0 peer {shlex.quote(pub)} allowed-ips {shlex.quote(peer_ips)}", server_code=server_code)
         except Exception as exc:
             LOGGER.warning("Could not live-add AWG peer %s on %s: %s", pub, server_code, exc)
             return False
@@ -927,10 +950,13 @@ def add_slot_peer(
         try:
             conf = _server_conf(server_code)
             if pub not in conf:
+                peer_ips_conf = f"{ip}/32"
+                if server_code == "pl":
+                    peer_ips_conf = f"{ip}/32, fd00:8:3::{ip.split('.')[-1]}/128"
                 if psk:
-                    block = f"\n[Peer]\nPublicKey = {pub}\nPresharedKey = {psk}\nAllowedIPs = {ip}/32\n"
+                    block = f"\n[Peer]\nPublicKey = {pub}\nPresharedKey = {psk}\nAllowedIPs = {peer_ips_conf}\n"
                 else:
-                    block = f"\n[Peer]\nPublicKey = {pub}\nAllowedIPs = {ip}/32\n"
+                    block = f"\n[Peer]\nPublicKey = {pub}\nAllowedIPs = {peer_ips_conf}\n"
                 _dex(f"cat >> {srv['conf_path']}", inp=block, server_code=server_code)
         except Exception as exc:
             LOGGER.warning("Could not persist AWG peer %s to %s on %s: %s", pub, srv.get("conf_path"), server_code, exc)
@@ -1164,12 +1190,13 @@ def reconcile_awg_peers(
         for pk, cur_p in current_by_pubkey.items():
             if pk in desired_by_pubkey:
                 des_slot = desired_by_pubkey[pk]
-                cur_ip = cur_p.get("allowed_ips", "").split("/")[0].strip()
+                cur_allowed = cur_p.get("allowed_ips", "").strip()
                 des_ip = str(des_slot.get("client_ip") or "").strip()
+                des_allowed = f"{des_ip}/32, fd00:8:3::{des_ip.split('.')[-1]}/128" if code == "pl" else f"{des_ip}/32"
                 cur_psk = cur_p.get("preshared_key", "").strip()
                 des_psk = str(des_slot.get("preshared_key") or "").strip()
 
-                if cur_ip != des_ip or cur_psk != des_psk:
+                if cur_allowed != des_allowed or cur_psk != des_psk:
                     to_update.append(des_slot)
                 else:
                     unchanged.append(cur_p)
@@ -1201,15 +1228,20 @@ def reconcile_awg_peers(
             "unchanged_count": len(unchanged),
         }
 
-        # 5. Apply if dry_run is False
-        if not dry_run:
+        # 5. Apply if dry_run is False and changes are needed
+        if not dry_run and (to_add or to_remove or to_update):
             final_peers = list(reserved_peers)
             sorted_slots = sorted(desired_by_pubkey.values(), key=lambda x: str(x.get("client_ip", "")))
             for s in sorted_slots:
+                ip_val = s["client_ip"]
+                if code == "pl":
+                    peer_ips = f"{ip_val}/32, fd00:8:3::{ip_val.split('.')[-1]}/128"
+                else:
+                    peer_ips = f"{ip_val}/32"
                 final_peers.append({
                     "public_key": s["public_key"],
                     "preshared_key": str(s.get("preshared_key") or ""),
-                    "allowed_ips": f"{s['client_ip']}/32",
+                    "allowed_ips": peer_ips,
                 })
 
             rendered_conf = _render_awg_conf(iface_text, final_peers)

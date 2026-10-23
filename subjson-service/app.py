@@ -285,7 +285,7 @@ FI_GRPC_REALITY_SHORT_ID = os.environ.get("FI_GRPC_REALITY_SHORT_ID", FI_REALITY
 PL_STANDBY_HOST = os.environ.get("PL_STANDBY_HOST", "").strip()
 PL_REALITY_PUBLIC_KEY = os.environ.get("PL_REALITY_PUBLIC_KEY", "hgj4G9HOJ_6OVYTkeha0vVdEcyuLVzR4Op2BV7CeIW8").strip()
 PL_REALITY_SHORT_ID = os.environ.get("PL_REALITY_SHORT_ID", "9f4a1c7e2b8d0a35").strip()
-PL_REALITY_SNI_CLASSIC = os.environ.get("PL_REALITY_SNI_CLASSIC", "allegro.pl").strip()
+PL_REALITY_SNI_CLASSIC = os.environ.get("PL_REALITY_SNI_CLASSIC", "sber.ru").strip()
 PL_REALITY_SNI_FAST = os.environ.get("PL_REALITY_SNI_FAST", "speed.cloudflare.com").strip()
 PL_XHTTP_REALITY_PORT = int(os.environ.get("PL_XHTTP_REALITY_PORT", "8443"))
 
@@ -300,7 +300,8 @@ GRPC_REALITY_SNI = os.environ.get("GRPC_REALITY_SNI", "vk.com").strip()
 GRPC_SERVICE_NAME = os.environ.get("GRPC_SERVICE_NAME", "grpc-maxru").strip()
 
 FI_REALITY_SNI_CLASSIC = os.environ.get("FI_REALITY_SNI_CLASSIC", "sber.ru").strip()
-FI_REALITY_SNI_FAST = os.environ.get("FI_REALITY_SNI_FAST", "speed.cloudflare.com").strip()
+FI_REALITY_SNI_FAST = os.environ.get("FI_REALITY_SNI_FAST", "tbank.ru").strip()
+FI_TCP_REALITY_PORT = int(os.environ.get("FI_TCP_REALITY_PORT", "23385"))
 FI_GRPC_REALITY_SNI = os.environ.get("FI_GRPC_REALITY_SNI", "sber.ru").strip()
 FI_XHTTP_REALITY_PUBLIC_KEY = os.environ.get("FI_XHTTP_REALITY_PUBLIC_KEY", FI_REALITY_PUBLIC_KEY).strip()
 FI_XHTTP_REALITY_SHORT_ID = os.environ.get("FI_XHTTP_REALITY_SHORT_ID", FI_REALITY_SHORT_ID).strip()
@@ -2985,7 +2986,7 @@ def build_singbox_smart_config(
             "type": "vless",
             "tag": "fi-classic-tcp",
             "server": fi_edge,
-            "server_port": 443,
+            "server_port": FI_TCP_REALITY_PORT,
             "uuid": client_uuid,
             "flow": "xtls-rprx-vision",
             "tls": {
@@ -3004,7 +3005,7 @@ def build_singbox_smart_config(
             "type": "vless",
             "tag": "fi-fast-tcp",
             "server": fi_edge,
-            "server_port": 443,
+            "server_port": FI_TCP_REALITY_PORT,
             "uuid": client_uuid,
             "flow": "xtls-rprx-vision",
             "tls": {
@@ -3131,6 +3132,7 @@ def build_singbox_smart_config(
                 "sub.silentconnect.net",  # PLACEHOLDER
                 "edge.silentconnect.net",  # PLACEHOLDER
                 "fi.silentconnect.net",  # PLACEHOLDER
+                "pl.silentconnect.net",  # PLACEHOLDER
                 "aiprimetech.io",
                 "platega.io",
                 "api.platega.io",
@@ -3480,11 +3482,13 @@ def build_clash_meta_config(
             "name": "🇳🇱 NL Speed Hysteria2",
             "type": "hysteria2",
             "server": nl_edge,
-            "port": 443,
+            "port": 38443,
+            "ports": "30000-40000",
+            "hop-interval": 60,
             "password": client_uuid,
             "sni": nl_edge,
             "alpn": ["h3"],
-            "obfs": "salamander",
+            "obfs": "gecko",
             "obfs-password": salamander_pwd,
             "udp": True,
         },
@@ -3509,7 +3513,7 @@ def build_clash_meta_config(
             "name": "🇫🇮 FI Classic Reality TCP",
             "type": "vless",
             "server": fi_edge,
-            "port": 443,
+            "port": FI_TCP_REALITY_PORT,
             "uuid": client_uuid,
             "network": "tcp",
             "flow": "xtls-rprx-vision",
@@ -3526,7 +3530,7 @@ def build_clash_meta_config(
             "name": "🇫🇮 FI Fast Reality TCP",
             "type": "vless",
             "server": fi_edge,
-            "port": 443,
+            "port": FI_TCP_REALITY_PORT,
             "uuid": client_uuid,
             "network": "tcp",
             "flow": "xtls-rprx-vision",
@@ -3543,11 +3547,13 @@ def build_clash_meta_config(
             "name": "🇫🇮 FI Speed Hysteria2",
             "type": "hysteria2",
             "server": fi_edge,
-            "port": 443,
+            "port": 38443,
+            "ports": "30000-40000",
+            "hop-interval": 60,
             "password": client_uuid,
             "sni": fi_edge,
             "alpn": ["h3"],
-            "obfs": "salamander",
+            "obfs": "gecko",
             "obfs-password": salamander_pwd,
             "udp": True,
         },
@@ -3611,10 +3617,12 @@ def build_clash_meta_config(
                 "name": "🇵🇱 PL Speed Hysteria2",
                 "type": "hysteria2",
                 "server": pl_edge,
-                "port": 443,
+                "port": 38443,
+                "ports": "30000-40000",
+                "hop-interval": 60,
                 "password": client_uuid,
                 "alpn": ["h3"],
-                "obfs": "salamander",
+                "obfs": "gecko",
                 "obfs-password": salamander_pwd,
                 "sni": pl_edge,
                 "skip-cert-verify": False,
@@ -3681,12 +3689,16 @@ def build_clash_meta_config(
             "proxies": [
                 "🇳🇱 NL Classic Reality TCP",
                 "🇫🇮 FI Classic Reality TCP",
+                "🇵🇱 PL Classic Reality TCP",
                 "🇳🇱 NL Fast Reality TCP",
                 "🇫🇮 FI Fast Reality TCP",
+                "🇵🇱 PL Fast Reality TCP",
                 "🇳🇱 NL Backup Reality gRPC",
                 "🇫🇮 FI Backup Reality gRPC",
+                "🇵🇱 PL Backup Reality gRPC",
                 "🇳🇱 NL Speed Hysteria2",
                 "🇫🇮 FI Speed Hysteria2",
+                "🇵🇱 PL Speed Hysteria2",
             ],
             "url": "https://cp.cloudflare.com/generate_204",
             "interval": 180,
@@ -3778,23 +3790,23 @@ def build_streisand_bundle(
     uris = [
         f"vless://{client_uuid}@{nl_edge}:443?type=tcp&security=reality&pbk={NL_REALITY_PUBLIC_KEY}&fp=chrome&sni={TCP_REALITY_SNI_CLASSIC}&sid={NL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇳🇱 1. Классический TCP (NL)')}",
         f"vless://{client_uuid}@{nl_edge}:443?type=tcp&security=reality&pbk={NL_REALITY_PUBLIC_KEY}&fp=chrome&sni={TCP_REALITY_SNI_FAST}&sid={NL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇳🇱 2. Быстрый TCP (NL)')}",
-        f"hy2://{client_uuid}@{nl_edge}:443?sni={nl_edge}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}#{urllib.parse.quote('🇳🇱 3. Скоростной Hysteria2 (NL)')}",
+        f"hy2://{client_uuid}@{nl_edge}:38443?sni={nl_edge}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}&mport=30000-40000#{urllib.parse.quote('🇳🇱 3. Скоростной Hysteria2 (NL)')}",
         f"vless://{client_uuid}@{nl_edge}:29443?type=grpc&security=reality&pbk={NL_GRPC_REALITY_PUBLIC_KEY}&fp=chrome&sni={GRPC_REALITY_SNI}&sid={NL_GRPC_REALITY_SHORT_ID}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇳🇱 4. Запасной gRPC (NL)')}",
-        f"vless://{client_uuid}@{nl_edge}:443?type=xhttp&security=tls&sni={nl_edge}&alpn=h2,http/1.1&path=%2Fxh-mx-d1f7c0429d6a&mode=packet-up#{urllib.parse.quote('🇳🇱 5. Незаметный XHTTP (NL)')}",
-        f"vless://{client_uuid}@{fi_edge}:443?type=tcp&security=reality&pbk={FI_REALITY_PUBLIC_KEY}&fp=chrome&sni={FI_REALITY_SNI_CLASSIC}&sid={FI_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 6. Классический TCP (FI)')}",
-        f"vless://{client_uuid}@{fi_edge}:443?type=tcp&security=reality&pbk={FI_REALITY_PUBLIC_KEY}&fp=chrome&sni={FI_REALITY_SNI_FAST}&sid={FI_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 7. Быстрый TCP (FI)')}",
-        f"hy2://{client_uuid}@{fi_edge}:443?sni={fi_edge}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}#{urllib.parse.quote('🇫🇮 8. Скоростной Hysteria2 (FI)')}",
+        f"vless://{client_uuid}@{nl_edge}:443?type=xhttp&security=tls&sni={nl_edge}&alpn=h2,http/1.1&path=%2Fxh-mx-d1f7c0429d6a&mode=stream-one#{urllib.parse.quote('🇳🇱 5. Незаметный XHTTP (NL)')}",
+        f"vless://{client_uuid}@{fi_edge}:{FI_TCP_REALITY_PORT}?type=tcp&security=reality&pbk={FI_REALITY_PUBLIC_KEY}&fp=chrome&sni={FI_REALITY_SNI_CLASSIC}&sid={FI_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 6. Классический TCP (FI)')}",
+        f"vless://{client_uuid}@{fi_edge}:{FI_TCP_REALITY_PORT}?type=tcp&security=reality&pbk={FI_REALITY_PUBLIC_KEY}&fp=chrome&sni={FI_REALITY_SNI_FAST}&sid={FI_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 7. Быстрый TCP (FI)')}",
+        f"hy2://{client_uuid}@{fi_edge}:38443?sni={fi_edge}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}&mport=30000-40000#{urllib.parse.quote('🇫🇮 8. Скоростной Hysteria2 (FI)')}",
         f"vless://{client_uuid}@{fi_edge}:29443?type=grpc&security=reality&pbk={FI_GRPC_REALITY_PUBLIC_KEY}&fp=chrome&sni={FI_GRPC_REALITY_SNI}&sid={FI_GRPC_REALITY_SHORT_ID}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇫🇮 9. Запасной gRPC (FI)')}",
-        f"vless://{client_uuid}@{fi_edge}:{FI_XHTTP_REALITY_PORT}?type=xhttp&security=reality&pbk={fi_xhttp_pk}&fp=chrome&sni={FI_XHTTP_REALITY_SNI}&sid={fi_xhttp_sid}&path=%2Fxh-7m2q9r4k1v8p3s6&mode=packet-up#{urllib.parse.quote('🇫🇮 10. Незаметный XHTTP Reality (FI)')}",
+        f"vless://{client_uuid}@{fi_edge}:{FI_XHTTP_REALITY_PORT}?type=xhttp&security=reality&pbk={fi_xhttp_pk}&fp=chrome&sni={FI_XHTTP_REALITY_SNI}&sid={fi_xhttp_sid}&path=%2Fxh-7m2q9r4k1v8p3s6&mode=stream-one#{urllib.parse.quote('🇫🇮 10. Незаметный XHTTP Reality (FI)')}",
     ]
     pl_edge = os.environ.get("PL_STANDBY_HOST", PL_STANDBY_HOST).strip()
     if pl_edge:
         uris.extend([
             f"vless://{client_uuid}@{pl_edge}:443?type=tcp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇵🇱 11. Классический TCP (PL)')}",
             f"vless://{client_uuid}@{pl_edge}:443?type=tcp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_FAST}&sid={PL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇵🇱 12. Быстрый TCP (PL)')}",
-            f"hy2://{client_uuid}@{pl_edge}:443?sni={pl_edge}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}#{urllib.parse.quote('🇵🇱 13. Скоростной Hysteria2 (PL)')}",
+            f"hy2://{client_uuid}@{pl_edge}:38443?sni={pl_edge}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}&mport=30000-40000#{urllib.parse.quote('🇵🇱 13. Скоростной Hysteria2 (PL)')}",
             f"vless://{client_uuid}@{pl_edge}:29443?type=grpc&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇵🇱 14. Запасной gRPC (PL)')}",
-            f"vless://{client_uuid}@{pl_edge}:{PL_XHTTP_REALITY_PORT}?type=xhttp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&path=%2Fxh-7m2q9r4k1v8p3s6&mode=packet-up#{urllib.parse.quote('🇵🇱 15. Незаметный XHTTP Reality (PL)')}",
+            f"vless://{client_uuid}@{pl_edge}:{PL_XHTTP_REALITY_PORT}?type=xhttp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&path=%2Fxh-7m2q9r4k1v8p3s6&mode=stream-one#{urllib.parse.quote('🇵🇱 15. Незаметный XHTTP Reality (PL)')}",
         ])
 
     raw_bundle = "\n".join(uris)
@@ -3887,6 +3899,7 @@ def build_xray_auto_balancer_profile(
     fi_classic = copy.deepcopy(nl_classic)
     fi_classic["tag"] = "node-fi-classic"
     fi_classic["settings"]["address"] = fi_edge
+    fi_classic["settings"]["port"] = FI_TCP_REALITY_PORT
     fi_classic["streamSettings"]["realitySettings"]["publicKey"] = FI_REALITY_PUBLIC_KEY
     fi_classic["streamSettings"]["realitySettings"]["shortId"] = FI_REALITY_SHORT_ID
     fi_classic["streamSettings"]["realitySettings"]["serverName"] = FI_REALITY_SNI_CLASSIC
@@ -3894,6 +3907,7 @@ def build_xray_auto_balancer_profile(
     fi_fast = copy.deepcopy(nl_fast)
     fi_fast["tag"] = "node-fi-fast"
     fi_fast["settings"]["address"] = fi_edge
+    fi_fast["settings"]["port"] = FI_TCP_REALITY_PORT
     fi_fast["streamSettings"]["realitySettings"]["publicKey"] = FI_REALITY_PUBLIC_KEY
     fi_fast["streamSettings"]["realitySettings"]["shortId"] = FI_REALITY_SHORT_ID
     fi_fast["streamSettings"]["realitySettings"]["serverName"] = FI_REALITY_SNI_FAST
@@ -4093,45 +4107,45 @@ def build_four_profiles(
             {
                 "protocol": "hysteria",
                 "tag": "proxy",
-                "obfs": {
-                    "type": "gecko",
-                    "password": HYSTERIA_SALAMANDER_PASSWORD,
-                },
                 "streamSettings": {
-                    "finalmask": {
-                        "udp": [
-                            {"settings": {"password": HYSTERIA_SALAMANDER_PASSWORD}, "type": "gecko"}
-                        ]
-                    },
-                    "hysteriaSettings": {
-                        "auth": client_uuid,
-                        "auth_str": client_uuid,
-                        "authStr": client_uuid,
-                        "password": client_uuid,
-                        "obfs": {
-                            "type": "gecko",
-                            "password": HYSTERIA_SALAMANDER_PASSWORD,
-                        },
-                        "udpIdleTimeout": 60,
-                        "version": 2,
-                    },
                     "network": "hysteria",
                     "security": "tls",
                     "tlsSettings": {
                         "alpn": ["h3"],
-                        "serverName": public_host,
+                        "serverName": nl_edge,
+                    },
+                    "hysteriaSettings": {
+                        "version": 2,
+                        "auth": client_uuid,
+                        "auth_str": client_uuid,
+                        "authStr": client_uuid,
+                        "password": client_uuid,
+                        "udpIdleTimeout": 60,
+                    },
+                    "finalmask": {
+                        "quicParams": {
+                            "udphop": {
+                                "ports": "30000-40000",
+                                "interval": "30-60"
+                            }
+                        },
+                        "udp": [
+                            {
+                                "type": "salamander",
+                                "settings": {
+                                    "password": HYSTERIA_SALAMANDER_PASSWORD,
+                                    "packetSize": "512-1000"
+                                }
+                            }
+                        ]
                     },
                 },
                 "settings": {
-                    "address": public_host,
-                    "port": 443,
+                    "address": nl_edge,
+                    "port": 38443,
                     "version": 2,
                     "auth": client_uuid,
                     "auth_str": client_uuid,
-                    "obfs": {
-                        "type": "gecko",
-                        "password": HYSTERIA_SALAMANDER_PASSWORD,
-                    },
                 },
             },
             {"protocol": "freedom", "tag": "direct"},
@@ -4192,7 +4206,7 @@ def build_four_profiles(
     }
     xhttp_cfg["outbounds"][0]["streamSettings"]["xhttpSettings"] = {
         "path": "/xh-mx-path",
-        "mode": "packet-up"
+        "mode": "stream-one"
     }
     xhttp_cfg["meta"] = build_happ_config_meta(subscription_id)
     if xhttp_cfg["meta"]:
@@ -4202,6 +4216,7 @@ def build_four_profiles(
     fi_sber = copy.deepcopy(sber_cfg)
     fi_sber["remarks"] = f"🇫🇮 🛡️ Классический ({email})"
     fi_sber["outbounds"][0]["settings"]["address"] = fi_edge
+    fi_sber["outbounds"][0]["settings"]["port"] = FI_TCP_REALITY_PORT
     fi_sber["outbounds"][0]["streamSettings"]["realitySettings"]["serverName"] = FI_REALITY_SNI_CLASSIC
     fi_sber["outbounds"][0]["streamSettings"]["realitySettings"]["publicKey"] = FI_REALITY_PUBLIC_KEY
     fi_sber["outbounds"][0]["streamSettings"]["realitySettings"]["shortId"] = FI_REALITY_SHORT_ID
@@ -4213,6 +4228,7 @@ def build_four_profiles(
     fi_kino = copy.deepcopy(kino_cfg)
     fi_kino["remarks"] = f"🇫🇮 ⚡ Быстрый ({email})"
     fi_kino["outbounds"][0]["settings"]["address"] = fi_edge
+    fi_kino["outbounds"][0]["settings"]["port"] = FI_TCP_REALITY_PORT
     fi_kino["outbounds"][0]["streamSettings"]["realitySettings"]["serverName"] = FI_REALITY_SNI_FAST
     fi_kino["outbounds"][0]["streamSettings"]["realitySettings"]["publicKey"] = FI_REALITY_PUBLIC_KEY
     fi_kino["outbounds"][0]["streamSettings"]["realitySettings"]["shortId"] = FI_REALITY_SHORT_ID
@@ -4224,7 +4240,7 @@ def build_four_profiles(
     fi_hyst = copy.deepcopy(hyst_cfg)
     fi_hyst["remarks"] = f"🇫🇮 🚀 Скоростной ({email})"
     fi_hyst["outbounds"][0]["settings"]["address"] = fi_edge
-    fi_hyst["outbounds"][0]["settings"]["port"] = 443
+    fi_hyst["outbounds"][0]["settings"]["port"] = 38443
     fi_hyst["outbounds"][0]["streamSettings"]["tlsSettings"]["serverName"] = fi_edge
     fi_hyst["meta"] = build_happ_config_meta(subscription_id)
     if fi_hyst["meta"]:
@@ -4265,7 +4281,7 @@ def build_four_profiles(
     }
     fi_xhttp["outbounds"][0]["streamSettings"]["xhttpSettings"] = {
         "path": "/xh-7m-path",
-        "mode": "packet-up"
+        "mode": "stream-one"
     }
     fi_xhttp["meta"] = build_happ_config_meta(subscription_id)
     if fi_xhttp["meta"]:
@@ -4277,12 +4293,10 @@ def build_four_profiles(
         kino_cfg,
         hyst_cfg,
         grpc_cfg,
-        xhttp_cfg,
         fi_sber,
         fi_kino,
         fi_hyst,
         fi_grpc,
-        fi_xhttp,
     ]
 
     pl_edge = os.environ.get("PL_STANDBY_HOST", PL_STANDBY_HOST).strip()
@@ -4329,33 +4343,7 @@ def build_four_profiles(
         if pl_grpc["meta"]:
             pl_grpc["meta"]["serverDescription"] = "Запасной · VLESS-gRPC-Reality (PL)"
 
-        # --- Profile 15: PL VLESS XHTTP Reality ---
-        pl_xhttp = copy.deepcopy(sber_cfg)
-        pl_xhttp["remarks"] = f"🇵🇱 🌊 Незаметный ({email})"
-        pl_xhttp["outbounds"][0]["settings"]["address"] = pl_edge
-        pl_xhttp["outbounds"][0]["settings"]["port"] = PL_XHTTP_REALITY_PORT
-        pl_xhttp["outbounds"][0]["settings"]["flow"] = ""
-        pl_xhttp["outbounds"][0]["streamSettings"]["network"] = "xhttp"
-        pl_xhttp["outbounds"][0]["streamSettings"].pop("tcpSettings", None)
-        pl_xhttp["outbounds"][0]["streamSettings"]["security"] = "reality"
-        pl_xhttp["outbounds"][0]["streamSettings"]["realitySettings"] = {
-            "show": False,
-            "fingerprint": "chrome",
-            "mldsa65Verify": "",
-            "serverName": PL_REALITY_SNI_CLASSIC,
-            "publicKey": PL_REALITY_PUBLIC_KEY,
-            "shortId": PL_REALITY_SHORT_ID,
-            "spiderX": "/"
-        }
-        pl_xhttp["outbounds"][0]["streamSettings"]["xhttpSettings"] = {
-            "path": "/xh-7m-path",
-            "mode": "packet-up"
-        }
-        pl_xhttp["meta"] = build_happ_config_meta(subscription_id)
-        if pl_xhttp["meta"]:
-            pl_xhttp["meta"]["serverDescription"] = "Незаметный · VLESS-XHTTP Reality (PL)"
-
-        profiles.extend([pl_sber, pl_kino, pl_hyst, pl_grpc, pl_xhttp])
+        profiles.extend([pl_sber, pl_kino, pl_hyst, pl_grpc])
 
     return profiles
 
@@ -4626,7 +4614,7 @@ def build_xhttp_tcp_caddy_test_profile(
             "path": "/xh-mx-path",
             "host": public_host,
             "headers": {},
-            "mode": "packet-up",
+            "mode": "stream-one",
         }
     except (KeyError, IndexError) as e:
         LOGGER.error(f"Error building NL XHTTP TCP Caddy test profile: {e}")
@@ -7955,7 +7943,7 @@ def setup_page_html(
       if (!modal || !img) return;
       title.innerText = '🔲 ' + (slotLabel || ('Устройство ' + slotIdx));
       img.src = '/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/qr?t=' + Date.now();
-      dl.href = '/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/config';
+      dl.href = '/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/config?t=' + Date.now();
       modal.style.display = 'flex';
     };
 
@@ -8085,7 +8073,7 @@ def setup_page_html(
       btn.innerText = 'Загрузка...';
       btn.disabled = true;
 
-      fetch('/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/config_text')
+      fetch('/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/config_text?t=' + Date.now())
         .then(function(res) {
           if (!res.ok) throw new Error('Failed to load config text');
           return res.text();
@@ -9376,7 +9364,7 @@ def build_sosproxy_client_config(subscription_id: str, public_host: str) -> list
     # 1. Kinopoisk TCP
     cfg1 = {
       "dns": {
-        "queryStrategy": "UseIP",
+        "queryStrategy": "UseIPv4",
         "servers": [{"address": "8.8.8.8", "skipFallback": False}],
         "tag": "dns_out"
       },
@@ -9445,7 +9433,7 @@ def build_sosproxy_client_config(subscription_id: str, public_host: str) -> list
     # 2. Hysteria 2 Salamander
     cfg2 = {
       "dns": {
-        "queryStrategy": "UseIP",
+        "queryStrategy": "UseIPv4",
         "servers": [{"address": "8.8.8.8", "skipFallback": False}],
         "tag": "dns_out"
       },
@@ -9519,7 +9507,7 @@ def build_sosproxy_client_config(subscription_id: str, public_host: str) -> list
     # 3. Sberbank TCP
     cfg3 = {
       "dns": {
-        "queryStrategy": "UseIP",
+        "queryStrategy": "UseIPv4",
         "servers": [{"address": "8.8.8.8", "skipFallback": False}],
         "tag": "dns_out"
       },
@@ -10694,6 +10682,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/x-wireguard-profile; charset=utf-8")
                 self.send_header("Content-Disposition", f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{encoded_filename}')
                 self.send_header("Content-Length", str(len(conf_bytes)))
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                self.send_header("Pragma", "no-cache")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 for k, v in SECURITY_HEADERS:
                     self.send_header(k, v)
@@ -10811,6 +10801,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.send_header("Content-Length", str(len(text_bytes)))
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                self.send_header("Pragma", "no-cache")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 for k, v in SECURITY_HEADERS:
                     self.send_header(k, v)

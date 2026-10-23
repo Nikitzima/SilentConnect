@@ -96,7 +96,7 @@ AWG_31_SERVER_DEFAULTS: dict[str, dict[str, str]] = {
         "MaxHandshakeAttempts": "15-20",
         "RandomTrailers": "on",
         "DisableCookies": "on",
-        "endpoint_host": "warp.example.com",
+        "endpoint_host": "warp.silentconnect.net",  # PLACEHOLDER
         "endpoint_port": "44121",
         "server_pubkey": "MockServerPublicKeyNL1111111111111111111111=",
     },
@@ -121,7 +121,7 @@ AWG_31_SERVER_DEFAULTS: dict[str, dict[str, str]] = {
         "MaxHandshakeAttempts": "15-20",
         "RandomTrailers": "on",
         "DisableCookies": "on",
-        "endpoint_host": "pl.example.com",
+        "endpoint_host": "pl.silentconnect.net",  # PLACEHOLDER
         "endpoint_port": "44121",
         "server_pubkey": "bi1igMRahaWDgvo7ClePLOwnXYjhdo+7PMaswXVtlAs=",
     },
@@ -146,7 +146,7 @@ AWG_31_SERVER_DEFAULTS: dict[str, dict[str, str]] = {
         "MaxHandshakeAttempts": "15-20",
         "RandomTrailers": "on",
         "DisableCookies": "on",
-        "endpoint_host": "fi.example.com",
+        "endpoint_host": "fi.silentconnect.net",  # PLACEHOLDER
         "endpoint_port": "49752",
         "server_pubkey": "MockServerPublicKeyDE3333333333333333333333=",
     },
@@ -160,7 +160,7 @@ def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool 
     endpoint_host = (
         os.environ.get(f"AWG_{srv_code.upper()}_ENDPOINT_HOST")
         or os.environ.get("AWG_ENDPOINT_HOST")
-        or node_defaults.get("endpoint_host", "warp.example.com")
+        or node_defaults.get("endpoint_host", "warp.silentconnect.net")  # PLACEHOLDER
     )
     endpoint_port = (
         os.environ.get(f"AWG_{srv_code.upper()}_ENDPOINT_PORT")
@@ -172,7 +172,12 @@ def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool 
         or os.environ.get("AWG_SERVER_PUBLIC_KEY")
         or node_defaults.get("server_pubkey", "")
     )
-    client_dns = os.environ.get("AWG_CLIENT_DNS", "1.1.1.1, 1.0.0.1")
+    default_dns = (
+        "1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001"
+        if srv_code == "pl"
+        else "1.1.1.1, 1.0.0.1"
+    )
+    client_dns = os.environ.get(f"AWG_{srv_code.upper()}_CLIENT_DNS", os.environ.get("AWG_CLIENT_DNS", default_dns))
     client_mtu = os.environ.get("AWG_CLIENT_MTU", "1280")
     allowed_ips = "0.0.0.0/0"
 
@@ -220,9 +225,17 @@ def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool 
     priv_key = str(slot.get("private_key_enc") or "")
     psk = str(slot.get("preshared_key") or "").strip()
 
+    if srv_code == "pl":
+        client_last_octet = client_ip.split(".")[-1]
+        addr_str = f"{client_ip}/32, fd00:8:3::{client_last_octet}/128"
+        if "::/0" not in allowed_ips:
+            allowed_ips = f"{allowed_ips}, ::/0"
+    else:
+        addr_str = f"{client_ip}/32"
+
     lines = [
         "[Interface]",
-        f"Address = {client_ip}/32",
+        f"Address = {addr_str}",
         f"DNS = {client_dns}",
         f"PrivateKey = {priv_key}",
     ]
@@ -500,7 +513,7 @@ function copyAwgKey(subId, slotIdx, btn) {
   btn.innerText = 'Загрузка...';
   btn.disabled = true;
 
-  fetch('/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/config_text')
+  fetch('/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/config_text?t=' + Date.now())
     .then(function(res) {
       if (!res.ok) throw new Error('Failed to load config text');
       return res.text();
@@ -2281,8 +2294,8 @@ class WebCheckout:
             return dict(cls._PING_CACHE["data"])
         targets = {
             "nl": ("127.0.0.1", 4430),
-            "pl": (os.environ.get("AWG_PL_HOST", "pl.example.com"), 443),
-            "fi": (os.environ.get("AWG_FI_HOST", "fi.example.com"), 443),
+            "pl": (os.environ.get("AWG_PL_HOST", "pl.silentconnect.net"), 443),  # PLACEHOLDER
+            "fi": (os.environ.get("AWG_FI_HOST", "fi.silentconnect.net"), 443),  # PLACEHOLDER
         }
         results = {}
         for code, (host, port) in targets.items():
@@ -2476,7 +2489,7 @@ class WebCheckout:
               </div>
               <div class="awg-slot-actions">
                 <div class="awg-action-row">
-                  <a class="awg-action-btn config" href="/sub/awg/{quote(sub_id)}/slot/{idx}/config" download title="Скачать .conf">
+                  <a class="awg-action-btn config" href="/sub/awg/{quote(sub_id)}/slot/{idx}/config?t={int(time.time())}" download title="Скачать .conf">
                     📥 .conf
                   </a>
                   <button type="button" class="awg-action-btn qr" data-sub-id="{html.escape(sub_id, quote=True)}" data-slot-idx="{idx}" data-label="{clean_label}" onclick="openAwgQrModal('{html.escape(sub_id, quote=True)}', {idx}, this.getAttribute('data-label'))" title="Показать QR-код">
@@ -2484,8 +2497,8 @@ class WebCheckout:
                   </button>
                 </div>
                 <div class="awg-action-row single">
-                  <button type="button" class="awg-action-btn copy-key" data-sub-id="{html.escape(sub_id, quote=True)}" data-slot-idx="{idx}" onclick="copyAwgKey('{html.escape(sub_id, quote=True)}', {idx}, this)" title="Скопировать конфигурацию">
-                    📋 Скопировать ключ
+                  <button type="button" class="awg-action-btn copy-key" data-sub-id="{html.escape(sub_id, quote=True)}" data-slot-idx="{idx}" onclick="copyAwgKey('{html.escape(sub_id, quote=True)}', {idx}, this)" title="Скопировать конфигурацию (.conf) со всеми настройками сплита">
+                    📋 Скопировать конфиг
                   </button>
                 </div>
                 <div class="awg-action-row single">
@@ -2820,9 +2833,9 @@ class WebCheckout:
   <meta property="og:title" content="SilentConnect — Приватный и безопасный интернет">
   <meta property="og:description" content="Сервис защищенного и приватного сетевого доступа для персонального использования. Без ограничений и без логирования активности.">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://silentconnect.net"><!-- PLACEHOLDER -->
+  <meta property="og:url" content="https://silentconnect.net"><!-- PLACEHOLDER -->  # PLACEHOLDER
   <meta property="og:site_name" content="SilentConnect">
-  <meta property="og:image" content="https://silentconnect.net/assets/telegram/avatar.png"><!-- PLACEHOLDER -->
+  <meta property="og:image" content="https://silentconnect.net/assets/telegram/avatar.png"><!-- PLACEHOLDER -->  # PLACEHOLDER
   {refresh}
   <title>{html.escape(title)} · SilentConnect</title>
   <link rel="icon" type="image/png" href="/assets/telegram/avatar.png">
@@ -3923,9 +3936,9 @@ class WebCheckout:
     "@graph": [
       {{
         "@type": "Organization",
-        "@id": "https://silentconnect.net/#organization", "placeholder": "PLACEHOLDER",
+        "@id": "https://silentconnect.net/#organization", "placeholder": "PLACEHOLDER",  # PLACEHOLDER
         "name": "SilentConnect",
-        "url": "https://silentconnect.net", "comment": "PLACEHOLDER",
+        "url": "https://silentconnect.net", "comment": "PLACEHOLDER",  # PLACEHOLDER
         "description": "Сервис приватного сетевого доступа для персонального использования без логирования активности",
         "contactPoint": {{
           "@type": "ContactPoint",
@@ -3935,7 +3948,7 @@ class WebCheckout:
       }},
       {{
         "@type": "SoftwareApplication",
-        "@id": "https://silentconnect.net/#software", "placeholder": "PLACEHOLDER",
+        "@id": "https://silentconnect.net/#software", "placeholder": "PLACEHOLDER",  # PLACEHOLDER
         "name": "SilentConnect",
         "applicationCategory": "SecurityApplication",
         "operatingSystem": "iOS, Android, Windows, macOS, Linux",
@@ -3945,7 +3958,7 @@ class WebCheckout:
           "priceCurrency": "RUB",
           "description": "Тарифы от 149 RUB/месяц для защищенного доступа к интернету"
         }},
-        "url": "https://silentconnect.net", "comment": "PLACEHOLDER"
+        "url": "https://silentconnect.net", "comment": "PLACEHOLDER"  # PLACEHOLDER
       }}
     ]
   }}
@@ -5292,10 +5305,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/x-wireguard-profile; charset=utf-8")
                 self.send_header("Content-Disposition", f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{encoded_filename}')
                 self.send_header("Content-Length", str(len(conf_bytes)))
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                self.send_header("Pragma", "no-cache")
                 for k, v in SECURITY_HEADERS:
                     self.send_header(k, v)
                 self.end_headers()
                 self.wfile.write(conf_bytes)
+                return
             # AWG Cluster TCP Pings
             # GET /sub/awg/ping_servers or /api/sub/awg/ping_servers
             if (len(path) == 3 and path[0] == "sub" and path[1] == "awg" and path[2] in {"ping_servers", "ping"}) or \
@@ -5326,7 +5342,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     return
 
                 try:
-                    conf_text = build_slot_conf(slot, server_code=slot.get("server_code", "nl"))
+                    conf_text = build_slot_conf(slot, server_code=slot.get("server_code", "nl"), for_qr=True)
                 except AwgNodeUnavailableError as exc:
                     self._send_503_unavailable(exc)
                     return
@@ -5390,6 +5406,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.send_header("Content-Length", str(len(text_bytes)))
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                self.send_header("Pragma", "no-cache")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 for k, v in SECURITY_HEADERS:
                     self.send_header(k, v)

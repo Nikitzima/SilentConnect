@@ -243,18 +243,18 @@ class XuiReconciler:
                     is_expired and notes in {TEST_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES}
                 )
                 if should_purge:
-                    if email in local_by_email:
+                    if email in local_by_email or uuid in local_by_email:
                         if not dry_run:
                             for ib in inbounds:
                                 ib_id = int(ib["id"])
                                 if email in inbound_clients_map[ib_id] or uuid in inbound_clients_map[ib_id]:
                                     try:
-                                        self.xui_api.delete_client(ib_id, uuid)
+                                        self.xui_api.delete_client(ib_id, email)
                                     except Exception:
                                         try:
-                                            self.xui_api.delete_client(ib_id, email)
+                                            self.xui_api.delete_client(ib_id, uuid)
                                         except Exception as exc:
-                                            LOGGER.debug("Delete client %s on inbound %d: %s", email, ib_id, exc)
+                                            LOGGER.debug("Delete client %s (%s) on inbound %d failed: %s", email, uuid, ib_id, exc)
                         deleted_count += 1
                     continue
 
