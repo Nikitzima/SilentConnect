@@ -447,7 +447,7 @@ class Store:
                 local_replica_path=str(replica_path),
                 sync_url=self._turso_url,
                 auth_token=self._turso_token,
-                auto_sync_interval=float(os.environ.get("TURSO_SYNC_INTERVAL", "60.0")),
+                auto_sync_interval=float(os.environ.get("TURSO_SYNC_INTERVAL", "900.0")),
             )
 
     def init(self) -> None:

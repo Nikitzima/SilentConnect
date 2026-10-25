@@ -100,7 +100,7 @@ class LibsqlReplicaManager:
         local_replica_path: str,
         sync_url: str,
         auth_token: str,
-        auto_sync_interval: float = 60.0,
+        auto_sync_interval: float = 900.0,
     ) -> None:
         if not HAS_LIBSQL:
             raise RuntimeError("Package 'libsql' is required for LibsqlReplicaManager")
@@ -167,7 +167,6 @@ class LibsqlReplicaManager:
                 threading.Thread(target=_bg_sync, daemon=True, name="turso-stale-syncer").start()
 
     def connect(self) -> LibsqlConnectionProxy:
-        self.sync_if_stale()
         return LibsqlConnectionProxy(self)
 
 
