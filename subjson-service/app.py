@@ -301,7 +301,7 @@ GRPC_SERVICE_NAME = os.environ.get("GRPC_SERVICE_NAME", "grpc-maxru").strip()
 
 FI_REALITY_SNI_CLASSIC = os.environ.get("FI_REALITY_SNI_CLASSIC", "watchdog.savicki.pl").strip()
 FI_REALITY_SNI_FAST = os.environ.get("FI_REALITY_SNI_FAST", "playdrive.be").strip()
-FI_TCP_REALITY_PORT = int(os.environ.get("FI_TCP_REALITY_PORT", "23385"))
+FI_TCP_REALITY_PORT = int(os.environ.get("FI_TCP_REALITY_PORT", "443"))
 FI_GRPC_REALITY_SNI = os.environ.get("FI_GRPC_REALITY_SNI", "watchdog.savicki.pl").strip()
 FI_XHTTP_REALITY_PUBLIC_KEY = os.environ.get("FI_XHTTP_REALITY_PUBLIC_KEY", FI_REALITY_PUBLIC_KEY).strip()
 FI_XHTTP_REALITY_SHORT_ID = os.environ.get("FI_XHTTP_REALITY_SHORT_ID", FI_REALITY_SHORT_ID).strip()
@@ -3372,7 +3372,7 @@ def build_singbox_smart_config(
                 },
             ],
             "final": "dns-remote",
-            "strategy": "prefer_ipv4",
+            "strategy": "ipv4_only",
             "reverse_mapping": True,
         },
         "inbounds": [
@@ -3381,6 +3381,7 @@ def build_singbox_smart_config(
                 "tag": "tun-in",
                 "interface_name": "sing-tun",
                 "address": ["172.19.0.1/30"],
+                "mtu": 1400,
                 "auto_route": True,
                 "strict_route": True,
             }
