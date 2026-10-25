@@ -3372,7 +3372,7 @@ def build_singbox_smart_config(
                 },
             ],
             "final": "dns-remote",
-            "strategy": "ipv4_only",
+            "strategy": "prefer_ipv4",
             "reverse_mapping": True,
         },
         "inbounds": [
