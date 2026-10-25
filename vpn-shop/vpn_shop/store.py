@@ -369,6 +369,7 @@ CREATE INDEX IF NOT EXISTS ix_orders_customer_status ON orders(customer_chat_id,
 CREATE INDEX IF NOT EXISTS ix_orders_status_created ON orders(status, created_at);
 CREATE INDEX IF NOT EXISTS ix_profiles_status_expires ON profiles(status, expires_at);
 CREATE INDEX IF NOT EXISTS ix_orders_customer_email ON orders(customer_email);
+CREATE INDEX IF NOT EXISTS ix_orders_provisioned_profile ON orders(provisioned_profile_id);
 """
 
 SCHEMA_VERSION = 3
@@ -446,7 +447,7 @@ class Store:
                 local_replica_path=str(replica_path),
                 sync_url=self._turso_url,
                 auth_token=self._turso_token,
-                auto_sync_interval=float(os.environ.get("TURSO_SYNC_INTERVAL", "2.0")),
+                auto_sync_interval=float(os.environ.get("TURSO_SYNC_INTERVAL", "60.0")),
             )
 
     def init(self) -> None:
@@ -538,6 +539,7 @@ class Store:
             self._ensure_column(conn, "profiles", "xui_sub_id", "TEXT")
             self._ensure_column(conn, "awg_slots", "server_code", "TEXT NOT NULL DEFAULT 'nl'")
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_awg_slots_server_ip ON awg_slots(server_code, client_ip);")
+            conn.execute("CREATE INDEX IF NOT EXISTS ix_orders_provisioned_profile ON orders(provisioned_profile_id);")
             conn.execute("DROP INDEX IF EXISTS idx_orders_external_id;")
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_external_id ON orders(external_id) WHERE external_id IS NOT NULL;")
             conn.execute(

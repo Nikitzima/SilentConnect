@@ -562,7 +562,7 @@ class XuiReconciler:
         except Exception as exc:
             LOGGER.debug("Local AWG traffic collection skipped on %s: %s", local_node, exc)
 
-    def run_daemon(self, interval_seconds: float = 15.0) -> None:
+    def run_daemon(self, interval_seconds: float = 60.0) -> None:
         """Run continuous reconciliation loop with instant SIGUSR1 wake support."""
         try:
             PID_FILE_PATH.write_text(str(os.getpid()), encoding="utf-8")
