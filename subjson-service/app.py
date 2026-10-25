@@ -3381,7 +3381,6 @@ def build_singbox_smart_config(
                 "tag": "tun-in",
                 "interface_name": "sing-tun",
                 "address": ["172.19.0.1/30"],
-                "mtu": 1400,
                 "auto_route": True,
                 "strict_route": True,
             }
