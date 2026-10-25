@@ -299,10 +299,10 @@ GRPC_REALITY_SHORT_ID = os.environ.get("GRPC_REALITY_SHORT_ID", NL_GRPC_REALITY_
 GRPC_REALITY_SNI = os.environ.get("GRPC_REALITY_SNI", "vk.com").strip()
 GRPC_SERVICE_NAME = os.environ.get("GRPC_SERVICE_NAME", "grpc-maxru").strip()
 
-FI_REALITY_SNI_CLASSIC = os.environ.get("FI_REALITY_SNI_CLASSIC", "sber.ru").strip()
-FI_REALITY_SNI_FAST = os.environ.get("FI_REALITY_SNI_FAST", "tbank.ru").strip()
+FI_REALITY_SNI_CLASSIC = os.environ.get("FI_REALITY_SNI_CLASSIC", "watchdog.savicki.pl").strip()
+FI_REALITY_SNI_FAST = os.environ.get("FI_REALITY_SNI_FAST", "playdrive.be").strip()
 FI_TCP_REALITY_PORT = int(os.environ.get("FI_TCP_REALITY_PORT", "23385"))
-FI_GRPC_REALITY_SNI = os.environ.get("FI_GRPC_REALITY_SNI", "sber.ru").strip()
+FI_GRPC_REALITY_SNI = os.environ.get("FI_GRPC_REALITY_SNI", "watchdog.savicki.pl").strip()
 FI_XHTTP_REALITY_PUBLIC_KEY = os.environ.get("FI_XHTTP_REALITY_PUBLIC_KEY", FI_REALITY_PUBLIC_KEY).strip()
 FI_XHTTP_REALITY_SHORT_ID = os.environ.get("FI_XHTTP_REALITY_SHORT_ID", FI_REALITY_SHORT_ID).strip()
 FI_XHTTP_REALITY_SNI = os.environ.get("FI_XHTTP_REALITY_SNI", "sber.ru").strip()
