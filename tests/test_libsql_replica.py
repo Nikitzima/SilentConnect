@@ -164,7 +164,7 @@ class StoreReplicaReadRetryTests(unittest.TestCase):
             mock_conn.execute.return_value = mock_cur
             yield mock_conn
 
-        with patch.object(store, "_connect", side_effect=mock_connect):
+        with patch.object(store, "read_connection", side_effect=mock_connect):
             order = store.get_order("ord_sync_123")
             self.assertIsNotNone(order)
             self.assertEqual(order["public_id"], "ord_sync_123")
