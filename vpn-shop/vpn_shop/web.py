@@ -834,6 +834,8 @@ class WebCheckout:
     def __init__(self, settings: Settings, store: Store) -> None:
         self.settings = settings
         self.store = store
+        if not getattr(self.store, "settings", None):
+            self.store.settings = settings
         self.store.init()
         self.offers = build_offers(settings)
         self.provisioner = Provisioner(settings, store)
@@ -851,6 +853,10 @@ class WebCheckout:
             secret_key=settings.digiseller_secret_key,
         )
         self._bot: Any = None
+        self._platega_order_locks: dict[str, threading.Lock] = {}
+        self._platega_locks_guard = threading.Lock()
+        self._platega_urls: dict[str, str] = {}
+        self._platega_tx_ids: dict[str, str] = {}
 
     @property
     def bot(self) -> Any:
@@ -868,39 +874,82 @@ class WebCheckout:
     ) -> str:
         if not self.settings.platega_enabled or not self.platega.is_configured:
             return ""
+        order_id = str(order.get("public_id") or "")
         meta = dict(order.get("meta_json") or {})
         existing_url = str(meta.get("platega_url") or "").strip()
+        if not existing_url and order_id in self._platega_urls:
+            existing_url = self._platega_urls[order_id]
+            meta["platega_url"] = existing_url
+            if order_id in self._platega_tx_ids:
+                meta["platega_transaction_id"] = self._platega_tx_ids[order_id]
+            order["meta_json"] = meta
         if existing_url:
             return existing_url
-        try:
-            amount = int(order.get("final_price_rub") or 0)
-            if amount <= 0:
-                return ""
-            duration = int(order.get("duration_days") or 30)
-            desc = f"SilentConnect #{order['public_id']} ({duration} дн.)"
-            tx = self.platega.create_transaction(
-                amount=amount,
-                currency="RUB",
-                description=desc,
-                payload=str(order["public_id"]),
-                return_url=return_url,
-                failed_url=failed_url,
-                metadata={
-                    "order_id": str(order["public_id"]),
-                    "customer_email": str(order.get("customer_email") or ""),
-                },
-                is_bot=False,
-            )
-            url = str(tx.get("url") or "").strip()
-            tx_id = str(tx.get("transactionId") or "").strip()
-            if url:
-                meta["platega_url"] = url
-                if tx_id:
-                    meta["platega_transaction_id"] = tx_id
-                self.store.update_order_meta(str(order["public_id"]), meta)
-                return url
-        except Exception:
-            LOGGER.exception("Failed to create Platega payment URL for web order %s", order["public_id"])
+
+        with self._platega_locks_guard:
+            if order_id not in self._platega_order_locks:
+                self._platega_order_locks[order_id] = threading.Lock()
+            order_lock = self._platega_order_locks[order_id]
+
+        with order_lock:
+            # Re-read cache or meta in case background thread completed
+            if order_id in self._platega_urls:
+                existing_url = self._platega_urls[order_id]
+                meta["platega_url"] = existing_url
+                if order_id in self._platega_tx_ids:
+                    meta["platega_transaction_id"] = self._platega_tx_ids[order_id]
+                order["meta_json"] = meta
+                return existing_url
+
+            refreshed = self.store.get_order(order_id) or order
+            meta = dict(refreshed.get("meta_json") or {})
+            existing_url = str(meta.get("platega_url") or "").strip()
+            if existing_url:
+                self._platega_urls[order_id] = existing_url
+                order["meta_json"] = meta
+                return existing_url
+            try:
+                amount = int(order.get("final_price_rub") or 0)
+                if amount <= 0:
+                    return ""
+                duration = int(order.get("duration_days") or 30)
+                desc = f"SilentConnect #{order['public_id']} ({duration} дн.)"
+                tx = self.platega.create_transaction(
+                    amount=amount,
+                    currency="RUB",
+                    description=desc,
+                    payload=str(order["public_id"]),
+                    return_url=return_url,
+                    failed_url=failed_url,
+                    metadata={
+                        "order_id": str(order["public_id"]),
+                        "customer_email": str(order.get("customer_email") or ""),
+                    },
+                    is_bot=False,
+                )
+                url = str(tx.get("url") or "").strip()
+                tx_id = str(tx.get("transactionId") or "").strip()
+                if url:
+                    self._platega_urls[order_id] = url
+                    meta["platega_url"] = url
+                    if tx_id:
+                        self._platega_tx_ids[order_id] = tx_id
+                        meta["platega_transaction_id"] = tx_id
+                    if len(self._platega_urls) > 5000:
+                        for k in list(self._platega_urls.keys())[:1000]:
+                            self._platega_urls.pop(k, None)
+                            self._platega_tx_ids.pop(k, None)
+                            self._platega_order_locks.pop(k, None)
+                    # Persist meta in background thread to avoid blocking page render on Turso cloud sync (~0.8s)
+                    threading.Thread(
+                        target=self.store.update_order_meta,
+                        args=(str(order["public_id"]), dict(meta)),
+                        daemon=True,
+                    ).start()
+                    order["meta_json"] = meta
+                    return url
+            except Exception:
+                LOGGER.exception("Failed to create Platega payment URL for web order %s", order["public_id"])
         return ""
 
     def handle_platega_callback(self, data: dict[str, Any], raw_body: bytes = b"") -> dict[str, Any]:
@@ -990,6 +1039,11 @@ class WebCheckout:
                     except Exception as verify_err:
                         LOGGER.warning("Could not verify Platega transaction %s via API: %s", tx_id, verify_err)
 
+                if order.get("status") == "delivered":
+                    self.store.finish_webhook_event("platega", event_id, ok=True)
+                    LOGGER.info("Order %s already delivered, acknowledging duplicate Platega callback", order_public_id)
+                    return {"status": "ok", "message": "already_delivered", "order_id": order_public_id}
+
                 meta = dict(order.get("meta_json") or {})
                 if tx_id:
                     meta["platega_transaction_id"] = tx_id
@@ -1006,8 +1060,11 @@ class WebCheckout:
                 meta = dict(order.get("meta_json") or {})
                 meta["platega_status"] = status
                 self.store.update_order_meta(order_public_id, meta)
-                if order.get("status") != "delivered":
-                    self.store.update_order_status(order_public_id, "cancelled", closed=True)
+                if order.get("status") not in ("delivered", "cancelled"):
+                    try:
+                        self.store.update_order_status(order_public_id, "cancelled", closed=True)
+                    except Exception as err:
+                        LOGGER.info("Order %s already in terminal state or cannot cancel: %s", order_public_id, err)
                 self.store.finish_webhook_event("platega", event_id, ok=True)
                 LOGGER.info("Order %s marked as %s in Platega and updated in store", order_public_id, status)
                 return {"status": "ok", "message": status.lower(), "order_id": order_public_id}
@@ -1644,11 +1701,12 @@ class WebCheckout:
             terms_version=self.settings.terms_version,
             customer_email=clean_email,
             meta=meta,
+            web_token=token,
         )
         order = self._attach_web_token(order, token)
         delivered = self.maybe_auto_deliver_free_web_order(order)
         if delivered.get("status") == "waiting_payment":
-            self._notify_admins_new_web_order(delivered)
+            self._spawn_bg_order_tasks(delivered, token)
         return delivered
 
     def create_promo_order(self, promo_code: str, customer_email: str = "") -> dict[str, Any]:
@@ -1690,11 +1748,12 @@ class WebCheckout:
             terms_version=self.settings.terms_version,
             customer_email=customer_email.strip(),
             meta=meta,
+            web_token=token,
         )
         order = self._attach_web_token(order, token)
         delivered = self.maybe_auto_deliver_free_web_order(order)
         if delivered.get("status") == "waiting_payment":
-            self._notify_admins_new_web_order(delivered)
+            self._spawn_bg_order_tasks(delivered, token)
         return delivered
 
     def create_web_renewal_order(
@@ -1760,11 +1819,12 @@ class WebCheckout:
             terms_version=self.settings.terms_version,
             customer_email=final_email,
             meta=meta,
+            web_token=token,
         )
         order = self._attach_web_token(order, token)
         delivered = self.maybe_auto_deliver_free_web_order(order)
         if delivered.get("status") == "waiting_payment":
-            self._notify_admins_new_web_order(delivered)
+            self._spawn_bg_order_tasks(delivered, token)
         return delivered
 
     def check_and_send_expiration_reminders(self) -> None:
@@ -1826,11 +1886,32 @@ class WebCheckout:
         return order
 
     def _attach_web_token(self, order: dict[str, Any], token: str) -> dict[str, Any]:
-        self.store.set_order_web_token(str(order["public_id"]), token)
+        if not order.get("web_token_hash"):
+            self.store.set_order_web_token(str(order["public_id"]), token)
         meta = dict(order.get("meta_json") or {})
         meta["web_token"] = token
         order["meta_json"] = meta
         return order
+
+    def _spawn_bg_order_tasks(self, order_dict: dict[str, Any], web_tok: str) -> None:
+        def _prewarm():
+            try:
+                base = (getattr(self.settings, "checkout_base_url", "") or getattr(self.settings, "web_public_base_url", "") or "").rstrip("/")
+                if not base:
+                    base = "https://silentconnect.net"  # PLACEHOLDER
+                order_url = f"{base}/order/{order_dict['public_id']}/{web_tok}"
+                self.get_or_create_platega_payment_url(order_dict, return_url=order_url, failed_url=order_url)
+            except Exception:
+                LOGGER.exception("Failed to pre-warm Platega URL in bg for order %s", order_dict.get("public_id"))
+
+        def _notify():
+            try:
+                self._notify_admins_new_web_order(order_dict)
+            except Exception:
+                LOGGER.exception("Failed to notify admins in bg for order %s", order_dict.get("public_id"))
+
+        threading.Thread(target=_prewarm, daemon=True, name="bg-platega-prewarm").start()
+        threading.Thread(target=_notify, daemon=True, name="bg-admin-notifier").start()
 
     def _notify_admins_new_web_order(self, order: dict[str, Any]) -> None:
         if not self.telegram:
@@ -1855,6 +1936,9 @@ class WebCheckout:
                 ]
             )
             admin_chats = self.store.list_chat_ids_by_scope("admin")
+            if not admin_chats:
+                admin_chats = [str(u) for u in (getattr(self.settings, "admin_user_ids", None) or (123456789,))]
+            LOGGER.info("Notifying admin chats about web order %s: %s", order.get("public_id"), admin_chats)
             for chat_id in admin_chats:
                 try:
                     sent = self.telegram.send_message(
@@ -1909,6 +1993,9 @@ class WebCheckout:
             ]
         )
         admin_chats = self.store.list_chat_ids_by_scope("admin")
+        if not admin_chats:
+            admin_chats = [str(u) for u in (getattr(self.settings, "admin_user_ids", None) or (123456789,))]
+        LOGGER.info("Notifying admin chats about paid web order %s: %s", order.get("public_id"), admin_chats)
         for chat_id in admin_chats:
             try:
                 sent = self.telegram.send_message(chat_id, text, reply_markup=inline_admin_markup(str(order["public_id"])))
@@ -1934,17 +2021,12 @@ class WebCheckout:
         status = str(order.get("status") or "")
         meta = dict(order.get("meta_json") or {})
 
-        # Fast sync check if order was delivered remotely (e.g. admin confirmed in tgcloud)
+        # Non-blocking check if local replica is stale (avoids locking DB on 5s poll)
         if status in ("waiting_payment", "provisioning") and getattr(self.store, "_replica_mgr", None) is not None:
             try:
-                self.store._replica_mgr.force_sync()
-                refreshed = self.store.get_order(str(order["public_id"]))
-                if refreshed:
-                    order = refreshed
-                    status = str(order.get("status") or "")
-                    meta = dict(order.get("meta_json") or {})
+                self.store._replica_mgr.sync_if_stale()
             except Exception as exc:
-                LOGGER.debug("force_sync during order polling: %s", exc)
+                LOGGER.debug("sync_if_stale during order polling: %s", exc)
 
         # Active reconciliation with Platega if order is waiting payment
         if status == "waiting_payment" and self.settings.platega_enabled and self.platega.is_configured:
@@ -2833,9 +2915,9 @@ class WebCheckout:
   <meta property="og:title" content="SilentConnect — Приватный и безопасный интернет">
   <meta property="og:description" content="Сервис защищенного и приватного сетевого доступа для персонального использования. Без ограничений и без логирования активности.">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://silentconnect.net"><!-- PLACEHOLDER -->  # PLACEHOLDER
+  <meta property="og:url" content="https://silentconnect.net"><!-- PLACEHOLDER -->
   <meta property="og:site_name" content="SilentConnect">
-  <meta property="og:image" content="https://silentconnect.net/assets/telegram/avatar.png"><!-- PLACEHOLDER -->  # PLACEHOLDER
+  <meta property="og:image" content="https://silentconnect.net/assets/telegram/avatar.png"><!-- PLACEHOLDER -->
   {refresh}
   <title>{html.escape(title)} · SilentConnect</title>
   <link rel="icon" type="image/png" href="/assets/telegram/avatar.png">
@@ -3936,9 +4018,9 @@ class WebCheckout:
     "@graph": [
       {{
         "@type": "Organization",
-        "@id": "https://silentconnect.net/#organization", "placeholder": "PLACEHOLDER",  # PLACEHOLDER
+        "@id": "https://silentconnect.net/#organization", "placeholder": "PLACEHOLDER",
         "name": "SilentConnect",
-        "url": "https://silentconnect.net", "comment": "PLACEHOLDER",  # PLACEHOLDER
+        "url": "https://silentconnect.net", "comment": "PLACEHOLDER",
         "description": "Сервис приватного сетевого доступа для персонального использования без логирования активности",
         "contactPoint": {{
           "@type": "ContactPoint",
@@ -3948,7 +4030,7 @@ class WebCheckout:
       }},
       {{
         "@type": "SoftwareApplication",
-        "@id": "https://silentconnect.net/#software", "placeholder": "PLACEHOLDER",  # PLACEHOLDER
+        "@id": "https://silentconnect.net/#software", "placeholder": "PLACEHOLDER",
         "name": "SilentConnect",
         "applicationCategory": "SecurityApplication",
         "operatingSystem": "iOS, Android, Windows, macOS, Linux",
@@ -3958,7 +4040,7 @@ class WebCheckout:
           "priceCurrency": "RUB",
           "description": "Тарифы от 149 RUB/месяц для защищенного доступа к интернету"
         }},
-        "url": "https://silentconnect.net", "comment": "PLACEHOLDER"  # PLACEHOLDER
+        "url": "https://silentconnect.net", "comment": "PLACEHOLDER"
       }}
     ]
   }}

@@ -359,20 +359,34 @@ def get_or_create_openflux_slot(conn: sqlite3.Connection, profile_id: str) -> di
 
     now = int(time.time())
     if not row:
-        conn.execute(
-            """
-            INSERT INTO openflux_slots (
-                profile_public_id, slot_label, status,
-                created_at, updated_at
-            ) VALUES (?, 'Белые списки (OpenFlux)', 'uninitialized', ?, ?)
-            """,
-            (profile_id, now, now),
-        )
-        conn.commit()
-        row = conn.execute(
-            "SELECT * FROM openflux_slots WHERE profile_public_id = ?",
-            (profile_id,),
-        ).fetchone()
+        try:
+            conn.execute(
+                """
+                INSERT INTO openflux_slots (
+                    profile_public_id, slot_label, status,
+                    created_at, updated_at
+                ) VALUES (?, 'Белые списки (OpenFlux)', 'uninitialized', ?, ?)
+                """,
+                (profile_id, now, now),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM openflux_slots WHERE profile_public_id = ?",
+                (profile_id,),
+            ).fetchone()
+        except Exception as exc:
+            LOGGER.warning("Could not insert openflux slot for %s: %s", profile_id, exc)
+
+    if not row:
+        return {
+            "profile_public_id": profile_id,
+            "slot_label": "Белые списки (OpenFlux)",
+            "status": "uninitialized",
+            "active_server": "nl",
+            "active_doc_url": "",
+            "pending_server": None,
+            "pending_doc_url": "",
+        }
 
     return dict(row)
 

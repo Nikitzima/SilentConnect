@@ -299,14 +299,15 @@ GRPC_REALITY_SHORT_ID = os.environ.get("GRPC_REALITY_SHORT_ID", NL_GRPC_REALITY_
 GRPC_REALITY_SNI = os.environ.get("GRPC_REALITY_SNI", "vk.com").strip()
 GRPC_SERVICE_NAME = os.environ.get("GRPC_SERVICE_NAME", "grpc-maxru").strip()
 
-FI_REALITY_SNI_CLASSIC = os.environ.get("FI_REALITY_SNI_CLASSIC", "watchdog.savicki.pl").strip()
-FI_REALITY_SNI_FAST = os.environ.get("FI_REALITY_SNI_FAST", "playdrive.be").strip()
+FI_REALITY_SNI_CLASSIC = os.environ.get("FI_REALITY_SNI_CLASSIC", "sber.ru").strip()
+FI_REALITY_SNI_FAST = os.environ.get("FI_REALITY_SNI_FAST", "sber.ru").strip()
 FI_TCP_REALITY_PORT = int(os.environ.get("FI_TCP_REALITY_PORT", "443"))
-FI_GRPC_REALITY_SNI = os.environ.get("FI_GRPC_REALITY_SNI", "watchdog.savicki.pl").strip()
+FI_GRPC_REALITY_SNI = os.environ.get("FI_GRPC_REALITY_SNI", "sber.ru").strip()
 FI_XHTTP_REALITY_PUBLIC_KEY = os.environ.get("FI_XHTTP_REALITY_PUBLIC_KEY", FI_REALITY_PUBLIC_KEY).strip()
 FI_XHTTP_REALITY_SHORT_ID = os.environ.get("FI_XHTTP_REALITY_SHORT_ID", FI_REALITY_SHORT_ID).strip()
 FI_XHTTP_REALITY_SNI = os.environ.get("FI_XHTTP_REALITY_SNI", "sber.ru").strip()
 FI_XHTTP_REALITY_PORT = int(os.environ.get("FI_XHTTP_REALITY_PORT", "8443"))
+FI_HYSTERIA_PORT = int(os.environ.get("FI_HYSTERIA_PORT", "443"))
 HYSTERIA_PORT = int(os.environ.get("HYSTERIA_PORT", "443"))
 
 HAPP_DOWNLOAD_URL = "https://www.happ.su/main"
@@ -577,6 +578,22 @@ def get_store_db():
     return conn
 
 
+def get_store_ro_db():
+    """Fast thread-safe read-only connection to local SQLite replica (0.5ms)."""
+    if os.environ.get("TURSO_DATABASE_URL"):
+        wc = get_shop_checkout()
+        if wc and getattr(wc, "store", None):
+            if wc.store._replica_mgr is not None:
+                ro = wc.store._replica_mgr._get_ro_conn()
+                if ro is not None:
+                    return ro
+            return wc.store.connect()
+    db_path = find_store_db_path()
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10.0)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 _sub_profile_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
 _sub_profile_cache_lock = threading.Lock()
 _PROFILE_CACHE_TTL = 30.0
@@ -691,6 +708,15 @@ def build_openflux_v1_link(country: str, sub_id: str, label: str = "") -> tuple[
 
 def resolve_sub_profile_id(sub_id: str) -> str:
     clean = str(sub_id or "").strip()
+    if clean.startswith("prf_"):
+        return clean
+    try:
+        ro_conn = get_store_ro_db()
+        row = ro_conn.execute("SELECT public_id FROM profiles WHERE xui_client_id = ? OR public_id = ?", (clean, clean)).fetchone()
+        if row:
+            return str(row["public_id"]).strip()
+    except Exception:
+        pass
     try:
         wc = get_shop_checkout()
         if wc:
@@ -706,12 +732,24 @@ def get_openflux_slot_state_dict(sub_id: str) -> dict[str, Any]:
     try:
         from vpn_shop import openflux_manager
         pid = resolve_sub_profile_id(sub_id)
-        conn = get_store_db()
+        ro_conn = get_store_ro_db()
+        row = None
         try:
-            openflux_manager.cleanup_expired_migrations(conn)
-            slot = openflux_manager.get_or_create_openflux_slot(conn, pid)
-        finally:
-            conn.close()
+            row = ro_conn.execute(
+                "SELECT * FROM openflux_slots WHERE profile_public_id = ?",
+                (pid,),
+            ).fetchone()
+        except Exception:
+            pass
+
+        if not row:
+            conn = get_store_db()
+            try:
+                slot = openflux_manager.get_or_create_openflux_slot(conn, pid)
+            finally:
+                conn.close()
+        else:
+            slot = dict(row)
 
         status = slot.get("status") or "uninitialized"
         active_srv = (slot.get("active_server") or "nl").lower()
@@ -881,22 +919,32 @@ def mask_email(e: str) -> str:
 def find_store_linked_email(sub_id: str) -> str:
     try:
         target_sub = sub_id.strip().split("~")[0]
+        ro_conn = get_store_ro_db()
+        if target_sub.startswith("prf_"):
+            ord_row = ro_conn.execute(
+                """
+                SELECT o.customer_email FROM orders o
+                JOIN profiles p ON p.id = o.provisioned_profile_id
+                WHERE p.public_id = ? AND o.customer_email != ''
+                ORDER BY o.id DESC LIMIT 1
+                """,
+                (target_sub,),
+            ).fetchone()
+            if ord_row and ord_row["customer_email"]:
+                return str(ord_row["customer_email"]).strip()
+
         row, _, _, _, client = find_subscription(target_sub)
         xui_email = str(client.get("email") or "").strip()
         if not xui_email:
             return ""
-        conn = get_store_db()
-        try:
-            prof = conn.execute("SELECT id FROM profiles WHERE xui_email = ?", (xui_email,)).fetchone()
-            if prof:
-                ord_row = conn.execute(
-                    "SELECT customer_email FROM orders WHERE provisioned_profile_id = ? AND customer_email != '' ORDER BY id DESC LIMIT 1",
-                    (prof["id"],)
-                ).fetchone()
-                if ord_row and ord_row["customer_email"]:
-                    return str(ord_row["customer_email"]).strip()
-        finally:
-            conn.close()
+        prof = ro_conn.execute("SELECT id FROM profiles WHERE xui_email = ?", (xui_email,)).fetchone()
+        if prof:
+            ord_row = ro_conn.execute(
+                "SELECT customer_email FROM orders WHERE provisioned_profile_id = ? AND customer_email != '' ORDER BY id DESC LIMIT 1",
+                (prof["id"],)
+            ).fetchone()
+            if ord_row and ord_row["customer_email"]:
+                return str(ord_row["customer_email"]).strip()
     except Exception:
         pass
     return ""
@@ -1168,30 +1216,20 @@ def _notify_admins_new_renewal_order(
 
         conn = get_store_db()
         admin_chats = []
+        env_admin_ids = os.environ.get("ADMIN_TG_IDS", "123456789").strip()
+        allowed_admin_ids = {c.strip().strip('"\'') for c in env_admin_ids.split(",") if c.strip().strip('"\'')} or {"123456789"}
         try:
             admin_rows = conn.execute("SELECT DISTINCT chat_id FROM chat_sessions WHERE scope = 'admin'").fetchall()
-            admin_chats = [str(r["chat_id"]) for r in admin_rows if r["chat_id"]]
+            for r in admin_rows:
+                cid = str(r["chat_id"] or "").strip()
+                if cid in allowed_admin_ids and cid not in admin_chats:
+                    admin_chats.append(cid)
         except Exception:
             pass
 
-        if not admin_chats:
-            try:
-                admin_rows = conn.execute("SELECT DISTINCT actor FROM admin_actions WHERE actor LIKE 'tg:%' ORDER BY id DESC LIMIT 10").fetchall()
-                for r in admin_rows:
-                    actor = str(r["actor"] or "")
-                    if actor.startswith("tg:"):
-                        cid = actor.split(":", 1)[1].strip()
-                        if cid and cid not in admin_chats:
-                            admin_chats.append(cid)
-            except Exception:
-                pass
-
-        env_admin_ids = os.environ.get("ADMIN_TG_IDS", "123456789").strip()
-        if env_admin_ids:
-            for cid in env_admin_ids.split(","):
-                cid = cid.strip()
-                if cid and cid not in admin_chats:
-                    admin_chats.append(cid)
+        for cid in allowed_admin_ids:
+            if cid and cid not in admin_chats:
+                admin_chats.append(cid)
 
         if not admin_chats:
             conn.close()
@@ -1604,69 +1642,78 @@ def render_payment_notice_html(order_data: Any, status_override: str | None = No
 
 def check_pending_payment_card(sub_id: str) -> str:
     try:
-        conn = get_store_db()
+        ro_conn = get_store_ro_db()
+        target_sub = sub_id.strip().split("~")[0]
+        email = ""
         try:
-            target_sub = sub_id.strip().split("~")[0]
-            email = ""
-            try:
-                row, _, _, _, client = find_subscription(target_sub)
-                if client:
-                    email = str(client.get("email") or "")
-            except Exception:
-                pass
-            prof = None
-            if email:
-                prof = conn.execute("SELECT * FROM profiles WHERE xui_email = ?", (email,)).fetchone()
-            if not prof:
-                prof = conn.execute("SELECT * FROM profiles WHERE public_id = ? OR xui_client_id = ?", (target_sub, target_sub)).fetchone()
-            if prof:
-                order = conn.execute(
-                    "SELECT * FROM orders WHERE provisioned_profile_id = ? ORDER BY id DESC LIMIT 1",
-                    (prof["id"],)
-                ).fetchone()
-                if order:
-                    now = int(time.time())
-                    updated_at = order["updated_at"] or order["created_at"] or 0
+            row, _, _, _, client = find_subscription(target_sub)
+            if client:
+                email = str(client.get("email") or "")
+        except Exception:
+            pass
+        prof = None
+        if email:
+            prof = ro_conn.execute("SELECT * FROM profiles WHERE xui_email = ?", (email,)).fetchone()
+        if not prof:
+            prof = ro_conn.execute("SELECT * FROM profiles WHERE public_id = ? OR xui_client_id = ?", (target_sub, target_sub)).fetchone()
+        if prof:
+            order = ro_conn.execute(
+                "SELECT * FROM orders WHERE provisioned_profile_id = ? ORDER BY id DESC LIMIT 1",
+                (prof["id"],)
+            ).fetchone()
+            if order:
+                now = int(time.time())
+                updated_at = order["updated_at"] or order["created_at"] or 0
+                created_time = order["created_at"] or updated_at or 0
+                if order["status"] in ("paid", "delivered") and (now - updated_at > 86400 * 5 or now - created_time > 86400 * 5):
+                    return ""
+                if order["status"] in ("canceled", "cancelled") and (now - updated_at > 86400 or now - created_time > 86400):
+                    return ""
+                meta = json.loads(order["meta_json"] or "{}") if isinstance(order["meta_json"], str) else (order["meta_json"] or {})
+
+                # Expire unpaid orders
+                if order["status"] == "waiting_payment":
                     created_time = order["created_at"] or updated_at or 0
-                    if order["status"] in ("paid", "delivered") and (now - updated_at > 86400 * 5 or now - created_time > 86400 * 5):
-                        return ""
-                    if order["status"] in ("canceled", "cancelled") and (now - updated_at > 86400 or now - created_time > 86400):
-                        return ""
-                    meta = json.loads(order["meta_json"] or "{}") if isinstance(order["meta_json"], str) else (order["meta_json"] or {})
-
-                    # Expire unpaid orders
-                    if order["status"] == "waiting_payment":
-                        created_time = order["created_at"] or updated_at or 0
-                        # 1. Unpaid orders older than 24h are expired
-                        if now - created_time > 86400:
-                            try:
-                                conn.execute("UPDATE orders SET status = 'cancelled', updated_at = ?, closed_at = ? WHERE id = ?", (now, now, order["id"]))
-                                conn.commit()
-                            except Exception:
-                                pass
-                            return ""
-                        # 2. Payment gateway canceled / expired / failed
-                        platega_st = str(meta.get("platega_status") or "").upper()
-                        if platega_st in ("CANCELED", "CANCELLED", "EXPIRED", "FAILED"):
-                            try:
-                                conn.execute("UPDATE orders SET status = 'cancelled', updated_at = ?, closed_at = ? WHERE id = ?", (now, now, order["id"]))
-                                conn.commit()
-                            except Exception:
-                                pass
-                            return ""
-
-                    # Backfill web_token if missing on active waiting_payment order ONLY if web_token_hash does not exist yet
-                    token = str(meta.get("web_token") or "")
-                    order_cols = [r[1] for r in conn.execute("PRAGMA table_info(orders)").fetchall()]
-                    has_hash = bool("web_token_hash" in order_cols and order["web_token_hash"])
-                    if not token and not has_hash and order["status"] == "waiting_payment":
+                    # 1. Unpaid orders older than 24h are expired
+                    if now - created_time > 86400:
                         try:
-                            new_token = secrets.token_hex(12)
-                            eff_pepper = os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")
-                            msg = f"order_web\x00{new_token}".encode("utf-8")
-                            token_hash = hmac.new(eff_pepper, msg, hashlib.sha256).hexdigest()
-                            meta["web_token"] = new_token
-                            token = new_token
+                            conn = get_store_db()
+                            try:
+                                conn.execute("UPDATE orders SET status = 'cancelled', updated_at = ?, closed_at = ? WHERE id = ?", (now, now, order["id"]))
+                                conn.commit()
+                            finally:
+                                conn.close()
+                        except Exception:
+                            pass
+                        return ""
+                    # 2. Payment gateway canceled / expired / failed
+                    platega_st = str(meta.get("platega_status") or "").upper()
+                    if platega_st in ("CANCELED", "CANCELLED", "EXPIRED", "FAILED"):
+                        try:
+                            conn = get_store_db()
+                            try:
+                                conn.execute("UPDATE orders SET status = 'cancelled', updated_at = ?, closed_at = ? WHERE id = ?", (now, now, order["id"]))
+                                conn.commit()
+                            finally:
+                                conn.close()
+                        except Exception:
+                            pass
+                        return ""
+
+                # Backfill web_token if missing on active waiting_payment order ONLY if web_token_hash does not exist yet
+                token = str(meta.get("web_token") or "")
+                order_cols = [r[1] for r in ro_conn.execute("PRAGMA table_info(orders)").fetchall()]
+                has_hash = bool("web_token_hash" in order_cols and order["web_token_hash"])
+                if not token and not has_hash and order["status"] == "waiting_payment":
+                    try:
+                        new_token = secrets.token_hex(12)
+                        eff_pepper = os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")
+                        msg = f"order_web\x00{new_token}".encode("utf-8")
+                        token_hash = hmac.new(eff_pepper, msg, hashlib.sha256).hexdigest()
+                        meta["web_token"] = new_token
+                        token = new_token
+                        conn = get_store_db()
+                        try:
                             if "web_token_hash" in order_cols:
                                 conn.execute(
                                     "UPDATE orders SET web_token_hash = ?, meta_json = ?, updated_at = ? WHERE id = ?",
@@ -1678,32 +1725,32 @@ def check_pending_payment_card(sub_id: str) -> str:
                                     (json.dumps(meta), now, order["id"])
                                 )
                             conn.commit()
-                        except Exception as tok_err:
-                            LOGGER.debug("Could not backfill web_token for order %s: %s", order.get("public_id"), tok_err)
+                        finally:
+                            conn.close()
+                    except Exception as tok_err:
+                        LOGGER.debug("Could not backfill web_token for order %s: %s", order.get("public_id"), tok_err)
 
-                    dismissed_status = meta.get("notice_dismissed_status")
-                    if dismissed_status:
-                        norm_current = "paid" if order["status"] in ("paid", "delivered") else str(order["status"])
-                        norm_dismissed = "paid" if dismissed_status in ("paid", "delivered") else str(dismissed_status)
-                        if norm_current == norm_dismissed:
-                            return ""
-                    if not token:
-                        sub_hint = str(meta.get("sub_id") or target_sub).strip()
-                        if sub_hint:
-                            eff_pepper = os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")
-                            token = hmac.new(eff_pepper, f"sub_order_token:{order['public_id']}:{sub_hint}".encode("utf-8"), hashlib.sha256).hexdigest()
-                            meta["web_token"] = token
-                    prof_keys = prof.keys()
-                    is_active = False
-                    if "expires_at" in prof_keys and prof["expires_at"]:
-                        is_active = bool(int(prof["expires_at"]) > now)
-                    elif "status" in prof_keys:
-                        is_active = (prof["status"] == "active")
-                    order_dict = dict(order)
-                    order_dict["meta_json"] = meta
-                    return render_payment_notice_html(order_dict, is_profile_active=is_active)
-        finally:
-            conn.close()
+                dismissed_status = meta.get("notice_dismissed_status")
+                if dismissed_status:
+                    norm_current = "paid" if order["status"] in ("paid", "delivered") else str(order["status"])
+                    norm_dismissed = "paid" if dismissed_status in ("paid", "delivered") else str(dismissed_status)
+                    if norm_current == norm_dismissed:
+                        return ""
+                if not token:
+                    sub_hint = str(meta.get("sub_id") or target_sub).strip()
+                    if sub_hint:
+                        eff_pepper = os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")
+                        token = hmac.new(eff_pepper, f"sub_order_token:{order['public_id']}:{sub_hint}".encode("utf-8"), hashlib.sha256).hexdigest()
+                        meta["web_token"] = token
+                prof_keys = prof.keys()
+                is_active = False
+                if "expires_at" in prof_keys and prof["expires_at"]:
+                    is_active = bool(int(prof["expires_at"]) > now)
+                elif "status" in prof_keys:
+                    is_active = (prof["status"] == "active")
+                order_dict = dict(order)
+                order_dict["meta_json"] = meta
+                return render_payment_notice_html(order_dict, is_profile_active=is_active)
     except Exception as e:
         LOGGER.debug("Error in check_pending_payment_card: %s", e)
     return ""
@@ -1763,30 +1810,20 @@ def handle_inline_order_paid(order_public_id: str, web_token: str | None = None)
 
         if bot_token:
             admin_chats = []
+            env_admin_ids = os.environ.get("ADMIN_TG_IDS", "123456789").strip()
+            allowed_admin_ids = {c.strip().strip('"\'') for c in env_admin_ids.split(",") if c.strip().strip('"\'')} or {"123456789"}
             try:
                 admin_rows = conn.execute("SELECT DISTINCT chat_id FROM chat_sessions WHERE scope = 'admin'").fetchall()
-                admin_chats = [str(r["chat_id"]) for r in admin_rows if r["chat_id"]]
+                for r in admin_rows:
+                    cid = str(r["chat_id"] or "").strip()
+                    if cid in allowed_admin_ids and cid not in admin_chats:
+                        admin_chats.append(cid)
             except Exception:
                 pass
 
-            if not admin_chats:
-                try:
-                    admin_rows = conn.execute("SELECT DISTINCT actor FROM admin_actions WHERE actor LIKE 'tg:%' ORDER BY id DESC LIMIT 10").fetchall()
-                    for r in admin_rows:
-                        actor = str(r["actor"] or "")
-                        if actor.startswith("tg:"):
-                            cid = actor.split(":", 1)[1].strip()
-                            if cid and cid not in admin_chats:
-                                admin_chats.append(cid)
-                except Exception:
-                    pass
-
-            env_admin_ids = os.environ.get("ADMIN_TG_IDS", "123456789").strip()
-            if env_admin_ids:
-                for cid in env_admin_ids.split(","):
-                    cid = cid.strip()
-                    if cid and cid not in admin_chats:
-                        admin_chats.append(cid)
+            for cid in allowed_admin_ids:
+                if cid and cid not in admin_chats:
+                    admin_chats.append(cid)
 
             if admin_chats:
                 row_dict = dict(row)
@@ -3020,8 +3057,7 @@ def build_singbox_smart_config(
             "type": "hysteria2",
             "tag": "fi-speed-hysteria2",
             "server": fi_edge,
-            "server_ports": ["30000:40000"],
-            "hop_interval": "60s",
+            "server_port": FI_HYSTERIA_PORT,
             "password": client_uuid,
             "tls": {
                 "enabled": True,
@@ -3543,9 +3579,7 @@ def build_clash_meta_config(
             "name": "🇫🇮 FI Speed Hysteria2",
             "type": "hysteria2",
             "server": fi_edge,
-            "port": 38443,
-            "ports": "30000-40000",
-            "hop-interval": 60,
+            "port": FI_HYSTERIA_PORT,
             "password": client_uuid,
             "sni": fi_edge,
             "alpn": ["h3"],
@@ -3791,7 +3825,7 @@ def build_streisand_bundle(
         f"vless://{client_uuid}@{nl_edge}:443?type=xhttp&security=tls&sni={nl_edge}&alpn=h2,http/1.1&path=%2Fxh-mx-d1f7c0429d6a&mode=stream-one#{urllib.parse.quote('🇳🇱 5. Незаметный XHTTP (NL)')}",
         f"vless://{client_uuid}@{fi_edge}:{FI_TCP_REALITY_PORT}?type=tcp&security=reality&pbk={FI_REALITY_PUBLIC_KEY}&fp=chrome&sni={FI_REALITY_SNI_CLASSIC}&sid={FI_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 6. Классический TCP (FI)')}",
         f"vless://{client_uuid}@{fi_edge}:{FI_TCP_REALITY_PORT}?type=tcp&security=reality&pbk={FI_REALITY_PUBLIC_KEY}&fp=chrome&sni={FI_REALITY_SNI_FAST}&sid={FI_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇫🇮 7. Быстрый TCP (FI)')}",
-        f"hy2://{client_uuid}@{fi_edge}:38443?sni={fi_edge}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}&mport=30000-40000#{urllib.parse.quote('🇫🇮 8. Скоростной Hysteria2 (FI)')}",
+        f"hy2://{client_uuid}@{fi_edge}:{FI_HYSTERIA_PORT}?sni={fi_edge}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}#{urllib.parse.quote('🇫🇮 8. Скоростной Hysteria2 (FI)')}",
         f"vless://{client_uuid}@{fi_edge}:29443?type=grpc&security=reality&pbk={FI_GRPC_REALITY_PUBLIC_KEY}&fp=chrome&sni={FI_GRPC_REALITY_SNI}&sid={FI_GRPC_REALITY_SHORT_ID}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇫🇮 9. Запасной gRPC (FI)')}",
         f"vless://{client_uuid}@{fi_edge}:{FI_XHTTP_REALITY_PORT}?type=xhttp&security=reality&pbk={fi_xhttp_pk}&fp=chrome&sni={FI_XHTTP_REALITY_SNI}&sid={fi_xhttp_sid}&path=%2Fxh-7m2q9r4k1v8p3s6&mode=stream-one#{urllib.parse.quote('🇫🇮 10. Незаметный XHTTP Reality (FI)')}",
     ]
@@ -4236,7 +4270,7 @@ def build_four_profiles(
     fi_hyst = copy.deepcopy(hyst_cfg)
     fi_hyst["remarks"] = f"🇫🇮 🚀 Скоростной ({email})"
     fi_hyst["outbounds"][0]["settings"]["address"] = fi_edge
-    fi_hyst["outbounds"][0]["settings"]["port"] = 38443
+    fi_hyst["outbounds"][0]["settings"]["port"] = FI_HYSTERIA_PORT
     fi_hyst["outbounds"][0]["streamSettings"]["tlsSettings"]["serverName"] = fi_edge
     fi_hyst["meta"] = build_happ_config_meta(subscription_id)
     if fi_hyst["meta"]:
@@ -11209,6 +11243,10 @@ class RequestHandler(BaseHTTPRequestHandler):
 def _start_turso_sync_daemon() -> None:
     """Background periodic syncer: keeps local NVMe replica fresh without blocking HTTP requests."""
     def _worker():
+        try:
+            get_shop_checkout()
+        except Exception as e:
+            LOGGER.debug("Initial checkout pre-warm exception: %s", e)
         while True:
             time.sleep(15.0)
             try:

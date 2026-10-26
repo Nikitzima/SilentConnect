@@ -52,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = load_settings(Path(__file__).resolve().parents[1], env_file=args.env_file)
     replica_name = "xui_reconcile" if args.command == "reconcile-xui" else None
-    store = Store(settings.database_path, replica_name=replica_name)
+    store = Store(settings.database_path, replica_name=replica_name, settings=settings)
     store.init()
 
     if args.command == "init-db":

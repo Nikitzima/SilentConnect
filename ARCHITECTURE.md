@@ -4,7 +4,7 @@
 > **Status**: Authoritative Production Specification (Release v5.0 Active-Active Turso Mesh)  
 > **Verification Status**: 100% Verified against Codebase (`128 unit tests passing`, `0 security leaks`)  
 > **Target Scope**: Geo-Distributed Active-Active Mesh Architecture, Ingress Multiplexing, and Data Plane  
-> **Related Documentation**: [README.md](README.md) • [README_RU.md](README_RU.md) • [DEPLOYMENT.md](DEPLOYMENT.md) • [AMNEZIA_SLOTS.md](AMNEZIA_SLOTS.md) • [WHITELIST_SPEC.md](WHITELIST_SPEC.md)
+> **Related Documentation**: [README.md](README.md) • [README_RU.md](README_RU.md) • [DEPLOYMENT.md](DEPLOYMENT.md) • [AMNEZIA_SLOTS.md](AMNEZIA_SLOTS.md) • [WHITELIST_SPEC.md](WHITELIST_SPEC.md) • [TSPU & Hetzner Architecture](docs/TSPU_HETZNER_SNI_AND_HYSTERIA_ARCHITECTURE.md)
 
 ---
 

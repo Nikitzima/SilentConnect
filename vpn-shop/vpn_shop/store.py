@@ -417,8 +417,9 @@ class DatabaseQueryError(RuntimeError):
 
 
 class Store:
-    def __init__(self, database_path: Path, replica_name: str | None = None):
+    def __init__(self, database_path: Path, replica_name: str | None = None, settings: Any = None):
         self.database_path = Path(database_path)
+        self.settings = settings
         self._turso_url = (
             os.environ.get("TURSO_DATABASE_URL", "").strip().strip('"\'')
             or os.environ.get("LIBSQL_URL", "").strip().strip('"\'')
@@ -582,6 +583,20 @@ class Store:
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection | Any]:
         """Context manager yielding an auto-closing database connection."""
+        conn = self._open()
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    @contextmanager
+    def read_connection(self) -> Iterator[sqlite3.Connection | Any]:
+        """Fast thread-safe read-only connection to local replica without transaction overhead."""
+        if self._replica_mgr is not None:
+            ro_conn = self._replica_mgr._get_ro_conn()
+            if ro_conn is not None:
+                yield ro_conn
+                return
         conn = self._open()
         try:
             yield conn
@@ -1035,6 +1050,18 @@ class Store:
         from .security import hash_token
 
         now = now_ts()
+        tok_hash = hash_token(token, purpose="magic_link")
+
+        # Fast path for multi-use links: read check first via RO connection (<1ms)
+        if not single_use:
+            with self.read_connection() as rconn:
+                row = rconn.execute(
+                    "SELECT email, used_at, expires_at FROM magic_links WHERE token_hash = ? AND expires_at >= ?",
+                    (tok_hash, now),
+                ).fetchone()
+            if row and row["used_at"] is not None:
+                return str(row["email"])
+
         with self.transaction() as conn:
             if single_use:
                 cur = conn.execute(
@@ -1043,7 +1070,7 @@ class Store:
                     WHERE token_hash = ? AND used_at IS NULL AND expires_at >= ?
                     RETURNING email
                     """,
-                    (now, hash_token(token, purpose="magic_link"), now),
+                    (now, tok_hash, now),
                 )
             else:
                 cur = conn.execute(
@@ -1052,9 +1079,33 @@ class Store:
                     WHERE token_hash = ? AND expires_at >= ?
                     RETURNING email
                     """,
-                    (now, hash_token(token, purpose="magic_link"), now),
+                    (now, tok_hash, now),
                 )
             row = cur.fetchone()
+            if not row and self._replica_mgr is not None:
+                try:
+                    self._replica_mgr.force_sync()
+                    if single_use:
+                        cur = conn.execute(
+                            """
+                            UPDATE magic_links SET used_at = ?
+                            WHERE token_hash = ? AND used_at IS NULL AND expires_at >= ?
+                            RETURNING email
+                            """,
+                            (now, tok_hash, now),
+                        )
+                    else:
+                        cur = conn.execute(
+                            """
+                            UPDATE magic_links SET used_at = coalesce(used_at, ?)
+                            WHERE token_hash = ? AND expires_at >= ?
+                            RETURNING email
+                            """,
+                            (now, tok_hash, now),
+                        )
+                    row = cur.fetchone()
+                except Exception:
+                    pass
         return str(row["email"]) if row else None
 
     def count_recent_magic_links(self, *, email: str, request_ip: str | None, window_seconds: int) -> int:
@@ -1141,28 +1192,32 @@ class Store:
             )
 
     def list_chat_ids_by_scope(self, scope: str) -> list[str]:
+        if scope == "admin":
+            # Strictly return ONLY configured admin TG IDs (xui_admin: 123456789)
+            admin_ids: list[str] = []
+            if getattr(self, "settings", None) and getattr(self.settings, "admin_user_ids", None):
+                admin_ids = [str(uid).strip() for uid in self.settings.admin_user_ids if str(uid).strip()]
+            if not admin_ids:
+                raw_env = os.environ.get("ADMIN_TG_IDS", "").strip()
+                if raw_env:
+                    admin_ids = [s.strip().strip('"\'') for s in raw_env.split(",") if s.strip().strip('"\'')]
+            if not admin_ids:
+                admin_ids = ["123456789"]
+            # Deduplicate while preserving order
+            seen = set()
+            result = []
+            for aid in admin_ids:
+                if aid and aid not in seen:
+                    seen.add(aid)
+                    result.append(aid)
+            return result
+
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT chat_id FROM chat_sessions WHERE scope = ? ORDER BY updated_at DESC",
                 (scope,),
             ).fetchall()
-            result = [str(row["chat_id"]) for row in rows if row["chat_id"]]
-            if scope == "admin":
-                admin_rows = conn.execute(
-                    "SELECT DISTINCT actor FROM admin_actions WHERE actor LIKE 'tg:%' ORDER BY id DESC LIMIT 10"
-                ).fetchall()
-                for row in admin_rows:
-                    actor = str(row["actor"] or "")
-                    if actor.startswith("tg:"):
-                        cid = actor.split(":", 1)[1].strip()
-                        if cid and cid not in result:
-                            result.append(cid)
-                if getattr(self, "settings", None) and getattr(self.settings, "admin_user_ids", None):
-                    for uid in self.settings.admin_user_ids:
-                        suid = str(uid).strip()
-                        if suid and suid not in result:
-                            result.append(suid)
-        return result
+            return [str(row["chat_id"]) for row in rows if row["chat_id"]]
 
     def create_invite(self, max_uses: int = 1, expires_at: int | None = None, note: str = "") -> tuple[str, dict[str, Any]]:
         code = random_code("INV")
@@ -1422,6 +1477,7 @@ class Store:
         customer_email: str = "",
         external_id: str | None = None,
         meta: dict[str, Any] | None = None,
+        web_token: str | None = None,
     ) -> dict[str, Any]:
         now = now_ts()
         merged_meta = dict(meta or {})
@@ -1429,6 +1485,10 @@ class Store:
             merged_meta["customer_email"] = customer_email
         payload = json.dumps(merged_meta, ensure_ascii=False, separators=(",", ":"))
         ext_clean = str(external_id).strip() if external_id else None
+        token_hash: str | None = None
+        if web_token:
+            from .security import hash_token
+            token_hash = hash_token(web_token, purpose="order_web")
         for attempt in range(5):
             public = public_id("ord", size=12)
             try:
@@ -1438,9 +1498,9 @@ class Store:
                         INSERT INTO orders(
                           public_id, kind, status, transport, duration_days, profile_mode, family_label,
                           base_price_rub, final_price_rub, promo_id, invite_id, customer_chat_id,
-                          privacy_ack, loss_policy_ack, terms_version, customer_email, created_at, updated_at, meta_json, external_id
+                          privacy_ack, loss_policy_ack, terms_version, customer_email, created_at, updated_at, meta_json, external_id, web_token_hash
                         )
-                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             public,
@@ -1463,6 +1523,7 @@ class Store:
                             now,
                             payload,
                             ext_clean,
+                            token_hash,
                         ),
                     )
                     row = conn.execute("SELECT * FROM orders WHERE id = ?", (cursor.lastrowid,)).fetchone()
@@ -1494,11 +1555,11 @@ class Store:
             )
 
     def get_order(self, public_id_value: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
         if row is None and self._replica_mgr is not None:
             self._replica_mgr.force_sync()
-            with self._connect() as conn:
+            with self.read_connection() as conn:
                 row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
         return self._row_to_dict(row)
 
@@ -1506,7 +1567,7 @@ class Store:
         if not tx_id:
             return None
         # Сначала ищем по новой колонке external_id (быстрый путь)
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM orders WHERE external_id = ? LIMIT 1",
                 (tx_id,),
@@ -1514,7 +1575,7 @@ class Store:
         if row:
             return self._row_to_dict(row)
         # Fallback: ищем в meta_json (для старых ордеров, созданных до миграции)
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM orders WHERE meta_json LIKE ? ORDER BY id DESC LIMIT 5",
                 (f"%{tx_id}%",),
@@ -1535,14 +1596,14 @@ class Store:
         if not invoice_id:
             return None
         inv_str = str(invoice_id).strip()
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM orders WHERE external_id = ? OR external_id = ? LIMIT 1",
                 (f"digiseller:{inv_str}", inv_str),
             ).fetchone()
         if row:
             return self._row_to_dict(row)
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM orders WHERE meta_json LIKE ? ORDER BY id DESC LIMIT 5",
                 (f"%{inv_str}%",),
@@ -1562,7 +1623,7 @@ class Store:
         """Find order by exact external_id."""
         if not external_id:
             return None
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute("SELECT * FROM orders WHERE external_id = ? LIMIT 1", (str(external_id).strip(),)).fetchone()
             if row:
                 return self._row_to_dict(row)
@@ -1799,23 +1860,23 @@ class Store:
         return self._row_to_dict(row)
 
     def get_profile(self, public_id_value: str, sync_on_miss: bool = False) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute("SELECT * FROM profiles WHERE public_id = ?", (public_id_value,)).fetchone()
         if row is None and sync_on_miss and self._replica_mgr is not None:
             self._replica_mgr.force_sync()
-            with self._connect() as conn:
+            with self.read_connection() as conn:
                 row = conn.execute("SELECT * FROM profiles WHERE public_id = ?", (public_id_value,)).fetchone()
         return self._row_to_dict(row)
 
     def get_profile_by_xui_email(self, xui_email: str, sync_on_miss: bool = False) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM profiles WHERE xui_email = ? ORDER BY id DESC LIMIT 1",
                 (xui_email,),
             ).fetchone()
         if row is None and sync_on_miss and self._replica_mgr is not None:
             self._replica_mgr.force_sync()
-            with self._connect() as conn:
+            with self.read_connection() as conn:
                 row = conn.execute(
                     "SELECT * FROM profiles WHERE xui_email = ? ORDER BY id DESC LIMIT 1",
                     (xui_email,),
@@ -1823,7 +1884,7 @@ class Store:
         return self._row_to_dict(row)
 
     def get_profile_owner(self, profile_public_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM profile_owners WHERE profile_public_id = ?",
                 (profile_public_id,),
@@ -1831,7 +1892,7 @@ class Store:
         return self._row_to_dict(row)
 
     def get_order_for_profile(self, profile_public_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 """
                 SELECT o.*
@@ -2377,7 +2438,7 @@ class Store:
         clean = (code or "").strip()
         if not clean:
             return None
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM referrers WHERE code = ? AND status = 'active'",
                 (clean,),
@@ -2385,7 +2446,7 @@ class Store:
         return self._row_to_dict(row)
 
     def get_referrer(self, referrer_id: int) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute("SELECT * FROM referrers WHERE id = ?", (int(referrer_id),)).fetchone()
         return self._row_to_dict(row)
 
@@ -2406,7 +2467,7 @@ class Store:
         if not clauses:
             return 0
         where_clause = " OR ".join(clauses)
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 f"""
                 SELECT COUNT(*) AS c FROM orders
@@ -2926,7 +2987,7 @@ class Store:
         clean_email = (email or "").strip().lower()
         if not clean_email:
             return []
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT p.*, o.customer_email, o.public_id AS order_public_id, o.meta_json AS order_meta
@@ -3064,12 +3125,12 @@ class Store:
         return self._row_to_dict(row) or {}
 
     def get_awg_slot(self, slot_id: int) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute("SELECT * FROM awg_slots WHERE id = ?", (int(slot_id),)).fetchone()
         return self._row_to_dict(row)
 
     def get_awg_slot_by_index(self, profile_public_id: str, slot_index: int, server_code: str | None = None) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             if server_code:
                 row = conn.execute(
                     "SELECT * FROM awg_slots WHERE profile_public_id = ? AND slot_index = ? AND server_code = ?",
@@ -3084,12 +3145,12 @@ class Store:
 
     def get_awg_slot_by_public_key(self, public_key: str) -> dict[str, Any] | None:
         clean_key = (public_key or "").strip()
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute("SELECT * FROM awg_slots WHERE public_key = ?", (clean_key,)).fetchone()
         return self._row_to_dict(row)
 
     def list_awg_slots(self, profile_public_id: str, active_only: bool = False) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             if active_only:
                 rows = conn.execute(
                     "SELECT * FROM awg_slots WHERE profile_public_id = ? AND enabled = 1 ORDER BY slot_index ASC",
@@ -3118,7 +3179,7 @@ class Store:
         Does NOT mask exceptions: on failure raises DatabaseQueryError.
         """
         try:
-            with self._connect() as conn:
+            with self.read_connection() as conn:
                 if server_code:
                     code = server_code.lower().strip()
                     rows = conn.execute(
@@ -3134,7 +3195,7 @@ class Store:
             raise DatabaseQueryError(f"Database query failed in list_active_awg_slots: {exc}") from exc
 
     def list_all_awg_slot_configs(self, profile_public_id: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM awg_slots WHERE profile_public_id = ? ORDER BY slot_index ASC, server_code ASC",
                 (profile_public_id,),
@@ -3302,7 +3363,7 @@ class Store:
         return count
 
     def get_awg_profile_quota(self, profile_public_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 """
                 SELECT public_id, awg_quota_bytes, awg_used_bytes, awg_reset_at, expires_at, status

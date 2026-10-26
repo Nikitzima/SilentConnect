@@ -20,6 +20,11 @@ EXPORT_DIR = SOURCE_ROOT / "github_export"
 ROOT_FILES = [
     ".env.example",
     "README.md",
+    "README_RU.md",
+    "ARCHITECTURE.md",
+    "DEPLOYMENT.md",
+    "AMNEZIA_SLOTS.md",
+    "WHITELIST_SPEC.md",
     "LICENSE",
     ".gitignore",
 ]
@@ -65,7 +70,12 @@ FORBIDDEN_EXACT_FILENAMES = {
     "deploy_subjson_catalog.py", "deploy_ui_upgrade.py", "promote.sh", "demote.sh",
     "promote_fi.sh", "demote_fi.sh", "cf-failover-dns.sh", "live_audit_nl.py", "scan_fi.py",
     "apply_all_audit7_patches.py", "execute_deploy_nl.py", "pre_deploy_audit.py",
-    "restart_all_reconcilers.py", "sync_patch_to_nodes.py", "lookup_order.py",
+    "restart_all_reconcilers.py",
+    # Local diagnostic and temporary scripts
+    "apply_otvet9_docs.py", "compare_confs.py", "diagnose_handshake_fail.py",
+    "diagnose_pl_awg.py", "find_client_origin.py", "fix_md_diagrams.py",
+    "log_awg_packets.py", "test_http_download.py", "test_mermaid_gen.py",
+    "validate_diagrams.py", "validate_mermaid_overview.py", "sync_patch_to_nodes.py", "lookup_order.py",
     "get_annotations.py", "get_ci_details.py", "get_run_steps.py", "check_ci_status.py",
 }
 

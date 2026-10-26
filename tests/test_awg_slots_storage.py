@@ -387,7 +387,7 @@ class TestAwgSlotsStorage(unittest.TestCase):
         slot_nl = {"client_ip": "10.8.1.10", "private_key_enc": "privNL==", "preshared_key": "pskNL==", "server_code": "nl"}
         conf_nl = build_slot_conf(slot_nl, server_code="nl")
         self.assertIn("HeaderProtectionKey = MockHeaderProtectionKeyNL111111111111111111=", conf_nl)
-        self.assertIn("44121", conf_nl)
+        self.assertIn("Endpoint = warp.silentconnect.net:44121", conf_nl)
         self.assertIn("PublicKey = MockServerPublicKeyNL1111111111111111111111=", conf_nl)
         self.assertIn("ContentPaddingAddition = 10-100", conf_nl)
         self.assertIn("RandomTrailers = on", conf_nl)
@@ -396,7 +396,7 @@ class TestAwgSlotsStorage(unittest.TestCase):
         slot_pl = {"client_ip": "10.8.3.10", "private_key_enc": "privPL==", "preshared_key": "pskPL==", "server_code": "pl"}
         conf_pl = build_slot_conf(slot_pl, server_code="pl")
         self.assertIn("HeaderProtectionKey = CqymuFeL7ibiqrqIDF0jl3Mg1/vvl5Tmnqzl5C8IWhM=", conf_pl)
-        self.assertIn("44121", conf_pl)
+        self.assertIn("Endpoint = pl.silentconnect.net:44121", conf_pl)
         self.assertIn("PublicKey = bi1igMRahaWDgvo7ClePLOwnXYjhdo+7PMaswXVtlAs=", conf_pl)
         self.assertIn("S1 = 51", conf_pl)
         self.assertIn("ContentPaddingAddition = 10-100", conf_pl)
@@ -406,7 +406,7 @@ class TestAwgSlotsStorage(unittest.TestCase):
         slot_fi = {"client_ip": "10.8.2.10", "private_key_enc": "privFI==", "preshared_key": "pskFI==", "server_code": "fi"}
         conf_fi = build_slot_conf(slot_fi, server_code="fi")
         self.assertIn("HeaderProtectionKey = MockHeaderProtectionKeyDE222222222222222222=", conf_fi)
-        self.assertIn("49752", conf_fi)
+        self.assertIn("Endpoint = fi.silentconnect.net:49752", conf_fi)
         self.assertIn("PublicKey = MockServerPublicKeyDE3333333333333333333333=", conf_fi)
         self.assertIn("ContentPaddingAddition = 10-100", conf_fi)
         self.assertIn("RandomTrailers = on", conf_fi)
