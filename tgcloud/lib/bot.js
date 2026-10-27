@@ -2451,9 +2451,8 @@ export class ShopBot {
       }
     } catch (_) {}
     if (SETTINGS && SETTINGS.webPublicBaseUrl) {
-      try {
-        return new URL(SETTINGS.webPublicBaseUrl).hostname;
-      } catch (_) {}
+      const match = String(SETTINGS.webPublicBaseUrl).match(/^https?:\/\/([^/?#:]+)/i);
+      if (match && match[1]) return match[1];
     }
     return 'example.com';
   }
