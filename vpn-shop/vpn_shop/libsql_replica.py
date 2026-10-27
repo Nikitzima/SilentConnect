@@ -114,11 +114,28 @@ class LibsqlReplicaManager:
         self._lock = self._exec_lock
         self._last_sync_at = 0.0
         self._ro_local = threading.local()
-        self._conn = libsql.connect(
-            self._path,
-            sync_url=self._sync_url,
-            auth_token=self._auth_token,
-        )
+        try:
+            self._conn = libsql.connect(
+                self._path,
+                sync_url=self._sync_url,
+                auth_token=self._auth_token,
+            )
+        except Exception as e:
+            if "invalid local state" in str(e).lower():
+                import glob
+                LOGGER.warning("Corrupted or stale local replica detected for %s: %s. Re-bootstrapping clean replica...", self._path, e)
+                for f in glob.glob(f"{self._path}*"):
+                    try:
+                        os.remove(f)
+                    except OSError:
+                        pass
+                self._conn = libsql.connect(
+                    self._path,
+                    sync_url=self._sync_url,
+                    auth_token=self._auth_token,
+                )
+            else:
+                raise
         self.force_sync()
 
     def _get_ro_conn(self) -> sqlite3.Connection | None:
