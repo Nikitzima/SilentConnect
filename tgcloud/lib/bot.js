@@ -2445,31 +2445,31 @@ export class ShopBot {
 
 
   async showAdminFailover(chatId, { messageId = null } = {}) {
-    const baseDomain = process.env.BASE_DOMAIN || process.env.DOMAIN_MAIN || 'example.com';
+    const baseDomain = process.env.BASE_DOMAIN || process.env.DOMAIN_MAIN || (SETTINGS.webPublicBaseUrl ? new URL(SETTINGS.webPublicBaseUrl).hostname : 'example.com');
     const text = [
       '🚨 *Аварийный переезд кластера (Disaster Recovery)*\n',
       'Выберите целевой узел для переключения основных доменов:',
-      '• `${baseDomain}` (Магазин и витрина)',
-      '• `sub.${baseDomain}` (Подписки и кабинет)',
-      '• `edge.${baseDomain}` (Reality / gRPC / Hysteria)\n',
+      '• ' + baseDomain + ' (Магазин и витрина)',
+      '• sub.' + baseDomain + ' (Подписки и кабинет)',
+      '• edge.' + baseDomain + ' (Reality / gRPC / Hysteria)\n',
       '💡 *IP-адрес не захардкожен*: он динамически берётся из системной A-записи выбранной страны.',
     ].join('\n');
 
     const markup = kb([
-      [['🇵🇱 Польша (pl.${baseDomain})', 'admin:failover:confirm:pl']],
-      [['🇫🇮 Финляндия (fi.${baseDomain})', 'admin:failover:confirm:fi']],
-      [['🇳🇱 Нидерланды (nl.${baseDomain})', 'admin:failover:confirm:nl']],
+      [['🇵🇱 Польша (pl.' + baseDomain + ')', 'admin:failover:confirm:pl']],
+      [['🇫🇮 Финляндия (fi.' + baseDomain + ')', 'admin:failover:confirm:fi']],
+      [['🇳🇱 Нидерланды (nl.' + baseDomain + ')', 'admin:failover:confirm:nl']],
       [['« Назад в админ-меню', 'admin:menu']],
     ]);
     await this._renderOrEdit(chatId, text, { replyMarkup: markup, messageId });
   }
 
   async showAdminFailoverConfirm(chatId, countryCode, { messageId = null } = {}) {
-    const baseDomain = process.env.BASE_DOMAIN || process.env.DOMAIN_MAIN || 'example.com';
+    const baseDomain = process.env.BASE_DOMAIN || process.env.DOMAIN_MAIN || (SETTINGS.webPublicBaseUrl ? new URL(SETTINGS.webPublicBaseUrl).hostname : 'example.com');
     const countryMap = {
-      pl: { name: '🇵🇱 Польша', domain: 'pl.${baseDomain}' },
-      fi: { name: '🇫🇮 Финляндия', domain: 'fi.${baseDomain}' },
-      nl: { name: '🇳🇱 Нидерланды', domain: 'nl.${baseDomain}' },
+      pl: { name: '🇵🇱 Польша', domain: 'pl.' + baseDomain },
+      fi: { name: '🇫🇮 Финляндия', domain: 'fi.' + baseDomain },
+      nl: { name: '🇳🇱 Нидерланды', domain: 'nl.' + baseDomain },
     };
     const cinfo = countryMap[String(countryCode || '').toLowerCase()];
     if (!cinfo) {
@@ -2479,7 +2479,7 @@ export class ShopBot {
     // Resolve IP dynamically via DNS over HTTPS (Cloudflare 1.1.1.1)
     let resolvedIp = '';
     try {
-      const doh = await fetch(`https://cloudflare-dns.com/dns-query?name=${cinfo.domain}&type=A`, {
+      const doh = await fetch('https://cloudflare-dns.com/dns-query?name=' + encodeURIComponent(cinfo.domain) + '&type=A', {
         headers: { Accept: 'application/dns-json' },
       });
       const data = await doh.json();
@@ -2487,84 +2487,83 @@ export class ShopBot {
     } catch (_) {}
 
     if (!resolvedIp) {
-      // Fallback: system lookup or report
       resolvedIp = cinfo.domain;
     }
 
     const text = [
       '⚠️ *ПОДТВЕРЖДЕНИЕ АВАРИЙНОГО ПЕРЕЕЗДА*\n',
-      `Целевой узел: *${cinfo.name}*`,
-      `Системный домен: \`${cinfo.domain}\``,
-      `Определённый IP: \`${resolvedIp}\`\n`,
+      'Целевой узел: *' + cinfo.name + '*',
+      'Системный домен: ' + cinfo.domain + '',
+      'Определённый IP: ' + resolvedIp + '\n',
       'Все основные домены будут немедленно переключены в Cloudflare на этот IP со строгим флагом *DNS-Only ⚪* (proxied: false).',
       'Время распространения в глобальном DNS: ~60 секунд.\n',
       'Вы уверены, что хотите выполнить переключение?',
     ].join('\n');
 
     const markup = kb([
-      [[`💥 ДА, ПЕРЕКЛЮЧИТЬ НА ${countryCode.toUpperCase()}`, `admin:failover:apply:${countryCode}`, 'danger']],
+      [['💥 ДА, ПЕРЕКЛЮЧИТЬ НА ' + countryCode.toUpperCase(), 'admin:failover:apply:' + countryCode, 'danger']],
       [['❌ Отмена', 'admin:failover']],
     ]);
     await this._renderOrEdit(chatId, text, { replyMarkup: markup, messageId });
   }
 
   async executeAdminFailover(chatId, countryCode, { messageId = null } = {}) {
-    const baseDomain = process.env.BASE_DOMAIN || process.env.DOMAIN_MAIN || 'example.com';
+    const baseDomain = process.env.BASE_DOMAIN || process.env.DOMAIN_MAIN || (SETTINGS.webPublicBaseUrl ? new URL(SETTINGS.webPublicBaseUrl).hostname : 'example.com');
     const countryMap = {
-      pl: { name: '🇵🇱 Польша', domain: 'pl.${baseDomain}' },
-      fi: { name: '🇫🇮 Финляндия', domain: 'fi.${baseDomain}' },
-      nl: { name: '🇳🇱 Нидерланды', domain: 'nl.${baseDomain}' },
+      pl: { name: '🇵🇱 Польша', domain: 'pl.' + baseDomain },
+      fi: { name: '🇫🇮 Финляндия', domain: 'fi.' + baseDomain },
+      nl: { name: '🇳🇱 Нидерланды', domain: 'nl.' + baseDomain },
     };
     const cinfo = countryMap[String(countryCode || '').toLowerCase()];
     if (!cinfo) {
       return this.sendAdminMenu(chatId, { messageId });
     }
 
-    const cfToken = process.env.CF_API_TOKEN || process.env.CLOUDFLARE_API_TOKEN || '';
-    const cfZone = process.env.CF_ZONE_ID || process.env.CLOUDFLARE_ZONE_ID || '';
+    const cfToken = process.env.CF_API_TOKEN || process.env.CLOUDFLARE_API_TOKEN || SETTINGS.cfApiToken || '';
+    const cfZone = process.env.CF_ZONE_ID || process.env.CLOUDFLARE_ZONE_ID || SETTINGS.cfZoneId || '';
 
     try {
       // 1. Resolve target IP dynamically
-      const doh = await fetch(`https://cloudflare-dns.com/dns-query?name=${cinfo.domain}&type=A`, {
+      const doh = await fetch('https://cloudflare-dns.com/dns-query?name=' + encodeURIComponent(cinfo.domain) + '&type=A', {
         headers: { Accept: 'application/dns-json' },
       });
       const ddata = await doh.json();
       const targetIp = (ddata.Answer && ddata.Answer[0] && ddata.Answer[0].data) || '';
-      if (!targetIp) throw new Error(`Could not resolve IP for ${cinfo.domain}`);
+      if (!targetIp) throw new Error('Could not resolve IP for ' + cinfo.domain);
 
       // 2. Update each domain in Cloudflare
-      const domains = [baseDomain, 'sub.${baseDomain}', 'edge.${baseDomain}'];
+      const domains = [baseDomain, 'sub.' + baseDomain, 'edge.' + baseDomain];
       const updated = [];
 
       for (const d of domains) {
         // Find record ID
-        const sres = await fetch(`https://api.cloudflare.com/client/v4/zones/${cfZone}/dns_records?type=A&name=${d}`, {
-          headers: { Authorization: `Bearer ${cfToken}`, 'Content-Type': 'application/json' },
+        const sres = await fetch('https://api.cloudflare.com/client/v4/zones/' + encodeURIComponent(cfZone) + '/dns_records?type=A&name=' + encodeURIComponent(d), {
+          headers: { Authorization: 'Bearer ' + cfToken, 'Content-Type': 'application/json' },
         });
         const sdata = await sres.json();
-        if (!sdata.result || !sdata.result[0]) throw new Error(`Record for ${d} not found in Cloudflare`);
+        if (!sdata.result || !sdata.result[0]) throw new Error('Record for ' + d + ' not found in Cloudflare');
         const recId = sdata.result[0].id;
 
         // Update record with STRICT proxied: false
-        const ures = await fetch(`https://api.cloudflare.com/client/v4/zones/${cfZone}/dns_records/${recId}`, {
+        const ures = await fetch('https://api.cloudflare.com/client/v4/zones/' + encodeURIComponent(cfZone) + '/dns_records/' + encodeURIComponent(recId), {
           method: 'PUT',
-          headers: { Authorization: `Bearer ${cfToken}`, 'Content-Type': 'application/json' },
+          headers: { Authorization: 'Bearer ' + cfToken, 'Content-Type': 'application/json' },
           body: JSON.stringify({ type: 'A', name: d, content: targetIp, ttl: 60, proxied: false }),
         });
         const udata = await ures.json();
         if (!udata.success || udata.result?.proxied !== false) {
-          throw new Error(`Cloudflare update failed for ${d} or proxied violation`);
+          throw new Error('Cloudflare update failed for ' + d + ' or proxied violation');
         }
         updated.push({ domain: d, ip: targetIp });
       }
 
       const text = [
         '✅ *АВАРИЙНЫЙ ПЕРЕЕЗД УСПЕШНО ВЫПОЛНЕН!*\n',
-        `Кластер переведён на: *${cinfo.name}*`,
-        `Системный домен: \`${cinfo.domain}\``,
-        `Целевой IP: \`${targetIp}\`\n`,
+        'Кластер переведён на: *' + cinfo.name + '*',
+        'Системный домен: ' + cinfo.domain + '',
+        'Целевой IP: ' + targetIp + '\n',
         'Обновлённые A-записи (Cloudflare DNS-Only ⚪, TTL 60с):',
-        ...updated.map(r => `• \`${r.domain}\` -> \`${r.ip}\` (⚪)`),
+        ...updated.map(r => '• ' + r.domain + ' -> ' + r.ip + ' (⚪)'),
         '\nТрафик витрины, подписок и моста переведён.',
         'Резервный узел готов к приёму запросов.',
       ].join('\n');
@@ -2577,13 +2576,13 @@ export class ShopBot {
     } catch (err) {
       const text = [
         '❌ *ОШИБКА ПЕРЕКЛЮЧЕНИЯ DNS*\n',
-        `Не удалось переключить домены на \`${cinfo.domain}\`:`,
-        `\`${err.message || err}\`\n`,
+        'Не удалось переключить домены на ' + cinfo.domain + ':',
+        '' + (err.message || err) + '\n',
         'Проверьте наличие CF_API_TOKEN и CF_ZONE_ID.',
       ].join('\n');
 
       const markup = kb([
-        [['🔄 Попробовать снова', `admin:failover:confirm:${countryCode}`]],
+        [['🔄 Попробовать снова', 'admin:failover:confirm:' + countryCode]],
         [['« Назад', 'admin:failover']],
       ]);
       await this._renderOrEdit(chatId, text, { replyMarkup: markup, messageId });
