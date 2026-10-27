@@ -1558,7 +1558,7 @@ class Store:
         with self.read_connection() as conn:
             row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
         if row is None and self._replica_mgr is not None:
-            self._replica_mgr.force_sync()
+            self._replica_mgr.force_sync(min_interval=2.0)
             with self.read_connection() as conn:
                 row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
         return self._row_to_dict(row)
@@ -1587,7 +1587,7 @@ class Store:
                 if str(meta.get("platega_transaction_id") or "") == str(tx_id):
                     return d
         if not _retried and self._replica_mgr is not None:
-            self._replica_mgr.force_sync()
+            self._replica_mgr.force_sync(min_interval=2.0)
             return self.get_order_by_platega_tx_id(tx_id, _retried=True)
         return None
 
@@ -1615,7 +1615,7 @@ class Store:
                 if str(meta.get("digiseller_invoice_id") or "") == inv_str:
                     return d
         if not _retried and self._replica_mgr is not None:
-            self._replica_mgr.force_sync()
+            self._replica_mgr.force_sync(min_interval=2.0)
             return self.get_order_by_digiseller_invoice(invoice_id, _retried=True)
         return None
 
@@ -1628,7 +1628,7 @@ class Store:
             if row:
                 return self._row_to_dict(row)
         if not _retried and self._replica_mgr is not None:
-            self._replica_mgr.force_sync()
+            self._replica_mgr.force_sync(min_interval=2.0)
             return self.get_order_by_external_id(external_id, _retried=True)
         return None
 
@@ -1863,7 +1863,7 @@ class Store:
         with self.read_connection() as conn:
             row = conn.execute("SELECT * FROM profiles WHERE public_id = ?", (public_id_value,)).fetchone()
         if row is None and sync_on_miss and self._replica_mgr is not None:
-            self._replica_mgr.force_sync()
+            self._replica_mgr.force_sync(min_interval=2.0)
             with self.read_connection() as conn:
                 row = conn.execute("SELECT * FROM profiles WHERE public_id = ?", (public_id_value,)).fetchone()
         return self._row_to_dict(row)
@@ -1875,7 +1875,7 @@ class Store:
                 (xui_email,),
             ).fetchone()
         if row is None and sync_on_miss and self._replica_mgr is not None:
-            self._replica_mgr.force_sync()
+            self._replica_mgr.force_sync(min_interval=2.0)
             with self.read_connection() as conn:
                 row = conn.execute(
                     "SELECT * FROM profiles WHERE xui_email = ? ORDER BY id DESC LIMIT 1",

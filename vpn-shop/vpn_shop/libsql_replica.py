@@ -137,15 +137,22 @@ class LibsqlReplicaManager:
         except Exception:
             return None
 
-    def force_sync(self) -> None:
+    def force_sync(self, min_interval: float = 0.0) -> None:
         """Синхронизация локальной реплики с облаком Turso под выделенным _sync_lock."""
+        now = time.monotonic()
+        if min_interval > 0.0 and (now - self._last_sync_at) < min_interval:
+            return
         with self._sync_lock:
+            now = time.monotonic()
+            if min_interval > 0.0 and (now - self._last_sync_at) < min_interval:
+                return
             try:
                 with self._exec_lock:
                     self._conn.sync()
                 self._last_sync_at = time.monotonic()
             except Exception as exc:
                 LOGGER.warning("Turso force_sync failed: %s", exc)
+                self._last_sync_at = time.monotonic() - max(self._sync_interval - 300.0, 0.0)
 
     def sync_if_stale(self) -> None:
         """Неблокирующая фоновая проверка устаревания реплики."""

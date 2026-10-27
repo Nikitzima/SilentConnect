@@ -3,6 +3,8 @@ from __future__ import annotations
 import sqlite3
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -117,6 +119,23 @@ class LibsqlConnectionProxyTests(unittest.TestCase):
         mock_mgr._conn.commit.assert_called_once()
         mock_mgr.force_sync.assert_called_once()
         self.assertTrue(proxy._closed)
+
+    def test_force_sync_respects_min_interval_cooldown(self) -> None:
+        mgr = object.__new__(LibsqlReplicaManager)
+        mgr._sync_lock = threading.Lock()
+        mgr._exec_lock = threading.RLock()
+        mgr._sync_interval = 900.0
+        mgr._last_sync_at = time.monotonic()
+        mgr._conn = MagicMock()
+
+        # Immediate repeat force_sync with min_interval should NOT call conn.sync()
+        mgr.force_sync(min_interval=2.0)
+        mgr._conn.sync.assert_not_called()
+
+        # After cooldown passes, conn.sync() is called
+        mgr._last_sync_at = time.monotonic() - 3.0
+        mgr.force_sync(min_interval=2.0)
+        mgr._conn.sync.assert_called_once()
 
 
 class StoreReplicaReadRetryTests(unittest.TestCase):

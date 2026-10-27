@@ -92,9 +92,9 @@ flowchart TD
     CAD3 --> WEB3
     WEB3 --> DB3
 
-    DB1 <-->|"WAL replication (sync_if_stale 2.0s)"| TURSO
-    DB2 <-->|"WAL replication (sync_if_stale 2.0s)"| TURSO
-    DB3 <-->|"WAL replication (sync_if_stale 2.0s)"| TURSO
+    DB1 <-->|"WAL replication (sync_if_stale 900s)"| TURSO
+    DB2 <-->|"WAL replication (sync_if_stale 900s)"| TURSO
+    DB3 <-->|"WAL replication (sync_if_stale 900s)"| TURSO
 ```
 
 ### 2.1. The Concurrency and Latency Dilemma
@@ -127,26 +127,31 @@ SilentConnect resolves this dilemma via `LibsqlReplicaManager` and `LibsqlConnec
    - `self._sync_lock = threading.Lock()`: Guards network synchronization with Turso Cloud.
    - `self._exec_lock = threading.RLock()`: Guards SQL execution on the embedded connection.
 
-   The default staleness threshold is 2.0 seconds (`TURSO_SYNC_INTERVAL=2.0`). When `sync_if_stale()` is invoked:
+   The production staleness threshold is 900.0 seconds (`TURSO_SYNC_INTERVAL=900.0`), with background non-blocking execution and error backoff. When `sync_if_stale()` is invoked:
    ```python
    now = time.monotonic()
    if now - self._last_sync_at >= self._sync_interval:
        if self._sync_lock.acquire(blocking=False):
-           try:
-               if time.monotonic() - self._last_sync_at >= self._sync_interval:
-                   if self._exec_lock.acquire(blocking=False):
-                       try:
+           def _bg_sync():
+               try:
+                   if time.monotonic() - self._last_sync_at >= self._sync_interval:
+                       with self._exec_lock:
                            self._conn.sync()
-                           self._last_sync_at = time.monotonic()
-                       finally:
-                           self._exec_lock.release()
-           finally:
-               self._sync_lock.release()
+                       self._last_sync_at = time.monotonic()
+               except Exception as exc:
+                   LOGGER.warning("Turso sync_if_stale background sync failed: %s", exc)
+                   self._last_sync_at = time.monotonic() - max(self._sync_interval - 300.0, 0.0)
+               finally:
+                   self._sync_lock.release()
+           threading.Thread(target=_bg_sync, daemon=True, name="turso-stale-syncer").start()
    ```
-   Because both locks are acquired with `blocking=False`, concurrent read queries **never block** waiting for network I/O. If another thread is actively pulling WAL frames from Turso Cloud, incoming reads seamlessly execute against the local NVMe replica.
+   Because both locks are acquired with `blocking=False` and synchronization runs in a detached daemon thread, concurrent read queries **never block** waiting for network I/O. If another thread is actively pulling WAL frames from Turso Cloud, incoming reads seamlessly execute against the local NVMe replica.
 
 4. **Atomic Write-Through Commits (`force_sync`)**:  
    When a write transaction (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`) executes through `LibsqlConnectionProxy`, the proxy sets an internal flag `self._wrote = True`. When the transaction commits, `commit()` automatically triggers `self._mgr.force_sync()`, committing the WAL frame to Turso Cloud under `_sync_lock`. This guarantees immediate consistency across the cluster.
+
+5. **Anti-Storm Read-Miss Cache-Aside (`force_sync(min_interval=2.0)`)**:  
+   When client endpoints query recently created orders or profiles that have not yet replicated locally, `Store.get_order` / `get_profile` perform a single targeted `force_sync(min_interval=2.0)`. The `min_interval=2.0` parameter guarantees that even during high-concurrency traffic bursts or scanner attacks with invalid IDs, the node will never initiate more than one sync every 2 seconds, shielding the cloud quota.
 
 5. **Process Isolation for Replica Files**:  
    To prevent operating system file lock contention (`sqlite3.OperationalError: database is locked`) when multiple services run on the same node, `vpn_shop/store.py` assigns an isolated replica database file to each daemon process:
@@ -313,7 +318,7 @@ stateDiagram-v2
 ### 4.1. Reconciler Operational Lifecycle
 
 - **Autonomous Pull Model**:  
-  `XuiReconciler.run_daemon()` executes a polling loop every 15.0 seconds (`interval_seconds=15.0`). Each node pulls directly from its local Turso replica, evaluating active client subscriptions against the local 3X-UI inbounds.
+  `XuiReconciler.run_daemon()` executes a polling loop every 60.0 seconds (`interval_seconds=60.0`). Each node pulls directly from its local Turso replica, evaluating active client subscriptions against the local 3X-UI inbounds.
 - **Instant Wake via `SIGUSR1` (< 100 ms)**:  
   When an order is completed or a profile is created in the web storefront or Telegram bot, waiting 15 seconds for polling would degrade user experience. The initiating process calls `notify_local_reconciler()`, which reads `/tmp/silentconnect_xui_reconcile.pid` and sends `signal.SIGUSR1` to the reconciler process. The daemon catches the signal, immediately wakes from `time.sleep()`, and completes reconciliation in under **100 ms**.
 - **Process Concurrency Lock**:  

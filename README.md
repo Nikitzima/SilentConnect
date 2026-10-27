@@ -120,18 +120,18 @@ flowchart TD
     CAD3 --> SUB3
 
     %% libSQL Embedded NVMe Synchronization
-    DB1 <-->|"sync_if_stale (2.0s) / force_sync"| TURSO
-    DB2 <-->|"sync_if_stale (2.0s) / force_sync"| TURSO
-    DB3 <-->|"sync_if_stale (2.0s) / force_sync"| TURSO
+    DB1 <-->|"sync_if_stale (900s) / force_sync"| TURSO
+    DB2 <-->|"sync_if_stale (900s) / force_sync"| TURSO
+    DB3 <-->|"sync_if_stale (900s) / force_sync"| TURSO
 
     %% Autonomous Reconciler Hooks
-    REC1 -.->|"pull 15s / SIGUSR1"| DB1
+    REC1 -.->|"pull 60s / SIGUSR1"| DB1
     REC1 -.->|"Hot RAM Reload"| VPN1
 
-    REC2 -.->|"pull 15s / SIGUSR1"| DB2
+    REC2 -.->|"pull 60s / SIGUSR1"| DB2
     REC2 -.->|"Hot RAM Reload"| VPN2
 
-    REC3 -.->|"pull 15s / SIGUSR1"| DB3
+    REC3 -.->|"pull 60s / SIGUSR1"| DB3
     REC3 -.->|"Hot RAM Reload"| VPN3
 
     BOT1 <--> DB1
