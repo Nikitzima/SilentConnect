@@ -118,6 +118,8 @@ class Settings:
     smtp_from_email: str
     cf_turnstile_site_key: str
     cf_turnstile_secret_key: str
+    cf_api_token: str = ""
+    cf_zone_id: str = ""
     secret_segment: str = "my-secret-sub"
     cf_turnstile_enabled: bool = True
     platega_merchant_id_bot: str = "00000000-0000-0000-0000-000000000001"
@@ -212,6 +214,8 @@ def load_settings(root_dir: Path | None = None, env_file: str | Path | None = No
         smtp_from_email=os.environ.get("SMTP_FROM_EMAIL", "SilentConnect <support@example.com>").strip(),
         cf_turnstile_site_key=os.environ.get("CF_TURNSTILE_SITE_KEY", "").strip(),
         cf_turnstile_secret_key=os.environ.get("CF_TURNSTILE_SECRET_KEY", "").strip(),
+        cf_api_token=os.environ.get("CF_API_TOKEN", os.environ.get("CLOUDFLARE_API_TOKEN", "")).strip(),
+        cf_zone_id=os.environ.get("CF_ZONE_ID", os.environ.get("CLOUDFLARE_ZONE_ID", "")).strip(),
         cf_turnstile_enabled=_bool("CF_TURNSTILE_ENABLED", True) and bool(os.environ.get("CF_TURNSTILE_SECRET_KEY", "").strip()),
         platega_merchant_id_bot=os.environ.get("PLATEGA_MERCHANT_ID_BOT", "00000000-0000-0000-0000-000000000001").strip(),
         platega_merchant_id_web=os.environ.get("PLATEGA_MERCHANT_ID_WEB", "00000000-0000-0000-0000-000000000002").strip(),

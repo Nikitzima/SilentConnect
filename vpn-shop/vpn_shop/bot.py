@@ -4204,6 +4204,7 @@ class ShopBot:
                     [("🔗 Публичная ссылка", "admin:public_link"), ("🚀 Поделиться WARP", "admin:share_warp", "primary")],
                     [("👤 Админ-конфиг", "admin:create_personal_config"), ("⏱ Тест 24ч", "admin:create_test_config")],
                     [("⚡ Универсальный тест", "admin:create_hybrid_test_config", "primary")],
+                    [("🚨 Аварийный переезд", "admin:failover", "danger")],
                 ]
             ),
             message_id=message_id,
@@ -4262,6 +4263,125 @@ class ShopBot:
                 ]
             ),
         )
+
+    def _get_cluster_base_domain(self) -> str:
+        base_sub = getattr(self.settings, "subscription_base_url", "") or ""
+        if "://" in base_sub:
+            host = base_sub.split("://", 1)[1].split("/", 1)[0].split(":", 1)[0]
+            if host.startswith("sub."):
+                return host[4:]
+            return host
+        return os.environ.get("BASE_DOMAIN", os.environ.get("DOMAIN_MAIN", "example.com"))
+
+    def show_admin_failover(self, chat_id: int | str, *, message_id: int | None = None) -> None:
+        base_d = self._get_cluster_base_domain()
+        lines = [
+            "🚨 *Аварийный переезд кластера (Disaster Recovery)*\n",
+            "Выберите целевой узел для переключения основных доменов:",
+            f"• `{base_d}` (Магазин и витрина)",
+            f"• `sub.{base_d}` (Подписки и кабинет)",
+            f"• `edge.{base_d}` (Reality / gRPC / Hysteria)\n",
+            "💡 *IP-адрес не захардкожен*: он динамически резолвится из системной A-записи выбранной страны.",
+        ]
+        buttons = [
+            [(f"🇵🇱 Польша (pl.{base_d})", "admin:failover:confirm:pl")],
+            [(f"🇫🇮 Финляндия (fi.{base_d})", "admin:failover:confirm:fi")],
+            [(f"🇳🇱 Нидерланды (nl.{base_d})", "admin:failover:confirm:nl")],
+            [("« Назад в админ-меню", "admin:menu")],
+        ]
+        self._render_or_edit(chat_id, "\n".join(lines), reply_markup=kb(buttons), message_id=message_id)
+
+    def show_admin_failover_confirm(self, chat_id: int | str, country_code: str, *, message_id: int | None = None) -> None:
+        from .cloudflare_dns import resolve_node_ip
+
+        base_d = self._get_cluster_base_domain()
+        country_map = {
+            "pl": ("🇵🇱 Польша", f"pl.{base_d}"),
+            "fi": ("🇫🇮 Финляндия", f"fi.{base_d}"),
+            "nl": ("🇳🇱 Нидерланды", f"nl.{base_d}"),
+        }
+        country_info = country_map.get(country_code.lower())
+        if not country_info:
+            self.send_admin_menu(int(chat_id), message_id=message_id)
+            return
+
+        country_name, node_domain = country_info
+        try:
+            resolved_ip = resolve_node_ip(node_domain)
+        except Exception as exc:
+            text = f"❌ Ошибка разрешения DNS для `{node_domain}`:\n`{exc}`"
+            buttons = [[("« Назад", "admin:failover")]]
+            self._render_or_edit(chat_id, text, reply_markup=kb(buttons), message_id=message_id)
+            return
+
+        lines = [
+            "⚠️ *ПОДТВЕРЖДЕНИЕ АВАРИЙНОГО ПЕРЕЕЗДА*\n",
+            f"Целевой узел: *{country_name}*",
+            f"Системный домен: `{node_domain}`",
+            f"Определённый IP: `{resolved_ip}`\n",
+            "Все основные домены будут немедленно переключены в Cloudflare на этот IP со строгим флагом *DNS-Only ⚪* (proxied: false).",
+            "Время распространения в глобальном DNS: ~60 секунд.\n",
+            "Вы уверены, что хотите выполнить переключение?",
+        ]
+        buttons = [
+            [(f"💥 ДА, ПЕРЕКЛЮЧИТЬ НА {country_code.upper()}", f"admin:failover:apply:{country_code}", "danger")],
+            [("❌ Отмена", "admin:failover")],
+        ]
+        self._render_or_edit(chat_id, "\n".join(lines), reply_markup=kb(buttons), message_id=message_id)
+
+    def execute_admin_failover(self, chat_id: int | str, country_code: str, *, message_id: int | None = None) -> None:
+        from .cloudflare_dns import CloudflareDnsClient, CloudflareDnsError
+
+        base_d = self._get_cluster_base_domain()
+        country_map = {
+            "pl": ("🇵🇱 Польша", f"pl.{base_d}"),
+            "fi": ("🇫🇮 Финляндия", f"fi.{base_d}"),
+            "nl": ("🇳🇱 Нидерланды", f"nl.{base_d}"),
+        }
+        country_info = country_map.get(country_code.lower())
+        if not country_info:
+            self.send_admin_menu(int(chat_id), message_id=message_id)
+            return
+
+        country_name, node_domain = country_info
+
+        cf_token = getattr(self.settings, "cf_api_token", "")
+        cf_zone = getattr(self.settings, "cf_zone_id", "")
+        client = CloudflareDnsClient(token=cf_token, zone_id=cf_zone)
+
+        try:
+            res = client.switch_cluster_dns(target_node_domain=node_domain)
+            lines = [
+                "✅ *АВАРИЙНЫЙ ПЕРЕЕЗД УСПЕШНО ВЫПОЛНЕН!*\n",
+                f"Целевой узел: *{country_name}*",
+                f"Системный домен: `{node_domain}`",
+                f"Целевой IP: `{res['target_ip']}`\n",
+                "Обновлённые A-записи (Cloudflare DNS-Only ⚪, TTL 60с):",
+            ]
+            for rec in res.get("updated", []):
+                lines.append(f"• `{rec['domain']}` -> `{rec['content']}` (⚪)")
+            lines.extend([
+                "\nТрафик витрины, подписок и моста переведён.",
+                "Резервный узел готов к приёму запросов.",
+            ])
+            buttons = [
+                [("🚨 Управление DR", "admin:failover")],
+                [("« В админ-меню", "admin:menu")],
+            ]
+            self._render_or_edit(chat_id, "\n".join(lines), reply_markup=kb(buttons), message_id=message_id)
+        except Exception as exc:
+            LOGGER.exception("Admin failover execution failed: %s", exc)
+            lines = [
+                "❌ *ОШИБКА ПЕРЕКЛЮЧЕНИЯ DNS*\n",
+                f"Не удалось переключить домены на `{node_domain}`:",
+                f"`{exc}`\n",
+                "Проверьте наличие CF_API_TOKEN и CF_ZONE_ID в окружении.",
+            ]
+            buttons = [
+                [("🔄 Попробовать снова", f"admin:failover:confirm:{country_code}")],
+                [("« Назад", "admin:failover")],
+            ]
+            self._render_or_edit(chat_id, "\n".join(lines), reply_markup=kb(buttons), message_id=message_id)
 
     def show_admin_traffic_top(self, chat_id: int | str) -> None:
         traffic_rows = self.provisioner.xui_db.list_client_traffic(limit=20)
@@ -5454,6 +5574,23 @@ class ShopBot:
             if data == "admin:server" and chat_id is not None and self.is_admin(user):
                 self.telegram.answer_callback_query(callback_id)
                 self.show_admin_server(chat_id)
+                return
+
+            if data == "admin:failover" and chat_id is not None and self.is_admin(user):
+                self.telegram.answer_callback_query(callback_id)
+                self.show_admin_failover(chat_id, message_id=message_id)
+                return
+
+            if data.startswith("admin:failover:confirm:") and chat_id is not None and self.is_admin(user):
+                self.telegram.answer_callback_query(callback_id)
+                country = data.split(":")[-1]
+                self.show_admin_failover_confirm(chat_id, country, message_id=message_id)
+                return
+
+            if data.startswith("admin:failover:apply:") and chat_id is not None and self.is_admin(user):
+                self.telegram.answer_callback_query(callback_id, text="Выполняем переключение DNS...")
+                country = data.split(":")[-1]
+                self.execute_admin_failover(chat_id, country, message_id=message_id)
                 return
 
             if data == "admin:traffic_top" and chat_id is not None and self.is_admin(user):
