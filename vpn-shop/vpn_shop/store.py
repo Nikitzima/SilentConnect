@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -448,7 +449,7 @@ class Store:
                 local_replica_path=str(replica_path),
                 sync_url=self._turso_url,
                 auth_token=self._turso_token,
-                auto_sync_interval=float(os.environ.get("TURSO_SYNC_INTERVAL", "900.0")),
+                auto_sync_interval=float(os.environ.get("TURSO_SYNC_INTERVAL", "60.0")),
             )
 
     def init(self) -> None:
@@ -1859,29 +1860,41 @@ class Store:
             ).fetchone()
         return self._row_to_dict(row)
 
-    def get_profile(self, public_id_value: str, sync_on_miss: bool = False) -> dict[str, Any] | None:
+    def get_profile(self, public_id_value: str, sync_on_miss: bool = True) -> dict[str, Any] | None:
         with self.read_connection() as conn:
             row = conn.execute("SELECT * FROM profiles WHERE public_id = ?", (public_id_value,)).fetchone()
-        if row is None and sync_on_miss and self._replica_mgr is not None:
+        dict_row = self._row_to_dict(row)
+        is_stale_or_expired = (
+            dict_row is not None
+            and (dict_row.get("status") == "expired" or (dict_row.get("expires_at") and dict_row["expires_at"] < time.time()))
+        )
+        if (dict_row is None or is_stale_or_expired) and sync_on_miss and self._replica_mgr is not None:
             self._replica_mgr.force_sync(min_interval=2.0)
             with self.read_connection() as conn:
                 row = conn.execute("SELECT * FROM profiles WHERE public_id = ?", (public_id_value,)).fetchone()
-        return self._row_to_dict(row)
+            dict_row = self._row_to_dict(row)
+        return dict_row
 
-    def get_profile_by_xui_email(self, xui_email: str, sync_on_miss: bool = False) -> dict[str, Any] | None:
+    def get_profile_by_xui_email(self, xui_email: str, sync_on_miss: bool = True) -> dict[str, Any] | None:
         with self.read_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM profiles WHERE xui_email = ? ORDER BY id DESC LIMIT 1",
                 (xui_email,),
             ).fetchone()
-        if row is None and sync_on_miss and self._replica_mgr is not None:
+        dict_row = self._row_to_dict(row)
+        is_stale_or_expired = (
+            dict_row is not None
+            and (dict_row.get("status") == "expired" or (dict_row.get("expires_at") and dict_row["expires_at"] < time.time()))
+        )
+        if (dict_row is None or is_stale_or_expired) and sync_on_miss and self._replica_mgr is not None:
             self._replica_mgr.force_sync(min_interval=2.0)
             with self.read_connection() as conn:
                 row = conn.execute(
                     "SELECT * FROM profiles WHERE xui_email = ? ORDER BY id DESC LIMIT 1",
                     (xui_email,),
                 ).fetchone()
-        return self._row_to_dict(row)
+            dict_row = self._row_to_dict(row)
+        return dict_row
 
     def get_profile_owner(self, profile_public_id: str) -> dict[str, Any] | None:
         with self.read_connection() as conn:

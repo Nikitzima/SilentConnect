@@ -190,6 +190,69 @@ class StoreReplicaReadRetryTests(unittest.TestCase):
             mock_replica.force_sync.assert_called_once()
             self.assertEqual(call_count, 2)
 
+    def test_get_profile_read_miss_triggers_sync(self) -> None:
+        store = Store(self.db_path)
+        store.init()
+
+        mock_replica = MagicMock()
+        store._replica_mgr = mock_replica
+
+        call_count = 0
+        from contextlib import contextmanager
+
+        @contextmanager
+        def mock_connect():
+            nonlocal call_count
+            call_count += 1
+            mock_conn = MagicMock()
+            mock_cur = MagicMock()
+            if call_count == 1:
+                mock_cur.fetchone.return_value = None
+            else:
+                cols = ["public_id", "status", "expires_at"]
+                mock_cur.fetchone.return_value = LibsqlRow(cols, ("prf_test_sync", "active", time.time() + 3600))
+            mock_conn.execute.return_value = mock_cur
+            yield mock_conn
+
+        with patch.object(store, "read_connection", side_effect=mock_connect):
+            prof = store.get_profile("prf_test_sync")
+            self.assertIsNotNone(prof)
+            self.assertEqual(prof["public_id"], "prf_test_sync")
+            mock_replica.force_sync.assert_called_once()
+            self.assertEqual(call_count, 2)
+
+    def test_get_profile_expired_triggers_renewal_sync(self) -> None:
+        store = Store(self.db_path)
+        store.init()
+
+        mock_replica = MagicMock()
+        store._replica_mgr = mock_replica
+
+        call_count = 0
+        from contextlib import contextmanager
+
+        @contextmanager
+        def mock_connect():
+            nonlocal call_count
+            call_count += 1
+            mock_conn = MagicMock()
+            mock_cur = MagicMock()
+            if call_count == 1:
+                cols = ["public_id", "status", "expires_at"]
+                mock_cur.fetchone.return_value = LibsqlRow(cols, ("prf_renewed", "expired", time.time() - 100))
+            else:
+                cols = ["public_id", "status", "expires_at"]
+                mock_cur.fetchone.return_value = LibsqlRow(cols, ("prf_renewed", "active", time.time() + 86400))
+            mock_conn.execute.return_value = mock_cur
+            yield mock_conn
+
+        with patch.object(store, "read_connection", side_effect=mock_connect):
+            prof = store.get_profile("prf_renewed")
+            self.assertIsNotNone(prof)
+            self.assertEqual(prof["status"], "active")
+            mock_replica.force_sync.assert_called_once()
+            self.assertEqual(call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

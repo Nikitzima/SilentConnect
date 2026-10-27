@@ -92,9 +92,9 @@ flowchart TD
     CAD3 --> WEB3
     WEB3 --> DB3
 
-    DB1 <-->|"WAL replication (sync_if_stale 900s)"| TURSO
-    DB2 <-->|"WAL replication (sync_if_stale 900s)"| TURSO
-    DB3 <-->|"WAL replication (sync_if_stale 900s)"| TURSO
+    DB1 <-->|"WAL replication (sync_if_stale 60s)"| TURSO
+    DB2 <-->|"WAL replication (sync_if_stale 60s)"| TURSO
+    DB3 <-->|"WAL replication (sync_if_stale 60s)"| TURSO
 ```
 
 ### 2.1. The Concurrency and Latency Dilemma
@@ -127,7 +127,7 @@ SilentConnect resolves this dilemma via `LibsqlReplicaManager` and `LibsqlConnec
    - `self._sync_lock = threading.Lock()`: Guards network synchronization with Turso Cloud.
    - `self._exec_lock = threading.RLock()`: Guards SQL execution on the embedded connection.
 
-   The production staleness threshold is 900.0 seconds (`TURSO_SYNC_INTERVAL=900.0`), with background non-blocking execution and error backoff. When `sync_if_stale()` is invoked:
+   The production staleness threshold is 60.0 seconds (`TURSO_SYNC_INTERVAL=60.0`), with background non-blocking execution and error backoff. When `sync_if_stale()` is invoked:
    ```python
    now = time.monotonic()
    if now - self._last_sync_at >= self._sync_interval:
