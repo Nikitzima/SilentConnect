@@ -2444,8 +2444,36 @@ export class ShopBot {
   }
 
 
+  _getBaseDomain() {
+    try {
+      if (typeof process !== 'undefined' && process.env && process.env.BASE_DOMAIN) {
+        return process.env.BASE_DOMAIN;
+      }
+    } catch (_) {}
+    if (SETTINGS && SETTINGS.webPublicBaseUrl) {
+      try {
+        return new URL(SETTINGS.webPublicBaseUrl).hostname;
+      } catch (_) {}
+    }
+    return 'example.com';
+  }
+
+  _getCfCredentials() {
+    let token = '';
+    let zone = '';
+    try {
+      if (typeof process !== 'undefined' && process.env) {
+        token = process.env.CF_API_TOKEN || process.env.CLOUDFLARE_API_TOKEN || '';
+        zone = process.env.CF_ZONE_ID || process.env.CLOUDFLARE_ZONE_ID || '';
+      }
+    } catch (_) {}
+    if (!token && SETTINGS && SETTINGS.cfApiToken) token = SETTINGS.cfApiToken;
+    if (!zone && SETTINGS && SETTINGS.cfZoneId) zone = SETTINGS.cfZoneId;
+    return { token, zone };
+  }
+
   async showAdminFailover(chatId, { messageId = null } = {}) {
-    const baseDomain = process.env.BASE_DOMAIN || process.env.DOMAIN_MAIN || (SETTINGS.webPublicBaseUrl ? new URL(SETTINGS.webPublicBaseUrl).hostname : 'example.com');
+    const baseDomain = this._getBaseDomain();
     const text = [
       '🚨 *Аварийный переезд кластера (Disaster Recovery)*\n',
       'Выберите целевой узел для переключения основных доменов:',
@@ -2465,7 +2493,7 @@ export class ShopBot {
   }
 
   async showAdminFailoverConfirm(chatId, countryCode, { messageId = null } = {}) {
-    const baseDomain = process.env.BASE_DOMAIN || process.env.DOMAIN_MAIN || (SETTINGS.webPublicBaseUrl ? new URL(SETTINGS.webPublicBaseUrl).hostname : 'example.com');
+    const baseDomain = this._getBaseDomain();
     const countryMap = {
       pl: { name: '🇵🇱 Польша', domain: 'pl.' + baseDomain },
       fi: { name: '🇫🇮 Финляндия', domain: 'fi.' + baseDomain },
@@ -2508,7 +2536,7 @@ export class ShopBot {
   }
 
   async executeAdminFailover(chatId, countryCode, { messageId = null } = {}) {
-    const baseDomain = process.env.BASE_DOMAIN || process.env.DOMAIN_MAIN || (SETTINGS.webPublicBaseUrl ? new URL(SETTINGS.webPublicBaseUrl).hostname : 'example.com');
+    const baseDomain = this._getBaseDomain();
     const countryMap = {
       pl: { name: '🇵🇱 Польша', domain: 'pl.' + baseDomain },
       fi: { name: '🇫🇮 Финляндия', domain: 'fi.' + baseDomain },
@@ -2519,8 +2547,7 @@ export class ShopBot {
       return this.sendAdminMenu(chatId, { messageId });
     }
 
-    const cfToken = process.env.CF_API_TOKEN || process.env.CLOUDFLARE_API_TOKEN || SETTINGS.cfApiToken || '';
-    const cfZone = process.env.CF_ZONE_ID || process.env.CLOUDFLARE_ZONE_ID || SETTINGS.cfZoneId || '';
+    const { token: cfToken, zone: cfZone } = this._getCfCredentials();
 
     try {
       // 1. Resolve target IP dynamically
