@@ -805,7 +805,7 @@ def _start_openflux_watchdog() -> None:
     def _loop() -> None:
         while True:
             try:
-                time.sleep(30)
+                time.sleep(300)
                 conn = get_store_db()
                 try:
                     from vpn_shop import openflux_manager
@@ -11248,13 +11248,13 @@ def _start_turso_sync_daemon() -> None:
         except Exception as e:
             LOGGER.debug("Initial checkout pre-warm exception: %s", e)
         while True:
-            time.sleep(15.0)
+            time.sleep(60.0)
             try:
                 wc = get_shop_checkout()
                 if wc and getattr(wc, "store", None):
                     mgr = getattr(wc.store, "_replica_mgr", None)
                     if mgr:
-                        mgr.force_sync()
+                        mgr.sync_if_stale()
             except Exception as e:
                 LOGGER.debug("Background Turso sync exception: %s", e)
 

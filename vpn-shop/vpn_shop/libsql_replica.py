@@ -161,6 +161,7 @@ class LibsqlReplicaManager:
                             self._last_sync_at = time.monotonic()
                     except Exception as exc:
                         LOGGER.warning("Turso sync_if_stale background sync failed: %s", exc)
+                        self._last_sync_at = time.monotonic() - max(self._sync_interval - 300.0, 0.0)
                     finally:
                         self._sync_lock.release()
 
