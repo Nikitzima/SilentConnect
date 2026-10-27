@@ -44,7 +44,7 @@ SERVERS: dict[str, dict[str, Any]] = {
         "container": os.environ.get("AWG_NL_CONTAINER", os.environ.get("AWG_CONTAINER_NAME", "amnezia-awg2")),
         "conf_path": "/opt/amnezia/awg/awg0.conf",
         "subnet": os.environ.get("AWG_NL_SUBNET", "10.8.1"),
-        "endpoint_host": os.environ.get("AWG_NL_ENDPOINT_HOST", "warp.silentconnect.net"),  # PLACEHOLDER
+        "endpoint_host": os.environ.get("AWG_NL_ENDPOINT_HOST", os.environ.get("AWG_NL_ENDPOINT", "warp.example.com")),
         "endpoint_port": os.environ.get("AWG_NL_ENDPOINT_PORT", "44121"),
         "allowed_ips_file": os.environ.get("AWG_ALLOWED_IPS_FILE", "/root/vpn-shop/awg/allowed-ips.txt"),
         "client_dns": os.environ.get("AWG_CLIENT_DNS", "1.1.1.1, 1.0.0.1"),
@@ -57,14 +57,14 @@ SERVERS: dict[str, dict[str, Any]] = {
         "flag": "🇫🇮",
         "mode": "ssh",
         "exec_mode": "ssh",
-        "host": os.environ.get("AWG_FI_HOST", os.environ.get("AWG_REMOTE_SSH_FI", os.environ.get("FI_STANDBY_IP", ""))),  # PLACEHOLDER
-        "ssh_host": os.environ.get("AWG_FI_HOST", os.environ.get("AWG_REMOTE_SSH_FI", os.environ.get("FI_STANDBY_IP", ""))),  # PLACEHOLDER
+        "host": os.environ.get("AWG_FI_HOST", os.environ.get("AWG_REMOTE_SSH_FI", os.environ.get("FI_STANDBY_IP", "198.51.100.1"))),
+        "ssh_host": os.environ.get("AWG_FI_HOST", os.environ.get("AWG_REMOTE_SSH_FI", os.environ.get("FI_STANDBY_IP", "198.51.100.1"))),
         "ssh_user": os.environ.get("AWG_FI_SSH_USER", "root"),
         "ssh_port": int(os.environ.get("AWG_FI_SSH_PORT", "22")),
         "container": os.environ.get("AWG_FI_CONTAINER", "amnezia-awg2"),
         "conf_path": "/opt/amnezia/awg/awg0.conf",
         "subnet": os.environ.get("AWG_FI_SUBNET", "10.8.2"),
-        "endpoint_host": os.environ.get("AWG_FI_ENDPOINT_HOST", os.environ.get("AWG_FI_ENDPOINT", "fi.silentconnect.net")),  # PLACEHOLDER
+        "endpoint_host": os.environ.get("AWG_FI_ENDPOINT_HOST", os.environ.get("AWG_FI_ENDPOINT", "fi.example.com")),
         "endpoint_port": os.environ.get("AWG_FI_ENDPOINT_PORT", "49752"),
         "allowed_ips_file": os.environ.get("AWG_FI_ALLOWED_IPS_FILE", os.environ.get("AWG_ALLOWED_IPS_FILE", "/root/vpn-shop/awg/allowed-ips.txt")),
         "client_dns": os.environ.get("AWG_CLIENT_DNS", "1.1.1.1, 1.0.0.1"),
@@ -77,14 +77,14 @@ SERVERS: dict[str, dict[str, Any]] = {
         "flag": "🇵🇱",
         "mode": "ssh",
         "exec_mode": "ssh",
-        "host": os.environ.get("AWG_PL_HOST", os.environ.get("AWG_REMOTE_SSH_PL", os.environ.get("PL_STANDBY_IP", ""))),  # PLACEHOLDER
-        "ssh_host": os.environ.get("AWG_PL_HOST", os.environ.get("AWG_REMOTE_SSH_PL", os.environ.get("PL_STANDBY_IP", ""))),  # PLACEHOLDER
+        "host": os.environ.get("AWG_PL_HOST", os.environ.get("AWG_REMOTE_SSH_PL", os.environ.get("PL_STANDBY_IP", "198.51.100.2"))),
+        "ssh_host": os.environ.get("AWG_PL_HOST", os.environ.get("AWG_REMOTE_SSH_PL", os.environ.get("PL_STANDBY_IP", "198.51.100.2"))),
         "ssh_user": os.environ.get("AWG_PL_SSH_USER", "root"),
         "ssh_port": int(os.environ.get("AWG_PL_SSH_PORT", "22")),
         "container": os.environ.get("AWG_PL_CONTAINER", "amnezia-awg2"),
         "conf_path": "/opt/amnezia/awg/awg0.conf",
         "subnet": os.environ.get("AWG_PL_SUBNET", "10.8.3"),
-        "endpoint_host": os.environ.get("AWG_PL_ENDPOINT_HOST", "pl.silentconnect.net"),  # PLACEHOLDER
+        "endpoint_host": os.environ.get("AWG_PL_ENDPOINT_HOST", os.environ.get("AWG_PL_ENDPOINT", "pl.example.com")),
         "endpoint_port": os.environ.get("AWG_PL_ENDPOINT_PORT", "44121"),
         "allowed_ips_file": os.environ.get("AWG_PL_ALLOWED_IPS_FILE", os.environ.get("AWG_ALLOWED_IPS_FILE", "/root/vpn-shop/awg/allowed-ips.txt")),
         "client_dns": os.environ.get("AWG_PL_CLIENT_DNS", os.environ.get("AWG_CLIENT_DNS", "1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001")),
@@ -331,17 +331,17 @@ def _get_server(server_code: str = "nl") -> dict[str, Any]:
         srv["mode"] = "ssh"
         srv["exec_mode"] = "ssh"
         if code == "nl":
-            srv["host"] = os.environ.get("AWG_NL_HOST", os.environ.get("NL_MASTER_IP", ""))  # PLACEHOLDER
+            srv["host"] = os.environ.get("AWG_NL_HOST", os.environ.get("NL_MASTER_IP", "198.51.100.0"))
             srv["ssh_host"] = srv["host"]
             srv["ssh_user"] = os.environ.get("AWG_NL_SSH_USER", "root")
             srv["ssh_port"] = int(os.environ.get("AWG_NL_SSH_PORT", "22"))
         elif code == "pl":
-            srv["host"] = os.environ.get("AWG_PL_HOST", os.environ.get("AWG_REMOTE_SSH_PL", os.environ.get("PL_STANDBY_IP", "")))  # PLACEHOLDER
+            srv["host"] = os.environ.get("AWG_PL_HOST", os.environ.get("AWG_REMOTE_SSH_PL", os.environ.get("PL_STANDBY_IP", "198.51.100.2")))
             srv["ssh_host"] = srv["host"]
             srv["ssh_user"] = os.environ.get("AWG_PL_SSH_USER", "root")
             srv["ssh_port"] = int(os.environ.get("AWG_PL_SSH_PORT", "22"))
         elif code == "fi":
-            srv["host"] = os.environ.get("AWG_FI_HOST", os.environ.get("AWG_REMOTE_SSH_FI", os.environ.get("FI_STANDBY_IP", "")))  # PLACEHOLDER
+            srv["host"] = os.environ.get("AWG_FI_HOST", os.environ.get("AWG_REMOTE_SSH_FI", os.environ.get("FI_STANDBY_IP", "198.51.100.1")))
             srv["ssh_host"] = srv["host"]
             srv["ssh_user"] = os.environ.get("AWG_FI_SSH_USER", "root")
             srv["ssh_port"] = int(os.environ.get("AWG_FI_SSH_PORT", "22"))

@@ -70,7 +70,7 @@ H4 = 4
         self.assertTrue(row_nl["tunnel_ip"].startswith("10.8.1."))
 
         conf_nl = am.build_conf(test_sid_nl, server_code="nl")
-        self.assertIn("warp.example.com:44121", conf_nl)
+        self.assertIn(f"{am.SERVERS['nl']['endpoint_host']}:44121", conf_nl)
         self.assertIn("Address = 10.8.1.", conf_nl)
         self.assertIn("Jc = 4", conf_nl)
         self.assertIn("H1 = 1", conf_nl)
@@ -83,7 +83,7 @@ H4 = 4
         self.assertTrue(row_fi["tunnel_ip"].startswith("10.8.2."))
 
         conf_fi = am.build_conf(test_sid_fi, server_code="fi")
-        self.assertIn("fi.example.com:49752", conf_fi)
+        self.assertIn(f"{am.SERVERS['fi']['endpoint_host']}:49752", conf_fi)
         self.assertIn("Address = 10.8.2.", conf_fi)
         self.assertIn("Jc = 4", conf_fi)
         self.assertIn("H1 = 1", conf_fi)
