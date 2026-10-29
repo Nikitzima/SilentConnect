@@ -86,6 +86,18 @@ ALLOWED_EXEMPT_NAMES = {
     "README.md", "LICENSE", "SILENTCONNECT_IMAGE_PROMPTS.txt",
 }
 
+ALLOWED_PUBLIC_SCRIPTS = {
+    "Caddyfile.fi", "assemble_github_export.py", "backup_fi.sh", "backup_nl.sh",
+    "build_audit_zip.py", "cluster_node_tool.py", "digiseller_tool.py", "failback_merge.py",
+    "fi_xray_config.json", "git_pre_commit.py", "git_pre_push.py", "litestream_fi.yml",
+    "litestream_pl.yml", "local_xray_config.json", "lookup_user.py", "patch_config.py",
+    "provision_openflux_pool.py", "security_audit_scanner.py", "set_quiet_logging_mode.py",
+    "socks_connect.py", "sync_env_keys.py", "test_3xui.py", "test_failback_merge.py",
+    "test_failback_merge_stress.py", "test_http_login.py", "test_lease.py", "test_nl_xui.py",
+    "test_outage_simulation.py", "test_pl_fi_http.py", "test_quiesce_live.py",
+    "vpn-shop-silentconnect.service", "vpn-shop-web.service",
+}
+
 
 def is_file_allowed(path: Path) -> bool:
     name = path.name
@@ -93,6 +105,9 @@ def is_file_allowed(path: Path) -> bool:
 
     if name in ALLOWED_EXEMPT_NAMES or name.endswith(".example"):
         return True
+
+    if "scripts" in path.parts and name not in ALLOWED_PUBLIC_SCRIPTS:
+        return False
 
     if name in FORBIDDEN_EXACT_FILENAMES:
         return False

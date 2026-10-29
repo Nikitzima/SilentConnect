@@ -11,6 +11,8 @@ ExecStart=/usr/bin/python3 /root/subjson-service/app.py
 Restart=always
 RestartSec=3
 User=root
+LimitNOFILE=65535
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

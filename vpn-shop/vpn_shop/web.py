@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 import html
 import json
 import logging
@@ -100,6 +101,31 @@ AWG_31_SERVER_DEFAULTS: dict[str, dict[str, str]] = {
         "endpoint_port": "44121",
         "server_pubkey": "MockServerPublicKeyNL1111111111111111111111=",
     },
+    "de": {
+        "Jc": "5",
+        "Jmin": "10",
+        "Jmax": "50",
+        "S1": "51",
+        "S2": "30",
+        "S3": "34",
+        "S4": "12",
+        "H1": "1",
+        "H2": "2",
+        "H3": "3",
+        "H4": "4",
+        "HeaderProtectionKey": "MockHeaderProtectionKeyNL111111111111111111=",
+        "ContentPaddingAddition": "10-100",
+        "RekeyAfterTime": "100-120",
+        "RekeyTimeout": "3-7",
+        "RejectAfterTime": "150-180",
+        "KeepaliveTimeout": "5-15",
+        "MaxHandshakeAttempts": "15-20",
+        "RandomTrailers": "on",
+        "DisableCookies": "on",
+        "endpoint_host": "de.silentconnect.net",  # PLACEHOLDER
+        "endpoint_port": "44121",
+        "server_pubkey": "MockServerPublicKeyFI2222222222222222222222=",
+    },
     "pl": {
         "Jc": "5",
         "Jmin": "10",
@@ -112,7 +138,7 @@ AWG_31_SERVER_DEFAULTS: dict[str, dict[str, str]] = {
         "H2": "2",
         "H3": "3",
         "H4": "4",
-        "HeaderProtectionKey": "CqymuFeL7ibiqrqIDF0jl3Mg1/vvl5Tmnqzl5C8IWhM=",
+        "HeaderProtectionKey": "MockHeaderProtectionKeyNL111111111111111111=",
         "ContentPaddingAddition": "10-100",
         "RekeyAfterTime": "100-120",
         "RekeyTimeout": "3-7",
@@ -121,9 +147,9 @@ AWG_31_SERVER_DEFAULTS: dict[str, dict[str, str]] = {
         "MaxHandshakeAttempts": "15-20",
         "RandomTrailers": "on",
         "DisableCookies": "on",
-        "endpoint_host": "pl.silentconnect.net",  # PLACEHOLDER
+        "endpoint_host": "de.silentconnect.net",  # PLACEHOLDER
         "endpoint_port": "44121",
-        "server_pubkey": "bi1igMRahaWDgvo7ClePLOwnXYjhdo+7PMaswXVtlAs=",
+        "server_pubkey": "MockServerPublicKeyFI2222222222222222222222=",
     },
     "fi": {
         "Jc": "5",
@@ -146,7 +172,7 @@ AWG_31_SERVER_DEFAULTS: dict[str, dict[str, str]] = {
         "MaxHandshakeAttempts": "15-20",
         "RandomTrailers": "on",
         "DisableCookies": "on",
-        "endpoint_host": "fi.silentconnect.net",  # PLACEHOLDER
+        "endpoint_host": "fi.silentconnect.net",  # PLACEHOLDER  # PLACEHOLDER
         "endpoint_port": "49752",
         "server_pubkey": "MockServerPublicKeyDE3333333333333333333333=",
     },
@@ -457,10 +483,10 @@ AWG_SLOT_MODAL_AND_JS = """
           </label>
           <label class="awg-country-option" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--glass-border); border-radius: 8px; cursor: pointer;">
             <div style="display: flex; align-items: center; gap: 10px;">
-              <input type="radio" name="awg_target_country" value="pl" style="accent-color: #38bdf8;">
-              <span style="font-weight: 600; color: #fff;">🇵🇱 Польша (Варшава)</span>
+              <input type="radio" name="awg_target_country" value="de" style="accent-color: #38bdf8;">
+              <span style="font-weight: 600; color: #fff;">🇩🇪 Германия (Франкфурт)</span>
             </div>
-            <span class="awg-ping-badge" id="awg-ping-pl" style="font-size: 11px; color: #34d399; font-weight: 600; background: rgba(52,211,153,0.12); padding: 2px 6px; border-radius: 4px;">~45 мс</span>
+            <span class="awg-ping-badge" id="awg-ping-de" style="font-size: 11px; color: #34d399; font-weight: 600; background: rgba(52,211,153,0.12); padding: 2px 6px; border-radius: 4px;">~40 мс</span>
           </label>
           <label class="awg-country-option" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--glass-border); border-radius: 8px; cursor: pointer;">
             <div style="display: flex; align-items: center; gap: 10px;">
@@ -629,14 +655,14 @@ function measureAwgPings(isUserClick) {
       var jitter = (Math.floor(Math.random() * 5) - 2); // -2..+2 ms
       var nlPing = Math.max(15, Math.min(180, baseWirePing + jitter));
 
-      var plDelta = (data && data.pings && data.pings.pl) ? Math.max(8, Math.min(25, Math.round(data.pings.pl * 0.35))) : 11;
+      var deDelta = (data && data.pings && data.pings.de) ? Math.max(6, Math.min(20, Math.round(data.pings.de * 0.30))) : 8;
       var fiDelta = (data && data.pings && data.pings.fi) ? Math.max(10, Math.min(30, Math.round(data.pings.fi * 0.40))) : 14;
 
-      var plPing = nlPing + plDelta + (Math.floor(Math.random() * 3) - 1);
+      var dePing = nlPing + deDelta + (Math.floor(Math.random() * 3) - 1);
       var fiPing = nlPing + fiDelta + (Math.floor(Math.random() * 3) - 1);
 
       updatePingBadge('awg-ping-nl', nlPing);
-      updatePingBadge('awg-ping-pl', plPing);
+      updatePingBadge('awg-ping-de', dePing);
       updatePingBadge('awg-ping-fi', fiPing);
     })
     .catch(function(err) {
@@ -952,7 +978,7 @@ class WebCheckout:
                 LOGGER.exception("Failed to create Platega payment URL for web order %s", order["public_id"])
         return ""
 
-    def handle_platega_callback(self, data: dict[str, Any], raw_body: bytes = b"") -> dict[str, Any]:
+    def handle_platega_callback(self, data: dict[str, Any], raw_body: bytes = b"") -> tuple[dict[str, Any], int]:
         status = str(data.get("status") or "").strip().upper()
         tx_id = str(data.get("id") or data.get("transactionId") or "").strip()
         raw_amount = data.get("amount") if data.get("amount") is not None else (data.get("paymentDetails") or {}).get("amount")
@@ -973,10 +999,16 @@ class WebCheckout:
 
         if not order:
             LOGGER.warning("Platega callback order not found: hint=%r tx_id=%r", order_id_hint, tx_id)
-            return {"status": "error", "message": "order_not_found"}
+            return {"status": "error", "message": "order_not_found"}, 404
 
         order_public_id = str(order["public_id"])
-        event_id = f"{tx_id}:{status}" if tx_id else f"{order_public_id}:{status}"
+        if not tx_id:
+            tx_id = str((order.get("meta_json") or {}).get("platega_transaction_id") or "").strip()
+        if not tx_id:
+            LOGGER.error("Platega callback missing transaction ID for order %s", order_public_id)
+            return {"status": "error", "message": "missing_transaction_id"}, 400
+
+        event_id = f"{tx_id}:{status}"
 
         payload_sha256 = hashlib.sha256(raw_body).hexdigest() if raw_body else None
         reserved = self.store.record_webhook_event(
@@ -988,9 +1020,42 @@ class WebCheckout:
         )
         if not reserved:
             LOGGER.info("Platega webhook event %s already processed or duplicate", event_id)
-            return {"status": "ok", "message": "duplicate_ignored"}
+            return {"status": "ok", "message": "duplicate_ignored"}, 200
 
         try:
+            # Active fail-closed verification of transaction status via Platega API if configured
+            is_conf = getattr(self.platega, "is_configured", False) if hasattr(self, "platega") and self.platega else False
+            if callable(is_conf):
+                is_conf = is_conf()
+            if self.platega and is_conf:
+                try:
+                    tx_info = self.platega.get_transaction_status(tx_id, is_bot=False)
+                except Exception as verify_err:
+                    LOGGER.error("Platega API unreachable during webhook verification for %s: %s", tx_id, verify_err)
+                    self.store.finish_webhook_event("platega", event_id, ok=False, error=f"api_unreachable: {verify_err}")
+                    return {"status": "error", "message": "verification_unavailable"}, 503
+
+                api_status = str(tx_info.get("status") or "").upper()
+                api_payload = str(tx_info.get("payload") or "").strip()
+                if api_payload and api_payload != order_public_id:
+                    err_msg = f"Platega payload mismatch: API={api_payload} != order={order_public_id}"
+                    LOGGER.error("Platega callback for order %s: %s", order_public_id, err_msg)
+                    self.store.finish_webhook_event("platega", event_id, ok=False, error=err_msg)
+                    return {"status": "error", "message": "payload_mismatch"}, 400
+
+                api_amt_raw = tx_info.get("amount") if tx_info.get("amount") is not None else (tx_info.get("paymentDetails") or {}).get("amount")
+                if api_amt_raw is not None:
+                    try:
+                        amount = float(api_amt_raw)
+                    except (ValueError, TypeError):
+                        pass
+
+                if status == "CONFIRMED" and api_status not in ("CONFIRMED", "SUCCESS", "PAID"):
+                    err_msg = f"Platega API verification returned non-confirmed status: {api_status}"
+                    LOGGER.error("Platega callback for order %s: %s", order_public_id, err_msg)
+                    self.store.finish_webhook_event("platega", event_id, ok=False, error=err_msg)
+                    return {"status": "error", "message": "unconfirmed_status"}, 400
+
             is_refund_status = status.upper() in ("REFUNDED", "CHARGEBACK", "REVERSED")
             if is_refund_status and order.get("status") == "delivered":
                 self.store.update_order_status(order_public_id, "cancelled", closed=True, actor="refund")
@@ -1000,20 +1065,27 @@ class WebCheckout:
                 elif order.get("provisioned_profile_id"):
                     self.revoke_profile_access(str(order["provisioned_profile_id"]))
                 self.store.finish_webhook_event("platega", event_id, ok=True)
-                return {"status": "ok", "message": "refund_revoked"}
+                return {"status": "ok", "message": "refund_revoked"}, 200
 
             if order.get("status") == "delivered":
                 LOGGER.info("Order %s already delivered, acknowledging callback", order_public_id)
                 self.store.finish_webhook_event("platega", event_id, ok=True)
-                return {"status": "ok", "message": "already_delivered"}
+                return {"status": "ok", "message": "already_delivered"}, 200
 
             if status == "CONFIRMED":
+                # Verify payload match if passed in callback
+                if order_id_hint and order_id_hint != order_public_id:
+                    err_msg = f"Platega payload mismatch: callback={order_id_hint} != order={order_public_id}"
+                    LOGGER.error("Platega callback for order %s: %s", order_public_id, err_msg)
+                    self.store.finish_webhook_event("platega", event_id, ok=False, error=err_msg)
+                    return {"status": "error", "message": "payload_mismatch"}, 400
+
                 expected_rub = int(order.get("final_price_rub") or 0)
                 if expected_rub > 0 and amount < (expected_rub - 0.5):
                     err_msg = f"Amount mismatch: received {amount}, expected {expected_rub}"
                     LOGGER.error("Platega callback for order %s: %s", order_public_id, err_msg)
                     self.store.finish_webhook_event("platega", event_id, ok=False, error=err_msg)
-                    return {"status": "error", "message": "amount_too_low"}
+                    return {"status": "error", "message": "amount_too_low"}, 400
 
                 # Currency verification
                 currency = str(data.get("currency") or (data.get("paymentDetails") or {}).get("currency") or "RUB").upper()
@@ -1021,28 +1093,7 @@ class WebCheckout:
                     err_msg = f"Currency mismatch: received {currency}, expected RUB"
                     LOGGER.error("Platega callback for order %s: %s", order_public_id, err_msg)
                     self.store.finish_webhook_event("platega", event_id, ok=False, error=err_msg)
-                    return {"status": "error", "message": "invalid_currency"}
-
-                # Active verification of transaction status via Platega API if configured
-                is_conf = getattr(self.platega, "is_configured", False) if hasattr(self, "platega") and self.platega else False
-                if callable(is_conf):
-                    is_conf = is_conf()
-                if tx_id and is_conf:
-                    try:
-                        tx_info = self.platega.get_transaction_status(tx_id, is_bot=False)
-                        api_status = str(tx_info.get("status") or "").upper()
-                        if api_status and api_status not in ("CONFIRMED", "SUCCESS", "PAID"):
-                            err_msg = f"Platega API verification returned non-confirmed status: {api_status}"
-                            LOGGER.error("Platega callback for order %s: %s", order_public_id, err_msg)
-                            self.store.finish_webhook_event("platega", event_id, ok=False, error=err_msg)
-                            return {"status": "error", "message": "unconfirmed_status"}
-                    except Exception as verify_err:
-                        LOGGER.warning("Could not verify Platega transaction %s via API: %s", tx_id, verify_err)
-
-                if order.get("status") == "delivered":
-                    self.store.finish_webhook_event("platega", event_id, ok=True)
-                    LOGGER.info("Order %s already delivered, acknowledging duplicate Platega callback", order_public_id)
-                    return {"status": "ok", "message": "already_delivered", "order_id": order_public_id}
+                    return {"status": "error", "message": "invalid_currency"}, 400
 
                 meta = dict(order.get("meta_json") or {})
                 if tx_id:
@@ -1054,7 +1105,7 @@ class WebCheckout:
                 self.bot.complete_order(order, actor="platega_webhook")
                 self.store.finish_webhook_event("platega", event_id, ok=True)
                 LOGGER.info("Order %s confirmed and delivered via Platega callback", order_public_id)
-                return {"status": "ok", "message": "confirmed", "order_id": order_public_id}
+                return {"status": "ok", "message": "confirmed", "order_id": order_public_id}, 200
 
             elif status in ("CANCELED", "CANCELLED", "FAILED"):
                 meta = dict(order.get("meta_json") or {})
@@ -1067,11 +1118,11 @@ class WebCheckout:
                         LOGGER.info("Order %s already in terminal state or cannot cancel: %s", order_public_id, err)
                 self.store.finish_webhook_event("platega", event_id, ok=True)
                 LOGGER.info("Order %s marked as %s in Platega and updated in store", order_public_id, status)
-                return {"status": "ok", "message": status.lower(), "order_id": order_public_id}
+                return {"status": "ok", "message": status.lower(), "order_id": order_public_id}, 200
 
             else:
                 self.store.finish_webhook_event("platega", event_id, ok=True)
-                return {"status": "ok", "message": f"status_{status.lower()}", "order_id": order_public_id}
+                return {"status": "ok", "message": f"status_{status.lower()}", "order_id": order_public_id}, 200
         except Exception as exc:
             LOGGER.exception("Error processing Platega webhook for order %s: %s", order_public_id, exc)
             self.store.finish_webhook_event("platega", event_id, ok=False, error=str(exc))
@@ -1204,6 +1255,16 @@ class WebCheckout:
                             if retval is not None and int(retval) != 0:
                                 self.store.finish_webhook_event("digiseller", event_id, ok=False, error="Invalid invoice in refund check")
                                 return {"status": "error", "message": "invalid_refund_invoice"}, 400
+                            content = raw_check.get("content") if isinstance(raw_check.get("content"), dict) else raw_check
+                            invoice_state = content.get("invoice_state") if isinstance(content, dict) else None
+                            if invoice_state is not None:
+                                try:
+                                    if int(invoice_state) not in (2, 4, 5, 35):
+                                        LOGGER.warning("Digiseller refund rejected: invoice_state %s is not in (2, 4, 5, 35) for invoice %s", invoice_state, invoice_id)
+                                        self.store.finish_webhook_event("digiseller", event_id, ok=False, error="invalid_refund_invoice_state")
+                                        return {"status": "error", "message": "invalid_refund_invoice_state"}, 400
+                                except (ValueError, TypeError):
+                                    pass
                         except Exception as check_err:
                             LOGGER.warning("Could not verify invoice %s with Digiseller during refund: %s", invoice_id, check_err)
                     self.store.record_refund_tombstone("digiseller", invoice_id)
@@ -2251,7 +2312,7 @@ class WebCheckout:
 
     def get_profile_by_any_sub_id(self, sub_id: str) -> dict[str, Any] | None:
         clean = str(sub_id or "").strip()
-        if not clean:
+        if not clean or clean.startswith(("anon-", "ord_")):
             return None
         prof = self.store.get_profile(clean)
         if prof:
@@ -2280,10 +2341,27 @@ class WebCheckout:
             return prof
         return None
 
+    def assert_profile_awg_eligible(self, profile: dict[str, Any]) -> None:
+        """Assert profile is eligible for AmneziaWG: status == 'active', not expired, within traffic quota."""
+        if not profile or profile.get("status") != "active":
+            raise ValueError("Профиль не активен. Доступ к конфигурациям AmneziaWG запрещен.")
+        expires_at = int(profile.get("expires_at") or 0)
+        if 0 < expires_at <= now_ts():
+            raise ValueError("Срок действия подписки истек.")
+        quota_eval = evaluate_profile_quota(str(profile["public_id"]), self.store)
+        if quota_eval.is_exceeded:
+            raise ValueError("Лимит трафика AmneziaWG исчерпан для текущего расчетного периода.")
+
     def ensure_awg_slot(self, profile_public_id: str, slot_index: int, default_label: str = "", server_code: str | None = None, enabled: bool = True) -> dict[str, Any]:
         idx = int(slot_index)
         if idx < 1:
             raise ValueError(f"Slot index must be at least 1 (got {idx})")
+
+        prof = self.store.get_profile(profile_public_id)
+        if not prof:
+            raise KeyError(f"Profile '{profile_public_id}' not found")
+        self.assert_profile_awg_eligible(prof)
+
         if server_code is None:
             existing = self.store.get_awg_slot_by_index(profile_public_id, idx)
             if existing:
@@ -2367,7 +2445,7 @@ class WebCheckout:
             return existing
         raise RuntimeError("No free AWG IP available")
 
-    _PING_CACHE: dict[str, Any] = {"timestamp": 0.0, "data": {"nl": 5, "pl": 32, "fi": 35}}
+    _PING_CACHE: dict[str, Any] = {"timestamp": 0.0, "data": {"nl": 5, "de": 25, "fi": 35}}
 
     @classmethod
     def get_cluster_tcp_pings(cls) -> dict[str, int]:
@@ -2376,7 +2454,7 @@ class WebCheckout:
             return dict(cls._PING_CACHE["data"])
         targets = {
             "nl": ("127.0.0.1", 4430),
-            "pl": (os.environ.get("AWG_PL_HOST", "pl.silentconnect.net"), 443),  # PLACEHOLDER
+            "de": (os.environ.get("AWG_DE_HOST", "de.silentconnect.net"), 443),  # PLACEHOLDER
             "fi": (os.environ.get("AWG_FI_HOST", "fi.silentconnect.net"), 443),  # PLACEHOLDER
         }
         results = {}
@@ -2388,7 +2466,7 @@ class WebCheckout:
                 ms = max(1, round((time.perf_counter() - t0) * 1000))
                 results[code] = ms
             except Exception:
-                defaults = {"nl": 5, "pl": 32, "fi": 35}
+                defaults = {"nl": 5, "de": 25, "fi": 35}
                 results[code] = defaults.get(code, 35)
         cls._PING_CACHE["timestamp"] = now
         cls._PING_CACHE["data"] = results
@@ -2400,10 +2478,18 @@ class WebCheckout:
         slot_index: int,
         target_server: str,
     ) -> dict[str, Any]:
-        country_names = {"nl": "Нидерланды", "pl": "Польша", "fi": "Финляндия"}
+        country_names = {"nl": "Нидерланды", "de": "Германия", "fi": "Финляндия", "pl": "Германия"}
         target_srv = (target_server or "").lower().strip()
         if target_srv not in country_names:
-            return {"ok": False, "error": f"Неизвестная страна подключения '{target_server}'. Допустимы: nl, pl, fi"}
+            return {"ok": False, "error": f"Неизвестная страна подключения '{target_server}'. Допустимы: nl, de, fi"}
+
+        prof = self.store.get_profile(profile_public_id)
+        if not prof:
+            return {"ok": False, "error": f"Профиль '{profile_public_id}' не найден"}
+        try:
+            self.assert_profile_awg_eligible(prof)
+        except (ValueError, PermissionError) as exc:
+            return {"ok": False, "error": str(exc)}
 
         idx = int(slot_index)
         current_slot = self.store.get_awg_slot_by_index(profile_public_id, idx)
@@ -2539,8 +2625,8 @@ class WebCheckout:
             clean_label = html.escape(raw_label, quote=True)
             client_ip = html.escape(str(s.get("client_ip") or ""))
             srv_code = str(s.get("server_code") or "nl").lower()
-            srv_flag = "🇳🇱" if srv_code == "nl" else ("🇵🇱" if srv_code == "pl" else "🇫🇮")
-            srv_name = "Нидерланды" if srv_code == "nl" else ("Польша" if srv_code == "pl" else "Финляндия")
+            srv_flag = "🇳🇱" if srv_code == "nl" else ("🇩🇪" if srv_code in ("de", "pl") else "🇫🇮")
+            srv_name = "Нидерланды" if srv_code == "nl" else ("Германия" if srv_code in ("de", "pl") else "Финляндия")
             is_enabled = bool(s.get("enabled", 1))
 
             if is_exceeded:
@@ -5132,9 +5218,22 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_header(name, value)
         self.end_headers()
 
+    def _read_body(self, max_bytes: int = 65_536) -> bytes:
+        raw_len = self.headers.get("Content-Length")
+        if not raw_len:
+            return b""
+        try:
+            length = int(raw_len.strip())
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Invalid Content-Length header") from exc
+        if not (0 <= length <= max_bytes):
+            raise ValueError(f"Content-Length {length} out of bounds (0..{max_bytes})")
+        if length == 0:
+            return b""
+        return self.rfile.read(length)
+
     def _read_form(self) -> dict[str, str]:
-        length = int(self.headers.get("Content-Length") or 0)
-        raw_bytes = self.rfile.read(min(length, 65_536))
+        raw_bytes = self._read_body(65_536)
         content_type = self.headers.get("Content-Type", "")
 
         result: dict[str, str] = {}
@@ -5553,8 +5652,11 @@ class RequestHandler(BaseHTTPRequestHandler):
             parsed = urlsplit(self.path)
             path = [segment for segment in parsed.path.split("/") if segment]
             if path == ["api", "payment", "platega", "callback"]:
-                length = int(self.headers.get("Content-Length", "0"))
-                raw = self.rfile.read(length) if length > 0 else b""
+                try:
+                    raw = self._read_body(65_536)
+                except ValueError:
+                    self._send_json(HTTPStatus.BAD_REQUEST, b'{"error":"invalid_content_length"}')
+                    return
                 if not raw.strip() or raw.strip() == b"{}":
                     LOGGER.info("Received Platega empty verification ping. Responding 200 OK.")
                     self._send_json(HTTPStatus.OK, b'{"status":"ok","message":"verification_ping_received"}')
@@ -5573,13 +5675,20 @@ class RequestHandler(BaseHTTPRequestHandler):
                     LOGGER.info("Received Platega ping/test probe. Responding 200 OK.")
                     self._send_json(HTTPStatus.OK, b'{"status":"ok","message":"test_probe_accepted"}')
                     return
-                res = self.checkout.handle_platega_callback(data, raw_body=raw)
-                status_code = HTTPStatus.OK if res.get("status") == "ok" else HTTPStatus.BAD_REQUEST
+                result = self.checkout.handle_platega_callback(data, raw_body=raw)
+                if isinstance(result, tuple) and len(result) == 2:
+                    res, status_code = result
+                else:
+                    res = result
+                    status_code = HTTPStatus.OK if res.get("status") == "ok" else HTTPStatus.BAD_REQUEST
                 self._send_json(status_code, json.dumps(res).encode("utf-8"))
                 return
             if path == ["api", "payment", "digiseller", "callback"]:
-                length = int(self.headers.get("Content-Length", "0"))
-                raw = self.rfile.read(length) if length > 0 else b""
+                try:
+                    raw = self._read_body(65_536)
+                except ValueError:
+                    self._send_json(HTTPStatus.BAD_REQUEST, b'{"error":"invalid_content_length"}')
+                    return
                 query_str = parsed.query
                 query_data: dict[str, Any] = {}
                 if query_str:
@@ -5650,6 +5759,28 @@ class RequestHandler(BaseHTTPRequestHandler):
                 form = self._read_form()
                 promo_code = form.get("promo_code", "").strip()
                 customer_email = form.get("customer_email", "").strip()
+                turnstile_token = form.get("cf-turnstile-response", "")
+                client_ip = client_ip_from_headers(self.headers, self.client_address[0] if self.client_address else None)
+                if self.checkout.settings.cf_turnstile_secret_key:
+                    if not verify_cf_turnstile(self.checkout.settings.cf_turnstile_secret_key, turnstile_token, client_ip):
+                        self._send(
+                            HTTPStatus.OK,
+                            self.checkout.render_home(
+                                flash="Пожалуйста, подтвердите, что вы человек (пройдите проверку Cloudflare Turnstile).",
+                                promo_code=promo_code,
+                            ),
+                        )
+                        return
+                check_res = self.checkout.check_promo_code(self.headers, promo_code)
+                if not check_res.get("ok"):
+                    self._send(
+                        HTTPStatus.OK,
+                        self.checkout.render_home(
+                            flash=check_res.get("message") or "Неверный промокод.",
+                            promo_code=promo_code,
+                        ),
+                    )
+                    return
                 promo = self.checkout.load_valid_promo(promo_code)
                 if self.checkout.promo_type(promo) == "discount":
                     self._send(
@@ -5683,11 +5814,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send(HTTPStatus.OK, self.checkout.render_order(self.headers, order, flash=flash))
                 return
             if path == ["api", "check-promo"]:
-                length = int(self.headers.get("Content-Length", 0) or 0)
-                if length > MAX_JSON_BODY_BYTES:
+                try:
+                    raw = self._read_body(MAX_JSON_BODY_BYTES)
+                except ValueError:
                     self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, b'{"ok":false,"error":"body_too_large"}')
                     return
-                raw = self.rfile.read(length) if length > 0 else b""
                 try:
                     payload = json.loads(raw.decode("utf-8")) if raw else {}
                 except Exception:
@@ -5697,11 +5828,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, json.dumps(res, ensure_ascii=False).encode("utf-8"))
                 return
             if path == ["api", "cabinet", "request-link"]:
-                length = int(self.headers.get("Content-Length", 0) or 0)
-                if length > MAX_JSON_BODY_BYTES:
+                try:
+                    raw = self._read_body(MAX_JSON_BODY_BYTES)
+                except ValueError:
                     self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, b'{"ok":false,"error":"body_too_large"}')
                     return
-                raw = self.rfile.read(length) if length > 0 else b""
                 try:
                     payload = json.loads(raw.decode("utf-8")) if raw else {}
                 except Exception:
@@ -5714,11 +5845,11 @@ class RequestHandler(BaseHTTPRequestHandler):
 
             # POST /api/bridge
             if path == ["api", "bridge"]:
-                length = int(self.headers.get("Content-Length", 0) or 0)
-                if length > MAX_JSON_BODY_BYTES:
+                try:
+                    raw = self._read_body(MAX_JSON_BODY_BYTES)
+                except ValueError:
                     self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, b'{"ok":false,"error":"body_too_large"}')
                     return
-                raw = self.rfile.read(length) if length > 0 else b""
                 secret = (
                     getattr(self.checkout.settings, "serverless_bridge_secret", "")
                     or os.environ.get("SERVERLESS_BRIDGE_SECRET", "")
@@ -5756,12 +5887,12 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.UNAUTHORIZED, b'{"ok":false,"error":"unauthorized"}')
                     return
 
-                length = int(self.headers.get("Content-Length", 0) or 0)
                 MAX_SYNC_BODY_BYTES = 1024 * 1024
-                if length > MAX_SYNC_BODY_BYTES:
+                try:
+                    raw = self._read_body(MAX_SYNC_BODY_BYTES)
+                except ValueError:
                     self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, b'{"ok":false,"error":"body_too_large"}')
                     return
-                raw = self.rfile.read(length) if length > 0 else b""
                 try:
                     payload = json.loads(raw.decode("utf-8")) if raw else {}
                 except Exception:
@@ -5793,11 +5924,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.BAD_REQUEST, b'{"ok":false,"error":"invalid_slot_index"}')
                     return
 
-                length = int(self.headers.get("Content-Length", 0) or 0)
-                if length > MAX_JSON_BODY_BYTES:
+                try:
+                    raw = self._read_body(MAX_JSON_BODY_BYTES)
+                except ValueError:
                     self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, b'{"ok":false,"error":"body_too_large"}')
                     return
-                raw = self.rfile.read(length) if length > 0 else b""
                 new_label = ""
                 content_type = self.headers.get("Content-Type", "")
                 if "application/json" in content_type:
@@ -5845,11 +5976,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.BAD_REQUEST, b'{"ok":false,"error":"invalid_slot_index"}')
                     return
 
-                length = int(self.headers.get("Content-Length", 0) or 0)
-                if length > MAX_JSON_BODY_BYTES:
+                try:
+                    raw = self._read_body(MAX_JSON_BODY_BYTES)
+                except ValueError:
                     self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, b'{"ok":false,"error":"body_too_large"}')
                     return
-                raw = self.rfile.read(length) if length > 0 else b""
                 target_country = ""
                 content_type = self.headers.get("Content-Type", "")
                 if "application/json" in content_type:
@@ -5887,10 +6018,35 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._send(HTTPStatus.INTERNAL_SERVER_ERROR, body)
 
 
+class BoundedThreadingHTTPServer(HTTPServer):
+    """Bounded multi-threaded HTTP server to prevent Thread Exhaustion DoS."""
+    request_queue_size = 128
+    daemon_threads = True
+
+    def __init__(self, server_address, RequestHandlerClass, max_workers: int = 64):
+        super().__init__(server_address, RequestHandlerClass)
+        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="http-worker")
+
+    def process_request(self, request, client_address) -> None:
+        self._executor.submit(self.process_request_thread, request, client_address)
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            self.finish_request(request, client_address)
+        except Exception:
+            self.handle_error(request, client_address)
+        finally:
+            self.shutdown_request(request)
+
+    def server_close(self) -> None:
+        super().server_close()
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
+
 def serve(settings: Settings, store: Store) -> None:
     checkout = WebCheckout(settings, store)
     RequestHandler.checkout = checkout
-    server = ThreadingHTTPServer((settings.web_listen_host, settings.web_listen_port), RequestHandler)
+    server = BoundedThreadingHTTPServer((settings.web_listen_host, settings.web_listen_port), RequestHandler)
     LOGGER.info("Serving web checkout on %s:%s", settings.web_listen_host, settings.web_listen_port)
     server.serve_forever()
 

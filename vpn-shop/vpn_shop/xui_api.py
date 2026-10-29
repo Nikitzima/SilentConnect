@@ -3,6 +3,7 @@ from __future__ import annotations
 import http.cookiejar
 import json
 import ssl
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -21,6 +22,7 @@ class XuiApiClient:
         self.verify_tls = verify_tls
         self._logged_in = False
         self._csrf_token: str | None = None
+        self._lock = threading.RLock()
         self._cookie_jar = http.cookiejar.CookieJar()
         self._opener = self._build_opener()
 
@@ -34,89 +36,92 @@ class XuiApiClient:
         return urllib.request.build_opener(*handlers)
 
     def _try_toggle_scheme_on_ssl_error(self, exc: Exception) -> bool:
-        err_str = str(exc).lower()
-        if any(token in err_str for token in ("record layer failure", "wrong version number", "unknown protocol", "ssl")):
-            if self.panel_url.startswith("https://127.0.0.1") or self.panel_url.startswith("https://localhost"):
-                self.panel_url = "http://" + self.panel_url[len("https://"):]
-                self._opener = self._build_opener()
-                return True
-            elif self.panel_url.startswith("http://127.0.0.1") or self.panel_url.startswith("http://localhost"):
-                self.panel_url = "https://" + self.panel_url[len("http://"):]
-                self._opener = self._build_opener()
-                return True
-        return False
+        with self._lock:
+            err_str = str(exc).lower()
+            if any(token in err_str for token in ("record layer failure", "wrong version number", "unknown protocol", "ssl")):
+                if self.panel_url.startswith("https://127.0.0.1") or self.panel_url.startswith("https://localhost"):
+                    self.panel_url = "http://" + self.panel_url[len("https://"):]
+                    self._opener = self._build_opener()
+                    return True
+                elif self.panel_url.startswith("http://127.0.0.1") or self.panel_url.startswith("http://localhost"):
+                    self.panel_url = "https://" + self.panel_url[len("http://"):]
+                    self._opener = self._build_opener()
+                    return True
+            return False
 
     def _url(self, path: str) -> str:
         return urllib.parse.urljoin(self.panel_url, path.lstrip("/"))
 
     def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
-        data = None
-        headers = {
-            "Accept": "application/json",
-            "User-Agent": "vpn-shop/0.1",
-        }
-        if self._csrf_token:
-            headers["X-Csrf-Token"] = self._csrf_token
-            headers["x-csrf-token"] = self._csrf_token
-        if payload is not None:
-            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            headers["Content-Type"] = "application/json; charset=utf-8"
+        with self._lock:
+            data = None
+            headers = {
+                "Accept": "application/json",
+                "User-Agent": "vpn-shop/0.1",
+            }
+            if self._csrf_token:
+                headers["X-Csrf-Token"] = self._csrf_token
+                headers["x-csrf-token"] = self._csrf_token
+            if payload is not None:
+                data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                headers["Content-Type"] = "application/json; charset=utf-8"
 
-        request = urllib.request.Request(self._url(path), data=data, headers=headers, method=method.upper())
-        try:
-            with self._opener.open(request, timeout=30) as response:
-                raw = response.read()
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise XuiApiError(f"HTTP {exc.code} for {path}: {detail}") from exc
-        except urllib.error.URLError as exc:
-            if self._try_toggle_scheme_on_ssl_error(exc):
-                return self._request(method, path, payload)
-            raise XuiApiError(f"Request failed for {path}: {exc}") from exc
+            request = urllib.request.Request(self._url(path), data=data, headers=headers, method=method.upper())
+            try:
+                with self._opener.open(request, timeout=30) as response:
+                    raw = response.read()
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")
+                raise XuiApiError(f"HTTP {exc.code} for {path}: {detail}") from exc
+            except urllib.error.URLError as exc:
+                if self._try_toggle_scheme_on_ssl_error(exc):
+                    return self._request(method, path, payload)
+                raise XuiApiError(f"Request failed for {path}: {exc}") from exc
 
-        if not raw:
-            # 3x-ui is known to return an empty body for some successful addClient/updateClient calls.
-            return {}
+            if not raw:
+                # 3x-ui is known to return an empty body for some successful addClient/updateClient calls.
+                return {}
 
-        text = raw.decode("utf-8", errors="replace").strip()
-        if not text:
-            return {}
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise XuiApiError(f"Invalid JSON response for {path}: {text}") from exc
+            text = raw.decode("utf-8", errors="replace").strip()
+            if not text:
+                return {}
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise XuiApiError(f"Invalid JSON response for {path}: {text}") from exc
 
     def login(self) -> None:
-        if self._logged_in:
-            return
-        if not self.username or not self.password:
-            raise XuiApiError("XUI_USERNAME and XUI_PASSWORD must be configured")
-        
-        # Step 1: Fetch base panel page to obtain session cookies and CSRF token (for 3x-ui v2.4+)
-        try:
-            req = urllib.request.Request(self.panel_url, headers={"User-Agent": "vpn-shop/0.1"})
-            with self._opener.open(req, timeout=15) as resp:
-                body = resp.read().decode("utf-8", errors="replace")
-                for line in body.splitlines():
-                    if "csrf-token" in line:
-                        parts = line.split("content=")
-                        if len(parts) > 1:
-                            token = parts[1].split(">")[0].replace('"', "").replace("'", "").replace("/", "").strip()
-                            if token:
-                                self._csrf_token = token
-                                break
-        except Exception as exc:
-            if self._try_toggle_scheme_on_ssl_error(exc):
-                return self.login()
+        with self._lock:
+            if self._logged_in:
+                return
+            if not self.username or not self.password:
+                raise XuiApiError("XUI_USERNAME and XUI_PASSWORD must be configured")
+            
+            # Step 1: Fetch base panel page to obtain session cookies and CSRF token (for 3x-ui v2.4+)
+            try:
+                req = urllib.request.Request(self.panel_url, headers={"User-Agent": "vpn-shop/0.1"})
+                with self._opener.open(req, timeout=15) as resp:
+                    body = resp.read().decode("utf-8", errors="replace")
+                    for line in body.splitlines():
+                        if "csrf-token" in line:
+                            parts = line.split("content=")
+                            if len(parts) > 1:
+                                token = parts[1].split(">")[0].replace('"', "").replace("'", "").replace("/", "").strip()
+                                if token:
+                                    self._csrf_token = token
+                                    break
+            except Exception as exc:
+                if self._try_toggle_scheme_on_ssl_error(exc):
+                    return self.login()
 
-        response = self._request(
-            "POST",
-            "/login",
-            {"username": self.username, "password": self.password},
-        )
-        if isinstance(response, dict) and response.get("success") is False:
-            raise XuiApiError(response.get("msg") or "3x-ui login failed")
-        self._logged_in = True
+            response = self._request(
+                "POST",
+                "/login",
+                {"username": self.username, "password": self.password},
+            )
+            if isinstance(response, dict) and response.get("success") is False:
+                raise XuiApiError(response.get("msg") or "3x-ui login failed")
+            self._logged_in = True
 
     @staticmethod
     def _should_retry_after_reauth(path: str, exc: XuiApiError) -> bool:
@@ -126,20 +131,22 @@ class XuiApiClient:
         return any(token in message for token in ("HTTP 401", "HTTP 403", "HTTP 404"))
 
     def _reset_session(self) -> None:
-        self._logged_in = False
-        self._csrf_token = None
-        self._cookie_jar.clear()
+        with self._lock:
+            self._logged_in = False
+            self._csrf_token = None
+            self._cookie_jar.clear()
 
     def _api(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
-        self.login()
-        try:
+        with self._lock:
+            self.login()
+            try:
+                return self._request(method, path, payload)
+            except XuiApiError as exc:
+                if not self._logged_in or not self._should_retry_after_reauth(path, exc):
+                    raise
+            self._reset_session()
+            self.login()
             return self._request(method, path, payload)
-        except XuiApiError as exc:
-            if not self._logged_in or not self._should_retry_after_reauth(path, exc):
-                raise
-        self._reset_session()
-        self.login()
-        return self._request(method, path, payload)
 
     @staticmethod
     def _unwrap(response: Any) -> Any:

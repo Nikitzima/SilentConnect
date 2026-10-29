@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import logging
 import os
+import queue
 import sqlite3
 import threading
 import time
@@ -114,6 +116,7 @@ class LibsqlReplicaManager:
         self._lock = self._exec_lock
         self._last_sync_at = 0.0
         self._ro_local = threading.local()
+        self._ro_pool: queue.LifoQueue[sqlite3.Connection] = queue.LifoQueue(maxsize=32)
         self._connect_replica()
         self.force_sync()
 
@@ -151,6 +154,66 @@ class LibsqlReplicaManager:
                         pass
             finally:
                 self._connect_replica()
+                while not self._ro_pool.empty():
+                    try:
+                        c = self._ro_pool.get_nowait()
+                        c.close()
+                    except Exception:
+                        pass
+
+    def _create_ro_conn(self) -> sqlite3.Connection | None:
+        if not self._path or not os.path.exists(self._path):
+            return None
+        try:
+            uri = f"file:{self._path}?mode=ro"
+            conn = sqlite3.connect(uri, uri=True, timeout=15.0, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA query_only = ON;")
+            return conn
+        except Exception as exc:
+            LOGGER.warning("Failed to create read-only replica connection: %s", exc)
+            return None
+
+    @contextmanager
+    def ro_connection(self) -> Iterator[sqlite3.Connection | None]:
+        """Context manager yielding a pooled read-only sqlite3.Connection to the local replica.
+
+        If an error occurs while using the connection, it is closed and evicted from the pool.
+        """
+        if not self._path or not os.path.exists(self._path):
+            yield None
+            return
+
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = self._ro_pool.get_nowait()
+        except queue.Empty:
+            conn = self._create_ro_conn()
+
+        if conn is None:
+            yield None
+            return
+
+        error_occurred = False
+        try:
+            yield conn
+        except Exception:
+            error_occurred = True
+            try:
+                conn.close()
+            except Exception:
+                pass
+            conn = None
+            raise
+        finally:
+            if conn is not None and not error_occurred:
+                try:
+                    self._ro_pool.put_nowait(conn)
+                except queue.Full:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
 
     def _get_ro_conn(self) -> sqlite3.Connection | None:
         if not self._path or not os.path.exists(self._path):
@@ -158,15 +221,10 @@ class LibsqlReplicaManager:
         conn = getattr(self._ro_local, "conn", None)
         if conn is not None:
             return conn
-        try:
-            uri = f"file:{self._path}?mode=ro"
-            conn = sqlite3.connect(uri, uri=True, timeout=15.0, check_same_thread=False)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA query_only = ON;")
+        conn = self._create_ro_conn()
+        if conn is not None:
             self._ro_local.conn = conn
-            return conn
-        except Exception:
-            return None
+        return conn
 
     def force_sync(self, min_interval: float = 0.0) -> None:
         """Синхронизация локальной реплики с облаком Turso под выделенным _sync_lock."""

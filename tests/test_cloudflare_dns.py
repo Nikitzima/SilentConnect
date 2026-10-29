@@ -140,33 +140,33 @@ class BotFailoverMenuTests(unittest.TestCase):
             buttons = markup["inline_keyboard"]
             # Check country buttons exist
             button_callbacks = [b["callback_data"] for row in buttons for b in row]
-            self.assertIn("admin:failover:confirm:pl", button_callbacks)
+            self.assertIn("admin:failover:confirm:de", button_callbacks)
             self.assertIn("admin:failover:confirm:fi", button_callbacks)
             self.assertIn("admin:failover:confirm:nl", button_callbacks)
 
     @patch("vpn_shop.cloudflare_dns.resolve_node_ip", return_value="203.0.113.10")
     def test_show_admin_failover_confirm_resolves_and_renders_ip(self, mock_resolve: MagicMock) -> None:
         with patch.object(self.bot, "_render_or_edit") as mock_render:
-            self.bot.show_admin_failover_confirm(12345, "pl")
-            mock_resolve.assert_called_once_with("pl.example.com")
+            self.bot.show_admin_failover_confirm(12345, "de")
+            mock_resolve.assert_called_once_with("de.example.com")
             mock_render.assert_called_once()
             text = mock_render.call_args[0][1]
             self.assertIn("203.0.113.10", text)
-            self.assertIn("Польша", text)
+            self.assertIn("Германия", text)
             markup = mock_render.call_args[1]["reply_markup"]
             button_callbacks = [b["callback_data"] for row in markup["inline_keyboard"] for b in row]
-            self.assertIn("admin:failover:apply:pl", button_callbacks)
+            self.assertIn("admin:failover:apply:de", button_callbacks)
 
     @patch("vpn_shop.cloudflare_dns.CloudflareDnsClient.switch_cluster_dns")
     def test_execute_admin_failover_calls_cloudflare_and_renders_success(self, mock_switch: MagicMock) -> None:
         mock_switch.return_value = {
-            "target_node_domain": "pl.example.com",
+            "target_node_domain": "de.example.com",
             "target_ip": "203.0.113.10",
             "updated": [{"domain": "example.com", "content": "203.0.113.10", "proxied": False}],
         }
         with patch.object(self.bot, "_render_or_edit") as mock_render:
-            self.bot.execute_admin_failover(12345, "pl")
-            mock_switch.assert_called_once_with(target_node_domain="pl.example.com")
+            self.bot.execute_admin_failover(12345, "de")
+            mock_switch.assert_called_once_with(target_node_domain="de.example.com")
             mock_render.assert_called_once()
             text = mock_render.call_args[0][1]
             self.assertIn("УСПЕШНО ВЫПОЛНЕН", text)

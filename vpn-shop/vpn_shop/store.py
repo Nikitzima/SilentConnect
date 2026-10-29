@@ -12,7 +12,19 @@ from typing import Any, Iterable, Iterator
 
 LOGGER = logging.getLogger("vpn_shop.store")
 
-from .security import hash_secret, masked_code, now_ts, public_id, random_code
+from .security import (
+    hash_secret,
+    hash_secret_candidates,
+    hash_token,
+    hash_token_candidates,
+    derive_sub_order_token,
+    derive_sub_order_token_candidates,
+    constant_time_equals,
+    masked_code,
+    now_ts,
+    public_id,
+    random_code,
+)
 
 try:
     from .libsql_replica import LibsqlReplicaManager, HAS_LIBSQL
@@ -97,9 +109,8 @@ CREATE TABLE IF NOT EXISTS orders (
   FOREIGN KEY (provisioned_profile_id) REFERENCES profiles(id)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_open_orders_promo
-  ON orders(promo_id) WHERE promo_id IS NOT NULL
-  AND status IN ('waiting_payment', 'auto_provision');
+CREATE INDEX IF NOT EXISTS ix_open_orders_promo
+  ON orders(promo_id, status) WHERE promo_id IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_open_orders_invite
   ON orders(invite_id) WHERE invite_id IS NOT NULL
@@ -463,6 +474,12 @@ class Store:
                 }
                 if "orders" not in existing_tables:
                     conn.executescript(SCHEMA)
+                else:
+                    try:
+                        conn.execute("DROP INDEX IF EXISTS uq_open_orders_promo;")
+                        conn.execute("CREATE INDEX IF NOT EXISTS ix_open_orders_promo ON orders(promo_id, status) WHERE promo_id IS NOT NULL;")
+                    except Exception:
+                        pass
             return
         init_conn = self._open()
         try:
@@ -544,6 +561,8 @@ class Store:
             conn.execute("CREATE INDEX IF NOT EXISTS ix_orders_provisioned_profile ON orders(provisioned_profile_id);")
             conn.execute("DROP INDEX IF EXISTS idx_orders_external_id;")
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_external_id ON orders(external_id) WHERE external_id IS NOT NULL;")
+            conn.execute("DROP INDEX IF EXISTS uq_open_orders_promo;")
+            conn.execute("CREATE INDEX IF NOT EXISTS ix_open_orders_promo ON orders(promo_id, status) WHERE promo_id IS NOT NULL;")
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)",
                 (SCHEMA_VERSION, now_ts()),
@@ -594,10 +613,16 @@ class Store:
     def read_connection(self) -> Iterator[sqlite3.Connection | Any]:
         """Fast thread-safe read-only connection to local replica without transaction overhead."""
         if self._replica_mgr is not None:
-            ro_conn = self._replica_mgr._get_ro_conn()
-            if ro_conn is not None:
-                yield ro_conn
-                return
+            if hasattr(self._replica_mgr, "ro_connection"):
+                with self._replica_mgr.ro_connection() as ro_conn:
+                    if ro_conn is not None:
+                        yield ro_conn
+                        return
+            else:
+                ro_conn = self._replica_mgr._get_ro_conn()
+                if ro_conn is not None:
+                    yield ro_conn
+                    return
         conn = self._open()
         try:
             yield conn
@@ -983,13 +1008,11 @@ class Store:
             )
 
     def get_order_by_web_token(self, public_id_value: str, token: str) -> dict[str, Any] | None:
-        from .security import constant_time_equals, hash_token, derive_sub_order_token
-
         order = self.get_order(public_id_value)
         if not order:
             return None
         stored = str(order.get("web_token_hash") or "")
-        if stored and constant_time_equals(stored, hash_token(token, purpose="order_web")):
+        if stored and any(constant_time_equals(stored, cand) for cand in hash_token_candidates(token, purpose="order_web")):
             return order
 
         meta = order.get("meta_json") or {}
@@ -1006,8 +1029,7 @@ class Store:
             if prof:
                 target_sub = str(prof.get("xui_client_id") or prof.get("public_id") or "").strip()
         if target_sub:
-            derived = derive_sub_order_token(public_id_value, target_sub)
-            if derived and constant_time_equals(derived, token):
+            if any(constant_time_equals(cand, token) for cand in derive_sub_order_token_candidates(public_id_value, target_sub)):
                 return order
 
         if not stored:
@@ -1048,17 +1070,16 @@ class Store:
         If single_use is False (default), allows multiple visits within the active TTL window
         (recording used_at on first visit for audit/logging), expiring only after expires_at.
         """
-        from .security import hash_token
-
         now = now_ts()
-        tok_hash = hash_token(token, purpose="magic_link")
+        tok_cands = hash_token_candidates(token, purpose="magic_link")
+        tok_placeholders = ", ".join("?" for _ in tok_cands)
 
         # Fast path for multi-use links: read check first via RO connection (<1ms)
         if not single_use:
             with self.read_connection() as rconn:
                 row = rconn.execute(
-                    "SELECT email, used_at, expires_at FROM magic_links WHERE token_hash = ? AND expires_at >= ?",
-                    (tok_hash, now),
+                    f"SELECT email, used_at, expires_at FROM magic_links WHERE token_hash IN ({tok_placeholders}) AND expires_at >= ? LIMIT 1",
+                    (*tok_cands, now),
                 ).fetchone()
             if row and row["used_at"] is not None:
                 return str(row["email"])
@@ -1066,21 +1087,21 @@ class Store:
         with self.transaction() as conn:
             if single_use:
                 cur = conn.execute(
-                    """
+                    f"""
                     UPDATE magic_links SET used_at = ?
-                    WHERE token_hash = ? AND used_at IS NULL AND expires_at >= ?
+                    WHERE token_hash IN ({tok_placeholders}) AND used_at IS NULL AND expires_at >= ?
                     RETURNING email
                     """,
-                    (now, tok_hash, now),
+                    (now, *tok_cands, now),
                 )
             else:
                 cur = conn.execute(
-                    """
+                    f"""
                     UPDATE magic_links SET used_at = coalesce(used_at, ?)
-                    WHERE token_hash = ? AND expires_at >= ?
+                    WHERE token_hash IN ({tok_placeholders}) AND expires_at >= ?
                     RETURNING email
                     """,
-                    (now, tok_hash, now),
+                    (now, *tok_cands, now),
                 )
             row = cur.fetchone()
             if not row and self._replica_mgr is not None:
@@ -1128,7 +1149,22 @@ class Store:
         result = dict(row)
         for key in ("context_json", "meta_json"):
             if key in result and isinstance(result[key], str):
-                result[key] = json.loads(result[key])
+                try:
+                    result[key] = json.loads(result[key])
+                except Exception:
+                    pass
+        if "private_key_enc" in result and isinstance(result["private_key_enc"], str):
+            from .security import decrypt_wg_secret
+            try:
+                result["private_key_enc"] = decrypt_wg_secret(result["private_key_enc"])
+            except Exception:
+                pass
+        if "preshared_key" in result and isinstance(result["preshared_key"], str):
+            from .security import decrypt_wg_secret
+            try:
+                result["preshared_key"] = decrypt_wg_secret(result["preshared_key"])
+            except Exception:
+                pass
         return result
 
     def get_session(self, chat_id: int | str) -> dict[str, Any] | None:
@@ -1237,16 +1273,19 @@ class Store:
 
     def find_valid_invite(self, code: str) -> dict[str, Any] | None:
         now = now_ts()
+        cands = hash_secret_candidates(code)
+        placeholders = ", ".join("?" for _ in cands)
         with self._connect() as conn:
             row = conn.execute(
-                """
+                f"""
                 SELECT * FROM invite_tokens
-                WHERE code_hash = ?
+                WHERE code_hash IN ({placeholders})
                   AND enabled = 1
                   AND used_count < max_uses
                   AND (expires_at IS NULL OR expires_at > ?)
+                LIMIT 1
                 """,
-                (hash_secret(code), now),
+                (*cands, now),
             ).fetchone()
         return self._row_to_dict(row)
 
@@ -1267,17 +1306,19 @@ class Store:
                     (int(code_or_id), now),
                 )
             else:
+                cands = hash_secret_candidates(str(code_or_id))
+                placeholders = ", ".join("?" for _ in cands)
                 cursor = conn.execute(
-                    """
+                    f"""
                     UPDATE invite_tokens
                     SET used_count = used_count + 1
-                    WHERE code_hash = ?
+                    WHERE code_hash IN ({placeholders})
                       AND enabled = 1
                       AND used_count < max_uses
                       AND (expires_at IS NULL OR expires_at > ?)
                     RETURNING *
                     """,
-                    (hash_secret(str(code_or_id)), now),
+                    (*cands, now),
                 )
             row = cursor.fetchone()
             return self._row_to_dict(row)
@@ -1380,34 +1421,62 @@ class Store:
 
     def find_valid_promo(self, code: str) -> dict[str, Any] | None:
         now = now_ts()
+        cands = hash_secret_candidates(code)
+        placeholders = ", ".join("?" for _ in cands)
         with self._connect() as conn:
             row = conn.execute(
-                """
+                f"""
                 SELECT * FROM promo_codes
-                WHERE code_hash = ?
+                WHERE code_hash IN ({placeholders})
                   AND enabled = 1
                   AND used_count < max_uses
                   AND (expires_at IS NULL OR expires_at > ?)
+                LIMIT 1
                 """,
-                (hash_secret(code), now),
+                (*cands, now),
             ).fetchone()
         return self._row_to_dict(row)
 
     def get_open_order_for_promo(self, promo_id: int) -> dict[str, Any] | None:
-        with self._connect() as conn:
-            row = conn.execute(
+        with self.read_connection() as conn:
+            promo_row = conn.execute(
+                "SELECT max_uses, used_count FROM promo_codes WHERE id = ?",
+                (int(promo_id),),
+            ).fetchone()
+            if not promo_row:
+                return None
+            max_uses = int(promo_row["max_uses"] or 0)
+            if max_uses <= 0:
+                return None
+            used_count = int(promo_row["used_count"] or 0)
+
+            open_count_row = conn.execute(
                 """
-                SELECT *
+                SELECT COUNT(*) as cnt
                 FROM orders
                 WHERE promo_id = ?
                   AND closed_at IS NULL
                   AND status IN ('waiting_payment', 'auto_provision')
-                ORDER BY created_at ASC, id ASC
-                LIMIT 1
                 """,
                 (int(promo_id),),
             ).fetchone()
-        return self._row_to_dict(row)
+            open_count = int(open_count_row["cnt"] if open_count_row else 0)
+
+            if open_count + used_count >= max_uses:
+                row = conn.execute(
+                    """
+                    SELECT *
+                    FROM orders
+                    WHERE promo_id = ?
+                      AND closed_at IS NULL
+                      AND status IN ('waiting_payment', 'auto_provision')
+                    ORDER BY created_at ASC, id ASC
+                    LIMIT 1
+                    """,
+                    (int(promo_id),),
+                ).fetchone()
+                return self._row_to_dict(row)
+            return None
 
     def consume_promo_code(self, code_or_id: str | int) -> dict[str, Any] | None:
         now = now_ts()
@@ -1426,17 +1495,19 @@ class Store:
                     (now, int(code_or_id), now),
                 )
             else:
+                cands = hash_secret_candidates(str(code_or_id))
+                placeholders = ", ".join("?" for _ in cands)
                 cursor = conn.execute(
-                    """
+                    f"""
                     UPDATE promo_codes
                     SET used_count = used_count + 1, last_used_at = ?
-                    WHERE code_hash = ?
+                    WHERE code_hash IN ({placeholders})
                       AND enabled = 1
                       AND used_count < max_uses
                       AND (expires_at IS NULL OR expires_at > ?)
                     RETURNING *
                     """,
-                    (now, hash_secret(str(code_or_id)), now),
+                    (now, *cands, now),
                 )
             row = cursor.fetchone()
             return self._row_to_dict(row)
@@ -3007,6 +3078,7 @@ class Store:
                 FROM profiles p
                 JOIN orders o ON o.provisioned_profile_id = p.id
                 WHERE LOWER(o.customer_email) = ?
+                  AND o.status = 'delivered'
                   AND p.status != 'deleted'
                 ORDER BY p.created_at ASC
                 """,
@@ -3111,6 +3183,10 @@ class Store:
             if ip_row:
                 raise sqlite3.IntegrityError(f"client_ip '{clean_ip}' is already in use on server '{srv_code}'")
 
+            from .security import encrypt_wg_secret
+            encrypted_privkey = encrypt_wg_secret(clean_privkey)
+            encrypted_psk = encrypt_wg_secret(preshared_key) if preshared_key else None
+
             cursor = conn.execute(
                 """
                 INSERT INTO awg_slots(
@@ -3124,8 +3200,8 @@ class Store:
                     idx,
                     clean_label,
                     clean_pubkey,
-                    clean_privkey,
-                    preshared_key or None,
+                    encrypted_privkey,
+                    encrypted_psk,
                     clean_ip,
                     1 if enabled else 0,
                     now,

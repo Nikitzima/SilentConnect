@@ -7,8 +7,48 @@ import logging
 import threading
 import time
 from typing import Any
+import urllib.parse
 
 LOGGER = logging.getLogger(__name__)
+
+ALLOWED_BRIDGE_ACTIONS = {
+    "ping", "status", "server_status", "reconcile_xui", "find_client_by_email",
+    "find_client_by_sub_id", "get_client_traffic", "list_client_traffic",
+    "provision_profile", "renew_profile", "set_profile_enabled",
+    "build_warp_conf", "send_subscription_email"
+}
+
+
+def _is_approved_email_url(url_str: str, approved_hosts: set[str] | None = None) -> bool:
+    """Validate that redirect/email URL only points to approved domains (*.silentconnect.net, public host) or https://t.me/ (SC-24).  # PLACEHOLDER"""
+    if not url_str or not url_str.strip():
+        return True
+    try:
+        parsed = urllib.parse.urlparse(url_str.strip())
+    except Exception:
+        return False
+
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        return False
+
+    hostname = (parsed.hostname or "").lower().strip()
+    if not hostname:
+        return False
+
+    # Telegram links must be https://t.me/
+    if hostname == "t.me" or hostname.endswith(".t.me"):
+        return scheme == "https"
+
+    # Approved domains: *.silentconnect.net or silentconnect.net  # PLACEHOLDER
+    if hostname == "silentconnect.net" or hostname.endswith(".silentconnect.net"):  # PLACEHOLDER
+        return True
+
+    # Host from public settings (e.g. custom domain or node host)
+    if approved_hosts and hostname in approved_hosts:
+        return True
+
+    return False
 
 MAX_CLOCK_SKEW_SECONDS = 300
 _REPLAY_LOCK = threading.Lock()
@@ -83,6 +123,9 @@ def verify_and_dispatch_bridge(
 
     action = payload.get("action")
     params = payload.get("params") if isinstance(payload.get("params"), dict) else payload
+
+    if action not in ALLOWED_BRIDGE_ACTIONS:
+        return 400, {"ok": False, "error": f"action_not_allowed:{action}"}
 
     if action in ("ping", "status", "server_status"):
         return 200, {
@@ -299,6 +342,35 @@ def verify_and_dispatch_bridge(
         order_public_id = str(params.get("order_public_id") or "").strip()
         if not customer_email or not order_public_id:
             return 400, {"ok": False, "error": "missing_email_params"}
+
+        setup_url = str(params.get("setup_url") or "").strip()
+        json_url = str(params.get("json_url") or "").strip()
+        cabinet_url = str(params.get("cabinet_url") or "").strip()
+        bind_tg_url = str(params.get("bind_tg_url") or "").strip()
+
+        approved_hosts: set[str] = set()
+        if getattr(provisioner, "settings", None):
+            for base_val in (
+                getattr(provisioner.settings, "web_public_base_url", None),
+                getattr(provisioner.settings, "subscription_base_url", None),
+            ):
+                if base_val:
+                    try:
+                        h = urllib.parse.urlparse(str(base_val)).hostname
+                        if h:
+                            approved_hosts.add(h.lower().strip())
+                    except Exception:
+                        pass
+
+        for url_name, url_val in (
+            ("setup_url", setup_url),
+            ("json_url", json_url),
+            ("cabinet_url", cabinet_url),
+            ("bind_tg_url", bind_tg_url),
+        ):
+            if url_val and not _is_approved_email_url(url_val, approved_hosts):
+                return 400, {"ok": False, "error": f"invalid_or_unapproved_url:{url_name}"}
+
         try:
             from . import mailer
             mailer.send_subscription_email_async(
@@ -307,10 +379,10 @@ def verify_and_dispatch_bridge(
                 order_public_id=order_public_id,
                 plan_name=str(params.get("plan_name") or "SilentConnect"),
                 duration_days=int(params.get("duration_days") or 30),
-                setup_url=str(params.get("setup_url") or ""),
-                json_url=str(params.get("json_url") or ""),
-                cabinet_url=str(params.get("cabinet_url") or ""),
-                bind_tg_url=str(params.get("bind_tg_url") or ""),
+                setup_url=setup_url,
+                json_url=json_url,
+                cabinet_url=cabinet_url,
+                bind_tg_url=bind_tg_url,
                 expires_ts=params.get("expires_ts"),
             )
             return 200, {"ok": True, "result": "queued"}
@@ -318,4 +390,4 @@ def verify_and_dispatch_bridge(
             LOGGER.exception("Failed to send subscription email via bridge: %s", e)
             return 200, {"ok": True, "warning": str(e)}
 
-    return 400, {"ok": False, "error": f"unknown_action:{action}"}
+    return 400, {"ok": False, "error": f"action_not_allowed:{action}"}

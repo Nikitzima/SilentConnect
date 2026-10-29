@@ -4284,7 +4284,7 @@ class ShopBot:
             "💡 *IP-адрес не захардкожен*: он динамически резолвится из системной A-записи выбранной страны.",
         ]
         buttons = [
-            [(f"🇵🇱 Польша (pl.{base_d})", "admin:failover:confirm:pl")],
+            [(f"🇩🇪 Германия (de.{base_d})", "admin:failover:confirm:de")],
             [(f"🇫🇮 Финляндия (fi.{base_d})", "admin:failover:confirm:fi")],
             [(f"🇳🇱 Нидерланды (nl.{base_d})", "admin:failover:confirm:nl")],
             [("« Назад в админ-меню", "admin:menu")],
@@ -4296,7 +4296,8 @@ class ShopBot:
 
         base_d = self._get_cluster_base_domain()
         country_map = {
-            "pl": ("🇵🇱 Польша", f"pl.{base_d}"),
+            "de": ("🇩🇪 Германия", f"de.{base_d}"),
+            "pl": ("🇩🇪 Германия", f"de.{base_d}"),
             "fi": ("🇫🇮 Финляндия", f"fi.{base_d}"),
             "nl": ("🇳🇱 Нидерланды", f"nl.{base_d}"),
         }
@@ -4334,7 +4335,8 @@ class ShopBot:
 
         base_d = self._get_cluster_base_domain()
         country_map = {
-            "pl": ("🇵🇱 Польша", f"pl.{base_d}"),
+            "de": ("🇩🇪 Германия", f"de.{base_d}"),
+            "pl": ("🇩🇪 Германия", f"de.{base_d}"),
             "fi": ("🇫🇮 Финляндия", f"fi.{base_d}"),
             "nl": ("🇳🇱 Нидерланды", f"nl.{base_d}"),
         }
@@ -5689,10 +5691,10 @@ class ShopBot:
                 self._merge_session_state(chat_id, "admin", "admin_share_warp_server", {"admin": True}, drop_keys=(ACTION_GUARD_KEY,))
                 nl_srv = awg_manager._get_server("nl")
                 fi_srv = awg_manager._get_server("fi")
-                pl_srv = awg_manager._get_server("pl")
+                pl_srv = awg_manager._get_server("de")
                 nl_label = f"🇳🇱 Нидерланды (NL) ({nl_srv.get('endpoint_host')}:{nl_srv.get('endpoint_port')})"
                 fi_label = f"🇫🇮 Финляндия (FI) ({fi_srv.get('endpoint_host')}:{fi_srv.get('endpoint_port')})"
-                pl_label = f"🇵🇱 Польша (PL) ({pl_srv.get('endpoint_host')}:{pl_srv.get('endpoint_port')})"
+                pl_label = f"🇩🇪 Германия (DE) ({pl_srv.get('endpoint_host')}:{pl_srv.get('endpoint_port')})"
                 self.telegram.send_message(
                     chat_id,
                     "Выберите сервер для выдачи Warp / AmneziaWG конфига:",
@@ -5700,7 +5702,7 @@ class ShopBot:
                         [
                             [(nl_label, "admin:share_warp_srv:nl")],
                             [(fi_label, "admin:share_warp_srv:fi")],
-                            [(pl_label, "admin:share_warp_srv:pl")],
+                            [(pl_label, "admin:share_warp_srv:de")],
                             [("« Назад в админ-меню", "admin:menu", "primary")],
                         ]
                     ),

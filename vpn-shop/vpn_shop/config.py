@@ -130,6 +130,7 @@ class Settings:
     platega_enabled: bool = False
     cluster_sync_secret: str = ""
     serverless_bridge_secret: str = ""
+    server_pepper: str = ""
     digiseller_seller_id: str = "1348126"
     digiseller_api_key: str = ""
     digiseller_secret_key: str = ""
@@ -188,8 +189,8 @@ def load_settings(root_dir: Path | None = None, env_file: str | Path | None = No
             "Приоритетно переводить через СБП по указанным реквизитам.",
         ).strip(),
         xui_panel_url=_env("XUI_PANEL_URL", "https://127.0.0.1:2053/").rstrip("/") + "/",
-        xui_username=os.environ.get("XUI_USERNAME", "xui_admin").strip(),
-        xui_password=os.environ.get("XUI_PASSWORD", "xui_password_placeholder").strip(),
+        xui_username=os.environ.get("XUI_USERNAME", "").strip(),
+        xui_password=os.environ.get("XUI_PASSWORD", "").strip(),
         xui_verify_tls=_bool("XUI_VERIFY_TLS", False),
         xui_db_path=_path_from_env("XUI_DB_PATH", "/etc/x-ui/x-ui.db", resolved_root),
         xui_xhttp_inbound_id=_int("XUI_XHTTP_INBOUND_ID", 1),
@@ -231,8 +232,8 @@ def load_settings(root_dir: Path | None = None, env_file: str | Path | None = No
         serverless_bridge_secret=(
             os.environ.get("SERVERLESS_BRIDGE_SECRET", "").strip()
             or os.environ.get("BRIDGE_SECRET", "").strip()
-            or os.environ.get("CLUSTER_SYNC_SECRET", "").strip()
         ),
+        server_pepper=os.environ.get("SERVER_PEPPER", "").strip(),
         digiseller_seller_id=os.environ.get("DIGISELLER_SELLER_ID", "1348126").strip(),
         digiseller_api_key=os.environ.get("DIGISELLER_API_KEY", "").strip(),
         digiseller_secret_key=os.environ.get("DIGISELLER_SECRET_KEY", "").strip(),

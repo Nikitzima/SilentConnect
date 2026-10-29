@@ -56,11 +56,17 @@ SERVERS: dict[str, dict[str, Any]] = {
         "flag": "🇳🇱",
         "ip": NL_IP,
     },
+    "de": {
+        "code": "de",
+        "name": "Германия",
+        "flag": "🇩🇪",
+        "ip": os.environ.get("DE_STANDBY_IP", os.environ.get("DE_HOST", "192.0.2.3")),
+    },
     "pl": {
         "code": "pl",
-        "name": "Польша",
-        "flag": "🇵🇱",
-        "ip": PL_IP,
+        "name": "Германия",
+        "flag": "🇩🇪",
+        "ip": os.environ.get("DE_STANDBY_IP", os.environ.get("DE_HOST", "192.0.2.3")),
     },
 }
 

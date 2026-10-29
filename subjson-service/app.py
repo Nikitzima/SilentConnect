@@ -7,9 +7,12 @@ QUIESCE_ACTIVE = False
 QUIESCE_LEASE_UNTIL = 0.0
 
 def is_quiesced() -> bool:
-    global QUIESCE_ACTIVE
+    global QUIESCE_ACTIVE, QUIESCE_LEASE_UNTIL
     with QUIESCE_LOCK:
-        return bool(QUIESCE_ACTIVE)
+        if QUIESCE_ACTIVE and time.time() >= QUIESCE_LEASE_UNTIL:
+            QUIESCE_ACTIVE = False
+            QUIESCE_LEASE_UNTIL = 0.0
+        return bool(QUIESCE_ACTIVE and time.time() < QUIESCE_LEASE_UNTIL)
 
 
 import base64
@@ -33,7 +36,8 @@ import time
 import urllib.parse
 import urllib.request
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from typing import Any
 import zlib
 
@@ -57,14 +61,22 @@ for _env_cand in (
                     if _line and not _line.startswith("#") and "=" in _line:
                         _k, _v = _line.split("=", 1)
                         _k = _k.strip()
-                        if (_k.startswith("MONTHLY_PRICE_") or _k.startswith("TURSO_")) and _k not in os.environ:
+                        _allowed_prefixes = (
+                            "MONTHLY_PRICE_",
+                            "TURSO_",
+                            "SERVER_PEPPER",
+                            "SECRET_SEGMENT",
+                            "CF_TURNSTILE_",
+                            "INTERNAL_SECRET",
+                        )
+                        if any(_k.startswith(_p) for _p in _allowed_prefixes) and _k not in os.environ:
                             os.environ[_k] = _v.strip().strip('"').strip("'")
         except Exception:
             pass
 
 try:
     from vpn_shop.catalog import calculate_renewal_price, quote_price
-    from vpn_shop.security import hash_secret, hash_token
+    from vpn_shop.security import hash_secret, hash_secret_candidates, hash_token, hash_token_candidates
     from vpn_shop.web import subscription_setup_url, verify_cf_turnstile
 except ImportError:
     def quote_price(device_limit: int = 3, duration_days: int = 30, settings: Any = None) -> int:
@@ -89,10 +101,21 @@ except ImportError:
         effective_pepper = os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")
         return hmac.new(effective_pepper, value.encode("utf-8"), hashlib.sha256).hexdigest()
 
+    def hash_secret_candidates(value: str) -> tuple[str, ...]:
+        primary = hash_secret(value)
+        legacy = hmac.new(b"silentconnect-pepper-secret-v1", value.encode("utf-8"), hashlib.sha256).hexdigest()
+        return (primary,) if primary == legacy else (primary, legacy)
+
     def hash_token(token: str, purpose: str = "") -> str:
         effective_pepper = os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")
         msg = f"{purpose}\x00{token}".encode("utf-8")
         return hmac.new(effective_pepper, msg, hashlib.sha256).hexdigest()
+
+    def hash_token_candidates(token: str, purpose: str = "") -> tuple[str, ...]:
+        primary = hash_token(token, purpose=purpose)
+        msg = f"{purpose}\x00{token}".encode("utf-8")
+        legacy = hmac.new(b"silentconnect-pepper-secret-v1", msg, hashlib.sha256).hexdigest()
+        return (primary,) if primary == legacy else (primary, legacy)
 
     def subscription_setup_url(subscription_url: str) -> str:
         return subscription_url.replace("/sub/json/", "/my-secret-sub/import/")
@@ -142,20 +165,26 @@ def _verify_order_web_token(order_row: Any, token: str | None) -> bool:
             stored_hash = order_row["web_token_hash"]
     except Exception:
         pass
-    eff_pepper = os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")
+    eff_peppers = [os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")]
+    legacy_pep = b"silentconnect-pepper-secret-v1"
+    if legacy_pep not in eff_peppers:
+        eff_peppers.append(legacy_pep)
+
     if stored_hash:
         msg = f"order_web\x00{token}".encode("utf-8")
-        expected_hash = hmac.new(eff_pepper, msg, hashlib.sha256).hexdigest()
-        if hmac.compare_digest(str(stored_hash), expected_hash):
-            return True
+        for pep in eff_peppers:
+            expected_hash = hmac.new(pep, msg, hashlib.sha256).hexdigest()
+            if hmac.compare_digest(str(stored_hash), expected_hash):
+                return True
     try:
         raw_meta = order_row["meta_json"] if "meta_json" in order_row.keys() else None
         meta = (json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta) or {}
         sub_hint = str(meta.get("sub_id") or meta.get("target_sub_id") or "").strip()
         if sub_hint:
-            expected_sub_tok = hmac.new(eff_pepper, f"sub_order_token:{order_row['public_id']}:{sub_hint}".encode("utf-8"), hashlib.sha256).hexdigest()
-            if hmac.compare_digest(expected_sub_tok, token):
-                return True
+            for pep in eff_peppers:
+                expected_sub_tok = hmac.new(pep, f"sub_order_token:{order_row['public_id']}:{sub_hint}".encode("utf-8"), hashlib.sha256).hexdigest()
+                if hmac.compare_digest(expected_sub_tok, token):
+                    return True
     except Exception:
         pass
     # Fallback to meta_json['web_token']
@@ -282,12 +311,22 @@ FI_REALITY_SHORT_ID = os.environ.get("FI_REALITY_SHORT_ID", "0123456789abcdef").
 FI_GRPC_REALITY_PUBLIC_KEY = os.environ.get("FI_GRPC_REALITY_PUBLIC_KEY", FI_REALITY_PUBLIC_KEY).strip()
 FI_GRPC_REALITY_SHORT_ID = os.environ.get("FI_GRPC_REALITY_SHORT_ID", FI_REALITY_SHORT_ID).strip()
 
-PL_STANDBY_HOST = os.environ.get("PL_STANDBY_HOST", "").strip()
-PL_REALITY_PUBLIC_KEY = os.environ.get("PL_REALITY_PUBLIC_KEY", "hgj4G9HOJ_6OVYTkeha0vVdEcyuLVzR4Op2BV7CeIW8").strip()
-PL_REALITY_SHORT_ID = os.environ.get("PL_REALITY_SHORT_ID", "9f4a1c7e2b8d0a35").strip()
-PL_REALITY_SNI_CLASSIC = os.environ.get("PL_REALITY_SNI_CLASSIC", "sber.ru").strip()
-PL_REALITY_SNI_FAST = os.environ.get("PL_REALITY_SNI_FAST", "speed.cloudflare.com").strip()
-PL_XHTTP_REALITY_PORT = int(os.environ.get("PL_XHTTP_REALITY_PORT", "8443"))
+DE_STANDBY_HOST = os.environ.get("DE_STANDBY_HOST", "de.silentconnect.net").strip()  # PLACEHOLDER
+DE_REALITY_PUBLIC_KEY = os.environ.get("DE_REALITY_PUBLIC_KEY", NL_REALITY_PUBLIC_KEY).strip()
+DE_REALITY_SHORT_ID = os.environ.get("DE_REALITY_SHORT_ID", NL_REALITY_SHORT_ID).strip()
+DE_REALITY_SNI_CLASSIC = os.environ.get("DE_REALITY_SNI_CLASSIC", "sber.ru").strip()
+DE_REALITY_SNI_FAST = os.environ.get("DE_REALITY_SNI_FAST", "st.kinopoisk.ru").strip()
+DE_GRPC_REALITY_SNI = os.environ.get("DE_GRPC_REALITY_SNI", "vk.com").strip()
+DE_XHTTP_REALITY_PORT = int(os.environ.get("DE_XHTTP_REALITY_PORT", "8443"))
+DE_GRPC_REALITY_PUBLIC_KEY = os.environ.get("DE_GRPC_REALITY_PUBLIC_KEY", NL_REALITY_PUBLIC_KEY).strip()
+DE_GRPC_REALITY_SHORT_ID = os.environ.get("DE_GRPC_REALITY_SHORT_ID", NL_REALITY_SHORT_ID).strip()
+
+PL_STANDBY_HOST = DE_STANDBY_HOST
+PL_REALITY_PUBLIC_KEY = DE_REALITY_PUBLIC_KEY
+PL_REALITY_SHORT_ID = DE_REALITY_SHORT_ID
+PL_REALITY_SNI_CLASSIC = DE_REALITY_SNI_CLASSIC
+PL_REALITY_SNI_FAST = DE_REALITY_SNI_FAST
+PL_XHTTP_REALITY_PORT = DE_XHTTP_REALITY_PORT
 
 # Backwards compatibility / Local host fallback
 TCP_REALITY_PUBLIC_KEY = os.environ.get("TCP_REALITY_PUBLIC_KEY", NL_REALITY_PUBLIC_KEY).strip()
@@ -364,15 +403,22 @@ _inbounds_cache_mtime: tuple[float, float, int] | None = None
 _cached_raw_rows: list[sqlite3.Row] = []
 _cached_inbounds_parsed: list[tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]]]] = []
 _cached_clients_index: dict[str, tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]] = {}
+_cached_sub_index: dict[str, tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]] = {}
+_cached_uuid_index: dict[str, tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]] = {}
+_cached_email_index: dict[str, tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]] = {}
 
 
 def invalidate_inbounds_cache() -> None:
     global _inbounds_cache_mtime, _cached_raw_rows, _cached_inbounds_parsed, _cached_clients_index
+    global _cached_sub_index, _cached_uuid_index, _cached_email_index
     with _inbounds_cache_lock:
         _inbounds_cache_mtime = None
         _cached_raw_rows = []
         _cached_inbounds_parsed = []
         _cached_clients_index = {}
+        _cached_sub_index = {}
+        _cached_uuid_index = {}
+        _cached_email_index = {}
 
 
 def _get_xui_db_mtime() -> tuple[float, float, int] | None:
@@ -395,6 +441,7 @@ def _get_xui_db_mtime() -> tuple[float, float, int] | None:
 
 def _ensure_inbounds_cache() -> None:
     global _inbounds_cache_mtime, _cached_raw_rows, _cached_inbounds_parsed, _cached_clients_index
+    global _cached_sub_index, _cached_uuid_index, _cached_email_index
     current_mtime = _get_xui_db_mtime()
     if current_mtime is None:
         invalidate_inbounds_cache()
@@ -424,6 +471,9 @@ def _ensure_inbounds_cache() -> None:
 
         new_parsed: list[tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]]]] = []
         new_index: dict[str, tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]] = {}
+        new_sub_index: dict[str, tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]] = {}
+        new_uuid_index: dict[str, tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]] = {}
+        new_email_index: dict[str, tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]] = {}
 
         for row in rows:
             settings = parse_json_blob(row["settings"])
@@ -436,6 +486,12 @@ def _ensure_inbounds_cache() -> None:
                 c_email = str(client.get("email") or "").strip()
                 c_id = str(client.get("id") or "").strip()
                 match_tuple = (row, settings, stream_settings, sniffing, client)
+                if c_sub and c_sub not in new_sub_index:
+                    new_sub_index[c_sub] = match_tuple
+                if c_id and c_id not in new_uuid_index:
+                    new_uuid_index[c_id] = match_tuple
+                if c_email and c_email not in new_email_index:
+                    new_email_index[c_email] = match_tuple
                 if c_sub and c_sub not in new_index:
                     new_index[c_sub] = match_tuple
                 if c_email and c_email not in new_index:
@@ -446,6 +502,9 @@ def _ensure_inbounds_cache() -> None:
         _cached_raw_rows = rows
         _cached_inbounds_parsed = new_parsed
         _cached_clients_index = new_index
+        _cached_sub_index = new_sub_index
+        _cached_uuid_index = new_uuid_index
+        _cached_email_index = new_email_index
         _inbounds_cache_mtime = current_mtime
 
 
@@ -500,8 +559,8 @@ BIND_EMAIL_RATE_LIMIT_MAX_ENTRIES = 5000
 
 
 def check_bind_email_rate_limit(client_ip: str, max_requests: int = 15, window_sec: int = 300) -> bool:
-    if not client_ip or client_ip in ("127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1"):
-        return True
+    if not client_ip:
+        client_ip = "unknown"
     now = time.time()
     with BIND_EMAIL_RATE_LIMIT_LOCK:
         history = [t for t in BIND_EMAIL_RATE_LIMITS.get(client_ip, []) if now - t < window_sec]
@@ -636,6 +695,9 @@ DEFAULT_OPENFLUX_POOLS: dict[str, list[str]] = {
     "nl": [
         "https://example.com/docs/shard1"
     ],
+    "de": [
+        "https://example.com/docs/shard3"
+    ],
     "pl": [
         "https://example.com/docs/shard3"
     ],
@@ -668,7 +730,8 @@ def build_openflux_v1_link(country: str, sub_id: str, label: str = "") -> tuple[
     c = (country or "nl").lower().strip()
     country_labels = {
         "nl": ("Нидерланды", "🇳🇱"),
-        "pl": ("Польша", "🇵🇱"),
+        "de": ("Германия", "🇩🇪"),
+        "pl": ("Германия", "🇩🇪"),
         "fi": ("Финляндия", "🇫🇮"),
     }
     c_name, flag = country_labels.get(c, ("Нидерланды", "🇳🇱"))
@@ -925,7 +988,7 @@ def find_store_linked_email(sub_id: str) -> str:
                 """
                 SELECT o.customer_email FROM orders o
                 JOIN profiles p ON p.id = o.provisioned_profile_id
-                WHERE p.public_id = ? AND o.customer_email != ''
+                WHERE p.public_id = ? AND o.customer_email != '' AND o.status = 'delivered'
                 ORDER BY o.id DESC LIMIT 1
                 """,
                 (target_sub,),
@@ -940,7 +1003,7 @@ def find_store_linked_email(sub_id: str) -> str:
         prof = ro_conn.execute("SELECT id FROM profiles WHERE xui_email = ?", (xui_email,)).fetchone()
         if prof:
             ord_row = ro_conn.execute(
-                "SELECT customer_email FROM orders WHERE provisioned_profile_id = ? AND customer_email != '' ORDER BY id DESC LIMIT 1",
+                "SELECT customer_email FROM orders WHERE provisioned_profile_id = ? AND customer_email != '' AND status = 'delivered' ORDER BY id DESC LIMIT 1",
                 (prof["id"],)
             ).fetchone()
             if ord_row and ord_row["customer_email"]:
@@ -1185,6 +1248,15 @@ def bind_subscription_email(
     }
 
 
+def _escape_tg_markdown(text: str) -> str:
+    """Escape Telegram Markdown v1 special characters."""
+    if not text:
+        return ""
+    for ch in ("\\", "_", "*", "`", "[", "]"):
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
+
 def _notify_admins_new_renewal_order(
     order_public_id: str,
     customer_email: str,
@@ -1242,11 +1314,11 @@ def _notify_admins_new_renewal_order(
         text = "\n".join([
             "🛒 Продление подписки на сайте (ожидает оплаты)",
             "",
-            f"Заказ: `{order_public_id}`",
-            f"Email: `{email_str}`",
-            f"Транспорт: {tr_label}",
+            f"Заказ: `{_escape_tg_markdown(order_public_id)}`",
+            f"Email: `{_escape_tg_markdown(email_str)}`",
+            f"Транспорт: {_escape_tg_markdown(tr_label)}",
             f"Срок: {duration_days} дн.",
-            f"Лимит: {lim_label}",
+            f"Лимит: {_escape_tg_markdown(lim_label)}",
             f"Сумма: {final_price_rub} RUB",
             "",
             "Покупатель перешел к оплате. Реквизиты выдаются оператором в поддержке.",
@@ -1373,17 +1445,19 @@ def create_inline_renewal_order(
         discount_percent = 0
         promo_id = None
         if promo_code:
-            code_hash = hash_secret(promo_code.strip().upper())
+            cands = hash_secret_candidates(promo_code.strip().upper())
+            placeholders = ", ".join("?" for _ in cands)
             now_ts = int(time.time())
             p_row = conn_shop.execute(
-                """
+                f"""
                 SELECT * FROM promo_codes
-                WHERE code_hash = ?
+                WHERE code_hash IN ({placeholders})
                   AND enabled = 1
                   AND used_count < max_uses
                   AND (expires_at IS NULL OR expires_at > ?)
+                LIMIT 1
                 """,
-                (code_hash, now_ts),
+                (*cands, now_ts),
             ).fetchone()
             if p_row:
                 discount_percent = int(p_row["discount_percent"] or 0)
@@ -1422,6 +1496,7 @@ def create_inline_renewal_order(
             "customer_email": final_email,
             "renewal_profile_public_id": str(prof_dict["public_id"]),
             "sub_id": sub_id,
+            "target_sub_id": sub_id,
             "email_reminders": email_reminders,
         }
         if source_meta.get("referrer_id"):
@@ -1518,9 +1593,33 @@ def create_inline_renewal_order(
                     invalidate_inbounds_cache()
 
                 # Update profiles & orders in shop db
-                conn_shop.execute("UPDATE profiles SET expires_at = ?, last_renewed_at = ? WHERE id = ?", (new_exp_s, now, prof_dict["id"]))
+                awg_quota_bytes = 250 * 1024 * 1024 * 1024
+                if device_limit == 6:
+                    awg_quota_bytes = 500 * 1024 * 1024 * 1024
+                elif device_limit == 9:
+                    awg_quota_bytes = 1000 * 1024 * 1024 * 1024
+
+                conn_shop.execute(
+                    """
+                    UPDATE profiles
+                    SET expires_at = ?,
+                        last_renewed_at = ?,
+                        device_limit = ?,
+                        awg_quota_bytes = ?,
+                        awg_used_bytes = 0,
+                        awg_reset_at = ?
+                    WHERE id = ?
+                    """,
+                    (new_exp_s, now, device_limit, awg_quota_bytes, new_exp_s, prof_dict["id"])
+                )
                 conn_shop.execute("UPDATE orders SET status = 'delivered', closed_at = ? WHERE public_id = ?", (now, order_pub_id))
                 conn_shop.commit()
+
+                try:
+                    from vpn_shop.xui_reconciler import notify_local_reconciler
+                    notify_local_reconciler()
+                except Exception:
+                    pass
             except Exception as prov_err:
                 LOGGER.exception("Failed to provision renewal order %s: %s", order_pub_id, prov_err)
                 conn_shop.execute("UPDATE orders SET status = 'cancelled', updated_at = ?, closed_at = ? WHERE public_id = ?", (now, now, order_pub_id))
@@ -1828,10 +1927,10 @@ def handle_inline_order_paid(order_public_id: str, web_token: str | None = None)
             if admin_chats:
                 row_dict = dict(row)
                 customer_email = str(row_dict.get("customer_email") or meta.get("customer_email") or "").strip()
-                email_info = f"\n📧 Email: `{customer_email}`" if customer_email else ""
+                email_info = f"\n📧 Email: `{_escape_tg_markdown(customer_email)}`" if customer_email else ""
                 msg_text = (
-                    f"💳 **Покупатель с сайта сообщил об оплате**\n\n"
-                    f"Заказ: `{order_public_id}`\n"
+                    f"💳 *Покупатель с сайта сообщил об оплате*\n\n"
+                    f"Заказ: `{_escape_tg_markdown(order_public_id)}`\n"
                     f"Тип: Продление подписки\n"
                     f"Срок: {row_dict.get('duration_days', 30)} дн.{email_info}\n"
                     f"Сумма: {row_dict.get('final_price_rub', 0)} RUB\n\n"
@@ -2044,26 +2143,29 @@ def find_subscription(subscription_id: str) -> tuple[sqlite3.Row, dict[str, Any]
 
 def _find_subscription_impl(subscription_id: str) -> tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     target = subscription_id.strip()
+    if not target or target.startswith(("anon-", "ord_")):
+        raise KeyError(subscription_id)
+
     _ensure_inbounds_cache()
     with _inbounds_cache_lock:
-        if target in _cached_clients_index:
-            row, settings, stream_settings, sniffing, client = _cached_clients_index[target]
+        if target in _cached_sub_index:
+            row, settings, stream_settings, sniffing, client = _cached_sub_index[target]
             return row, copy.deepcopy(settings), copy.deepcopy(stream_settings), copy.deepcopy(sniffing), copy.deepcopy(client)
 
     try:
         conn = get_store_db()
         try:
             prof = conn.execute(
-                "SELECT xui_email FROM profiles WHERE public_id = ? OR xui_sub_id = ? OR xui_client_id = ?",
-                (target, target, target),
+                "SELECT xui_email FROM profiles WHERE (public_id = ? OR xui_sub_id = ?) AND status != 'deleted'",
+                (target, target),
             ).fetchone()
         finally:
             conn.close()
         if prof and prof["xui_email"]:
             xemail = str(prof["xui_email"]).strip()
             with _inbounds_cache_lock:
-                if xemail in _cached_clients_index:
-                    row, settings, stream_settings, sniffing, client = _cached_clients_index[xemail]
+                if xemail in _cached_email_index:
+                    row, settings, stream_settings, sniffing, client = _cached_email_index[xemail]
                     return row, copy.deepcopy(settings), copy.deepcopy(stream_settings), copy.deepcopy(sniffing), copy.deepcopy(client)
     except Exception:
         pass
@@ -3164,6 +3266,7 @@ def build_singbox_smart_config(
                 "sub.silentconnect.net",  # PLACEHOLDER
                 "edge.silentconnect.net",  # PLACEHOLDER
                 "fi.silentconnect.net",  # PLACEHOLDER
+                "de.silentconnect.net",  # PLACEHOLDER
                 "pl.silentconnect.net",  # PLACEHOLDER
                 "aiprimetech.io",
                 "platega.io",
@@ -3188,73 +3291,74 @@ def build_singbox_smart_config(
             },
         ])
 
-    pl_edge = os.environ.get("PL_STANDBY_HOST", PL_STANDBY_HOST).strip()
+    de_edge = os.environ.get("DE_STANDBY_HOST", os.environ.get("DE_STANDBY_IP", "de.silentconnect.net")).strip()  # PLACEHOLDER
+    pl_edge = de_edge or os.environ.get("PL_STANDBY_HOST", PL_STANDBY_HOST).strip()
     if pl_edge:
         for ob_group in outbounds:
             if ob_group.get("tag") == "proxy-selector":
                 idx = ob_group["outbounds"].index("nl-ws443") if "nl-ws443" in ob_group["outbounds"] else len(ob_group["outbounds"])
                 ob_group["outbounds"][idx:idx] = [
-                    "pl-classic-tcp",
-                    "pl-fast-tcp",
-                    "pl-speed-hysteria2",
-                    "pl-backup-grpc",
+                    "de-classic-tcp",
+                    "de-fast-tcp",
+                    "de-speed-hysteria2",
+                    "de-backup-grpc",
                 ]
                 if "fi-ws443" in ob_group["outbounds"]:
                     fi_idx = ob_group["outbounds"].index("fi-ws443")
-                    ob_group["outbounds"].insert(fi_idx + 1, "pl-ws443")
+                    ob_group["outbounds"].insert(fi_idx + 1, "de-ws443")
                 else:
-                    ob_group["outbounds"].append("pl-ws443")
+                    ob_group["outbounds"].append("de-ws443")
             elif ob_group.get("tag") == "auto-urltest":
                 ob_group["outbounds"].extend([
-                    "pl-classic-tcp",
-                    "pl-fast-tcp",
-                    "pl-speed-hysteria2",
-                    "pl-backup-grpc",
+                    "de-classic-tcp",
+                    "de-fast-tcp",
+                    "de-speed-hysteria2",
+                    "de-backup-grpc",
                 ])
 
         direct_idx = next((i for i, ob in enumerate(outbounds) if ob.get("tag") == "direct"), len(outbounds))
-        pl_obs = [
+        de_obs = [
             {
                 "type": "vless",
-                "tag": "pl-classic-tcp",
+                "tag": "de-classic-tcp",
                 "server": pl_edge,
                 "server_port": 443,
                 "uuid": client_uuid,
                 "flow": "xtls-rprx-vision",
                 "tls": {
                     "enabled": True,
-                    "server_name": PL_REALITY_SNI_CLASSIC,
+                    "server_name": DE_REALITY_SNI_CLASSIC,
                     "utls": {"enabled": True, "fingerprint": "chrome"},
                     "reality": {
                         "enabled": True,
-                        "public_key": PL_REALITY_PUBLIC_KEY,
-                        "short_id": PL_REALITY_SHORT_ID,
+                        "public_key": DE_REALITY_PUBLIC_KEY,
+                        "short_id": DE_REALITY_SHORT_ID,
                     },
                 },
                 "packet_encoding": "xudp",
             },
             {
                 "type": "vless",
-                "tag": "pl-fast-tcp",
+                "tag": "de-fast-tcp",
                 "server": pl_edge,
                 "server_port": 443,
                 "uuid": client_uuid,
                 "flow": "xtls-rprx-vision",
                 "tls": {
                     "enabled": True,
-                    "server_name": PL_REALITY_SNI_FAST,
+                    "server_name": DE_REALITY_SNI_FAST,
                     "utls": {"enabled": True, "fingerprint": "chrome"},
                     "reality": {
                         "enabled": True,
-                        "public_key": PL_REALITY_PUBLIC_KEY,
-                        "short_id": PL_REALITY_SHORT_ID,
+                        "public_key": DE_REALITY_PUBLIC_KEY,
+                        "short_id": DE_REALITY_SHORT_ID,
                     },
                 },
                 "packet_encoding": "xudp",
             },
             {
                 "type": "hysteria2",
-                "tag": "pl-speed-hysteria2",
+                "tag": "de-speed-hysteria2",
                 "server": pl_edge,
                 "server_ports": ["30000:40000"],
                 "hop_interval": "60s",
@@ -3273,29 +3377,31 @@ def build_singbox_smart_config(
             },
             {
                 "type": "vless",
-                "tag": "pl-backup-grpc",
+                "tag": "de-backup-grpc",
                 "server": pl_edge,
                 "server_port": 29443,
                 "uuid": client_uuid,
                 "transport": {
                     "type": "grpc",
                     "service_name": GRPC_SERVICE_NAME,
+                    "idle_timeout": "15s",
+                    "ping_timeout": "15s",
                 },
                 "tls": {
                     "enabled": True,
-                    "server_name": PL_REALITY_SNI_CLASSIC,
+                    "server_name": DE_GRPC_REALITY_SNI,
                     "utls": {"enabled": True, "fingerprint": "chrome"},
                     "reality": {
                         "enabled": True,
-                        "public_key": PL_REALITY_PUBLIC_KEY,
-                        "short_id": PL_REALITY_SHORT_ID,
+                        "public_key": DE_GRPC_REALITY_PUBLIC_KEY,
+                        "short_id": DE_GRPC_REALITY_SHORT_ID,
                     },
                 },
                 "packet_encoding": "xudp",
             },
             {
                 "type": "vless",
-                "tag": "pl-ws443",
+                "tag": "de-ws443",
                 "server": pl_edge,
                 "server_port": 443,
                 "uuid": client_uuid,
@@ -3312,7 +3418,7 @@ def build_singbox_smart_config(
                 "packet_encoding": "xudp",
             },
         ]
-        outbounds[direct_idx:direct_idx] = pl_obs
+        outbounds[direct_idx:direct_idx] = de_obs
 
     if tag_style is None:
         tag_style = os.environ.get("SINGBOX_TAG_STYLE", "legacy")
@@ -3330,16 +3436,23 @@ def build_singbox_smart_config(
             "fi-speed-hysteria2": "🇫🇮 Скоростной (Hysteria 2)",
             "fi-backup-grpc": "🇫🇮 Резерв (gRPC)",
             "fi-stealth-xhttp": "🇫🇮 Стелс (XHTTP)",
-            "pl-classic-tcp": "🇵🇱 Classic (TCP Reality)",
-            "pl-fast-tcp": "🇵🇱 Fast (TCP Reality)",
-            "pl-speed-hysteria2": "🇵🇱 Скоростной (Hysteria 2)",
-            "pl-backup-grpc": "🇵🇱 Резерв (gRPC)",
-            "pl-stealth-xhttp": "🇵🇱 Стелс (XHTTP)",
+            "de-classic-tcp": "🇩🇪 Classic (TCP Reality)",
+            "de-fast-tcp": "🇩🇪 Fast (TCP Reality)",
+            "de-speed-hysteria2": "🇩🇪 Скоростной (Hysteria 2)",
+            "de-backup-grpc": "🇩🇪 Резерв (gRPC)",
+            "de-stealth-xhttp": "🇩🇪 Стелс (XHTTP)",
+            "pl-classic-tcp": "🇩🇪 Classic (TCP Reality)",
+            "pl-fast-tcp": "🇩🇪 Fast (TCP Reality)",
+            "pl-speed-hysteria2": "🇩🇪 Скоростной (Hysteria 2)",
+            "pl-backup-grpc": "🇩🇪 Резерв (gRPC)",
+            "pl-stealth-xhttp": "🇩🇪 Стелс (XHTTP)",
             "nl-ws443": "🇳🇱 Резерв (WebSocket)",
             "fi-ws443": "🇫🇮 Резерв (WebSocket)",
-            "pl-ws443": "🇵🇱 Резерв (WebSocket)",
+            "de-ws443": "🇩🇪 Резерв (WebSocket)",
+            "pl-ws443": "🇩🇪 Резерв (WebSocket)",
             "nl-openflux-socks": "🇳🇱 🛡️ Белые Списки · NL",
-            "pl-openflux-socks": "🇵🇱 🛡️ Белые Списки · PL",
+            "de-openflux-socks": "🇩🇪 🛡️ Белые Списки · DE",
+            "pl-openflux-socks": "🇩🇪 🛡️ Белые Списки · DE",
             "fi-openflux-socks": "🇫🇮 🛡️ Белые Списки · FI",
             "direct": "🎯 Прямой трафик (Direct)",
         }
@@ -3392,7 +3505,8 @@ def build_singbox_smart_config(
                         "sub.silentconnect.net",  # PLACEHOLDER
                         "edge.silentconnect.net",  # PLACEHOLDER
                         "fi.silentconnect.net",  # PLACEHOLDER
-                        "pl.silentconnect.net",  # PLACEHOLDER
+                        "de.silentconnect.net",  # PLACEHOLDER
+                "pl.silentconnect.net",  # PLACEHOLDER
                         "aiprimetech.io",
                         "platega.io",
                         "api.platega.io",
@@ -3606,11 +3720,12 @@ def build_clash_meta_config(
         },
     ]
 
-    pl_edge = os.environ.get("PL_STANDBY_HOST", PL_STANDBY_HOST).strip()
+    de_edge = os.environ.get("DE_STANDBY_HOST", os.environ.get("DE_STANDBY_IP", "de.silentconnect.net")).strip()  # PLACEHOLDER
+    pl_edge = de_edge or os.environ.get("PL_STANDBY_HOST", PL_STANDBY_HOST).strip()
     if pl_edge:
         proxies.extend([
             {
-                "name": "🇵🇱 PL Classic Reality TCP",
+                "name": "🇩🇪 DE Classic Reality TCP",
                 "type": "vless",
                 "server": pl_edge,
                 "port": 443,
@@ -3627,7 +3742,7 @@ def build_clash_meta_config(
                 "udp": True,
             },
             {
-                "name": "🇵🇱 PL Fast Reality TCP",
+                "name": "🇩🇪 DE Fast Reality TCP",
                 "type": "vless",
                 "server": pl_edge,
                 "port": 443,
@@ -3644,7 +3759,7 @@ def build_clash_meta_config(
                 "udp": True,
             },
             {
-                "name": "🇵🇱 PL Speed Hysteria2",
+                "name": "🇩🇪 DE Speed Hysteria2",
                 "type": "hysteria2",
                 "server": pl_edge,
                 "port": 38443,
@@ -3659,7 +3774,7 @@ def build_clash_meta_config(
                 "udp": True,
             },
             {
-                "name": "🇵🇱 PL Backup Reality gRPC",
+                "name": "🇩🇪 DE Backup Reality gRPC",
                 "type": "vless",
                 "server": pl_edge,
                 "port": 29443,
@@ -3686,7 +3801,7 @@ def build_clash_meta_config(
             "udp": True,
         },
         {
-            "name": "🇵🇱 🛡️ Белые Списки · PL",
+            "name": "🇩🇪 🛡️ Белые Списки · DE",
             "type": "socks5",
             "server": "127.0.0.1",
             "port": 1081,
@@ -3719,16 +3834,16 @@ def build_clash_meta_config(
             "proxies": [
                 "🇳🇱 NL Classic Reality TCP",
                 "🇫🇮 FI Classic Reality TCP",
-                "🇵🇱 PL Classic Reality TCP",
+                "🇩🇪 DE Classic Reality TCP",
                 "🇳🇱 NL Fast Reality TCP",
                 "🇫🇮 FI Fast Reality TCP",
-                "🇵🇱 PL Fast Reality TCP",
+                "🇩🇪 DE Fast Reality TCP",
                 "🇳🇱 NL Backup Reality gRPC",
                 "🇫🇮 FI Backup Reality gRPC",
-                "🇵🇱 PL Backup Reality gRPC",
+                "🇩🇪 DE Backup Reality gRPC",
                 "🇳🇱 NL Speed Hysteria2",
                 "🇫🇮 FI Speed Hysteria2",
-                "🇵🇱 PL Speed Hysteria2",
+                "🇩🇪 DE Speed Hysteria2",
             ],
             "url": "https://cp.cloudflare.com/generate_204",
             "interval": 180,
@@ -3829,14 +3944,15 @@ def build_streisand_bundle(
         f"vless://{client_uuid}@{fi_edge}:29443?type=grpc&security=reality&pbk={FI_GRPC_REALITY_PUBLIC_KEY}&fp=chrome&sni={FI_GRPC_REALITY_SNI}&sid={FI_GRPC_REALITY_SHORT_ID}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇫🇮 9. Запасной gRPC (FI)')}",
         f"vless://{client_uuid}@{fi_edge}:{FI_XHTTP_REALITY_PORT}?type=xhttp&security=reality&pbk={fi_xhttp_pk}&fp=chrome&sni={FI_XHTTP_REALITY_SNI}&sid={fi_xhttp_sid}&path=%2Fxh-7m2q9r4k1v8p3s6&mode=stream-one#{urllib.parse.quote('🇫🇮 10. Незаметный XHTTP Reality (FI)')}",
     ]
-    pl_edge = os.environ.get("PL_STANDBY_HOST", PL_STANDBY_HOST).strip()
+    de_edge = os.environ.get("DE_STANDBY_HOST", os.environ.get("DE_STANDBY_IP", "de.silentconnect.net")).strip()  # PLACEHOLDER
+    pl_edge = de_edge or os.environ.get("PL_STANDBY_HOST", PL_STANDBY_HOST).strip()
     if pl_edge:
         uris.extend([
-            f"vless://{client_uuid}@{pl_edge}:443?type=tcp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇵🇱 11. Классический TCP (PL)')}",
-            f"vless://{client_uuid}@{pl_edge}:443?type=tcp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_FAST}&sid={PL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇵🇱 12. Быстрый TCP (PL)')}",
-            f"hy2://{client_uuid}@{pl_edge}:38443?sni={pl_edge}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}&mport=30000-40000#{urllib.parse.quote('🇵🇱 13. Скоростной Hysteria2 (PL)')}",
-            f"vless://{client_uuid}@{pl_edge}:29443?type=grpc&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇵🇱 14. Запасной gRPC (PL)')}",
-            f"vless://{client_uuid}@{pl_edge}:{PL_XHTTP_REALITY_PORT}?type=xhttp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&path=%2Fxh-7m2q9r4k1v8p3s6&mode=stream-one#{urllib.parse.quote('🇵🇱 15. Незаметный XHTTP Reality (PL)')}",
+            f"vless://{client_uuid}@{pl_edge}:443?type=tcp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇩🇪 11. Классический TCP (DE)')}",
+            f"vless://{client_uuid}@{pl_edge}:443?type=tcp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_FAST}&sid={PL_REALITY_SHORT_ID}&flow=xtls-rprx-vision#{urllib.parse.quote('🇩🇪 12. Быстрый TCP (DE)')}",
+            f"hy2://{client_uuid}@{pl_edge}:38443?sni={pl_edge}&alpn=h3&obfs=gecko&obfs-password={salamander_pwd}&mport=30000-40000#{urllib.parse.quote('🇩🇪 13. Скоростной Hysteria2 (DE)')}",
+            f"vless://{client_uuid}@{pl_edge}:29443?type=grpc&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇩🇪 14. Запасной gRPC (DE)')}",
+            f"vless://{client_uuid}@{pl_edge}:{PL_XHTTP_REALITY_PORT}?type=xhttp&security=reality&pbk={PL_REALITY_PUBLIC_KEY}&fp=chrome&sni={PL_REALITY_SNI_CLASSIC}&sid={PL_REALITY_SHORT_ID}&path=%2Fxh-7m2q9r4k1v8p3s6&mode=stream-one#{urllib.parse.quote('🇩🇪 15. Незаметный XHTTP Reality (DE)')}",
         ])
 
     raw_bundle = "\n".join(uris)
@@ -4329,51 +4445,55 @@ def build_four_profiles(
         fi_grpc,
     ]
 
-    pl_edge = os.environ.get("PL_STANDBY_HOST", PL_STANDBY_HOST).strip()
+    de_edge = os.environ.get("DE_STANDBY_HOST", os.environ.get("DE_STANDBY_IP", "de.silentconnect.net")).strip()  # PLACEHOLDER
+    pl_edge = de_edge or os.environ.get("PL_STANDBY_HOST", PL_STANDBY_HOST).strip()
     if pl_edge:
-        # --- Profile 11: PL Classic ---
-        pl_sber = copy.deepcopy(sber_cfg)
-        pl_sber["remarks"] = f"🇵🇱 🛡️ Классический ({email})"
-        pl_sber["outbounds"][0]["settings"]["address"] = pl_edge
-        pl_sber["outbounds"][0]["streamSettings"]["realitySettings"]["publicKey"] = PL_REALITY_PUBLIC_KEY
-        pl_sber["outbounds"][0]["streamSettings"]["realitySettings"]["shortId"] = PL_REALITY_SHORT_ID
-        pl_sber["outbounds"][0]["streamSettings"]["realitySettings"]["serverName"] = PL_REALITY_SNI_CLASSIC
-        pl_sber["meta"] = build_happ_config_meta(subscription_id)
-        if pl_sber["meta"]:
-            pl_sber["meta"]["serverDescription"] = "Классический · TCP Reality (PL)"
+        # --- Profile 11: DE Classic ---
+        de_sber = copy.deepcopy(sber_cfg)
+        de_sber["remarks"] = f"🇩🇪 🛡️ Классический ({email})"
+        de_sber["outbounds"][0]["settings"]["address"] = pl_edge
+        de_sber["outbounds"][0]["settings"]["port"] = 443
+        de_sber["outbounds"][0]["streamSettings"]["realitySettings"]["publicKey"] = DE_REALITY_PUBLIC_KEY
+        de_sber["outbounds"][0]["streamSettings"]["realitySettings"]["shortId"] = DE_REALITY_SHORT_ID
+        de_sber["outbounds"][0]["streamSettings"]["realitySettings"]["serverName"] = DE_REALITY_SNI_CLASSIC
+        de_sber["meta"] = build_happ_config_meta(subscription_id)
+        if de_sber["meta"]:
+            de_sber["meta"]["serverDescription"] = "Классический · TCP Reality (DE)"
 
-        # --- Profile 12: PL Fast ---
-        pl_kino = copy.deepcopy(kino_cfg)
-        pl_kino["remarks"] = f"🇵🇱 ⚡ Быстрый ({email})"
-        pl_kino["outbounds"][0]["settings"]["address"] = pl_edge
-        pl_kino["outbounds"][0]["streamSettings"]["realitySettings"]["publicKey"] = PL_REALITY_PUBLIC_KEY
-        pl_kino["outbounds"][0]["streamSettings"]["realitySettings"]["shortId"] = PL_REALITY_SHORT_ID
-        pl_kino["outbounds"][0]["streamSettings"]["realitySettings"]["serverName"] = PL_REALITY_SNI_FAST
-        pl_kino["meta"] = build_happ_config_meta(subscription_id)
-        if pl_kino["meta"]:
-            pl_kino["meta"]["serverDescription"] = "Быстрый · TCP Reality (PL)"
+        # --- Profile 12: DE Fast ---
+        de_kino = copy.deepcopy(kino_cfg)
+        de_kino["remarks"] = f"🇩🇪 ⚡ Быстрый ({email})"
+        de_kino["outbounds"][0]["settings"]["address"] = pl_edge
+        de_kino["outbounds"][0]["settings"]["port"] = 443
+        de_kino["outbounds"][0]["streamSettings"]["realitySettings"]["publicKey"] = DE_REALITY_PUBLIC_KEY
+        de_kino["outbounds"][0]["streamSettings"]["realitySettings"]["shortId"] = DE_REALITY_SHORT_ID
+        de_kino["outbounds"][0]["streamSettings"]["realitySettings"]["serverName"] = DE_REALITY_SNI_FAST
+        de_kino["meta"] = build_happ_config_meta(subscription_id)
+        if de_kino["meta"]:
+            de_kino["meta"]["serverDescription"] = "Быстрый · TCP Reality (DE)"
 
-        # --- Profile 13: PL Hysteria 2 ---
-        pl_hyst = copy.deepcopy(hyst_cfg)
-        pl_hyst["remarks"] = f"🇵🇱 🚀 Скоростной ({email})"
-        pl_hyst["outbounds"][0]["settings"]["address"] = pl_edge
-        pl_hyst["outbounds"][0]["streamSettings"]["tlsSettings"]["serverName"] = pl_edge
-        pl_hyst["meta"] = build_happ_config_meta(subscription_id)
-        if pl_hyst["meta"]:
-            pl_hyst["meta"]["serverDescription"] = "Скоростной · Hysteria 2 + UDP (PL)"
+        # --- Profile 13: DE Hysteria 2 ---
+        de_hyst = copy.deepcopy(hyst_cfg)
+        de_hyst["remarks"] = f"🇩🇪 🚀 Скоростной ({email})"
+        de_hyst["outbounds"][0]["settings"]["address"] = pl_edge
+        de_hyst["outbounds"][0]["streamSettings"]["tlsSettings"]["serverName"] = pl_edge
+        de_hyst["meta"] = build_happ_config_meta(subscription_id)
+        if de_hyst["meta"]:
+            de_hyst["meta"]["serverDescription"] = "Скоростной · Hysteria 2 + UDP (DE)"
 
-        # --- Profile 14: PL VLESS gRPC ---
-        pl_grpc = copy.deepcopy(grpc_cfg)
-        pl_grpc["remarks"] = f"🇵🇱 🔐 Запасной ({email})"
-        pl_grpc["outbounds"][0]["settings"]["address"] = pl_edge
-        pl_grpc["outbounds"][0]["streamSettings"]["realitySettings"]["publicKey"] = PL_REALITY_PUBLIC_KEY
-        pl_grpc["outbounds"][0]["streamSettings"]["realitySettings"]["shortId"] = PL_REALITY_SHORT_ID
-        pl_grpc["outbounds"][0]["streamSettings"]["realitySettings"]["serverName"] = PL_REALITY_SNI_CLASSIC
-        pl_grpc["meta"] = build_happ_config_meta(subscription_id)
-        if pl_grpc["meta"]:
-            pl_grpc["meta"]["serverDescription"] = "Запасной · VLESS-gRPC-Reality (PL)"
+        # --- Profile 14: DE VLESS gRPC ---
+        de_grpc = copy.deepcopy(grpc_cfg)
+        de_grpc["remarks"] = f"🇩🇪 🔐 Запасной ({email})"
+        de_grpc["outbounds"][0]["settings"]["address"] = pl_edge
+        de_grpc["outbounds"][0]["settings"]["port"] = 29443
+        de_grpc["outbounds"][0]["streamSettings"]["realitySettings"]["publicKey"] = DE_GRPC_REALITY_PUBLIC_KEY
+        de_grpc["outbounds"][0]["streamSettings"]["realitySettings"]["shortId"] = DE_GRPC_REALITY_SHORT_ID
+        de_grpc["outbounds"][0]["streamSettings"]["realitySettings"]["serverName"] = DE_GRPC_REALITY_SNI
+        de_grpc["meta"] = build_happ_config_meta(subscription_id)
+        if de_grpc["meta"]:
+            de_grpc["meta"]["serverDescription"] = "Запасной · VLESS-gRPC-Reality (DE)"
 
-        profiles.extend([pl_sber, pl_kino, pl_hyst, pl_grpc])
+        profiles.extend([de_sber, de_kino, de_hyst, de_grpc])
 
     return profiles
 
@@ -4993,7 +5113,22 @@ def build_multi_client_configs(
     return configs
 
 
+_HAPP_LINK_CACHE: collections.OrderedDict[str, tuple[float, str]] = collections.OrderedDict()
+_HAPP_LINK_CACHE_LOCK = threading.Lock()
+_HAPP_CACHE_TTL = 3600.0
+_HAPP_CACHE_MAX = 5000
+
 def encrypt_happ_link(subscription_url: str) -> str | None:
+    now = time.time()
+    with _HAPP_LINK_CACHE_LOCK:
+        if subscription_url in _HAPP_LINK_CACHE:
+            cached_time, cached_val = _HAPP_LINK_CACHE[subscription_url]
+            if now - cached_time < _HAPP_CACHE_TTL:
+                _HAPP_LINK_CACHE.move_to_end(subscription_url)
+                return cached_val
+            else:
+                del _HAPP_LINK_CACHE[subscription_url]
+
     payload = json.dumps({"url": subscription_url}, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
         "https://crypto.happ.su/api-v2.php",
@@ -5017,15 +5152,24 @@ def encrypt_happ_link(subscription_url: str) -> str | None:
     except json.JSONDecodeError:
         parsed = raw
 
+    result: str | None = None
     if isinstance(parsed, dict):
         for key in ("url", "link", "result", "data", "encrypted_link", "encrypted_url", "encrypted"):
             value = parsed.get(key)
             if isinstance(value, str) and value.startswith("happ://"):
-                return value
-        return None
-    if isinstance(parsed, str) and parsed.startswith("happ://"):
-        return parsed
-    return None
+                result = value
+                break
+    elif isinstance(parsed, str) and parsed.startswith("happ://"):
+        result = parsed
+
+    if result:
+        with _HAPP_LINK_CACHE_LOCK:
+            _HAPP_LINK_CACHE[subscription_url] = (time.time(), result)
+            _HAPP_LINK_CACHE.move_to_end(subscription_url)
+            while len(_HAPP_LINK_CACHE) > _HAPP_CACHE_MAX:
+                _HAPP_LINK_CACHE.popitem(last=False)
+
+    return result
 
 
 def import_page_html(
@@ -5614,7 +5758,8 @@ def setup_page_html(
 
     volga_gw_domain = os.environ.get("VOLGA_GATEWAY_DOMAIN", "apigw.example.com").strip()
     volga_nl_url = f"https://{volga_gw_domain}/volga/nl/{urllib.parse.quote(subscription_id, safe='')}"
-    volga_pl_url = f"https://{volga_gw_domain}/volga/pl/{urllib.parse.quote(subscription_id, safe='')}"
+    volga_de_url = f"https://{volga_gw_domain}/volga/de/{urllib.parse.quote(subscription_id, safe='')}"
+    volga_pl_url = volga_de_url
     volga_fi_url = f"https://{volga_gw_domain}/volga/fi/{urllib.parse.quote(subscription_id, safe='')}"
     is_sub_active = (summary.get("found") is True) and (summary.get("status_kind") == "active")
 
@@ -5632,10 +5777,19 @@ def setup_page_html(
             "primary_url": oflux_nl_prim,
             "volga_url": volga_nl_url,
         },
+        "de": {
+            "country": "de",
+            "name": "Германия",
+            "flag": "🇩🇪",
+            "link": oflux_pl_link,
+            "qr_url": f"/sub/openflux/{subscription_id}/de/qr",
+            "primary_url": oflux_pl_prim,
+            "volga_url": volga_pl_url,
+        },
         "pl": {
-            "country": "pl",
-            "name": "Польша",
-            "flag": "🇵🇱",
+            "country": "de",
+            "name": "Германия",
+            "flag": "🇩🇪",
             "link": oflux_pl_link,
             "qr_url": f"/sub/openflux/{subscription_id}/pl/qr",
             "primary_url": oflux_pl_prim,
@@ -7108,7 +7262,7 @@ def setup_page_html(
                 <div style="display: flex; align-items: center; gap: 8px;">
                   <span style="font-size: 18px;">⏳</span>
                   <span style="font-size: 14px; font-weight: 700; color: #facc15;">
-                    Подготовлен новый сервер: <span id="wl-pending-srv-text">🇵🇱 Польша</span>
+                    Подготовлен новый сервер: <span id="wl-pending-srv-text">🇩🇪 Германия</span>
                   </span>
                 </div>
                 <div id="wl-timer-box" style="font-size: 13px; font-weight: 700; color: #fde047; background: rgba(0,0,0,0.4); padding: 4px 10px; border-radius: 6px; font-family: monospace; border: 1px solid rgba(234, 179, 8, 0.3);">
@@ -7121,7 +7275,7 @@ def setup_page_html(
 
               <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px;">
                 <a id="wl-pending-1click" class="button success" href="#" style="min-height: 42px; padding: 8px 16px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; font-weight: 700;">
-                  <span>⚡</span> <span>1-Click Подключить (<span id="wl-pending-code-text">Польша</span>)</span>
+                  <span>⚡</span> <span>1-Click Подключить (<span id="wl-pending-code-text">Германия</span>)</span>
                 </a>
                 <button type="button" class="button secondary" onclick="copyWlPendingLink(this)" style="min-height: 42px; padding: 8px 14px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px;">
                   <span>📋</span> <span>Скопировать новый ключ</span>
@@ -7256,7 +7410,7 @@ def setup_page_html(
         <div style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 10px; padding: 14px 16px; margin-bottom: 18px; font-size: 13.5px; color: #fca5a5; line-height: 1.5;">
           Старый рабочий конфиг (<b id="wl-modal-old-name">Нидерланды</b>) будет <strong>безвозвратно удалён</strong> из системы.
           <br><br>
-          Вы <strong>точно добавили новый конфиг (<span id="wl-modal-new-name">Польша</span>)</strong> в приложение OpenFlux и проверили связь? Если старый конфиг будет удалён до добавления нового, вы можете временно потерять связь!
+          Вы <strong>точно добавили новый конфиг (<span id="wl-modal-new-name">Германия</span>)</strong> в приложение OpenFlux и проверили связь? Если старый конфиг будет удалён до добавления нового, вы можете временно потерять связь!
         </div>
         <div style="display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap;">
           <button type="button" class="button secondary" onclick="closeWlConfirmModal()" style="min-height: 42px; padding: 8px 16px; font-size: 13px;">
@@ -7343,10 +7497,10 @@ def setup_page_html(
             </label>
             <label class="awg-country-option" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--glass-border); border-radius: 8px; cursor: pointer;">
               <div style="display: flex; align-items: center; gap: 10px;">
-                <input type="radio" name="awg_target_country" value="pl" style="accent-color: #38bdf8;">
-                <span style="font-weight: 600; color: #fff;">🇵🇱 Польша (Варшава)</span>
+                <input type="radio" name="awg_target_country" value="de" style="accent-color: #38bdf8;">
+                <span style="font-weight: 600; color: #fff;">🇩🇪 Германия (Франкфурт)</span>
               </div>
-              <span class="awg-ping-badge" id="awg-ping-pl" style="font-size: 11px; color: #34d399; font-weight: 600; background: rgba(52,211,153,0.12); padding: 2px 6px; border-radius: 4px;">~45 мс</span>
+              <span class="awg-ping-badge" id="awg-ping-de" style="font-size: 11px; color: #34d399; font-weight: 600; background: rgba(52,211,153,0.12); padding: 2px 6px; border-radius: 4px;">~40 мс</span>
             </label>
             <label class="awg-country-option" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--glass-border); border-radius: 8px; cursor: pointer;">
               <div style="display: flex; align-items: center; gap: 10px;">
@@ -8049,14 +8203,14 @@ def setup_page_html(
           var jitter = (Math.floor(Math.random() * 5) - 2); // -2..+2 ms
           var nlPing = Math.max(15, Math.min(180, baseWirePing + jitter));
 
-          var plDelta = (data && data.pings && data.pings.pl) ? Math.max(8, Math.min(25, Math.round(data.pings.pl * 0.35))) : 11;
+          var deDelta = (data && data.pings && data.pings.de) ? Math.max(6, Math.min(20, Math.round(data.pings.de * 0.30))) : 8;
           var fiDelta = (data && data.pings && data.pings.fi) ? Math.max(10, Math.min(30, Math.round(data.pings.fi * 0.40))) : 14;
 
-          var plPing = nlPing + plDelta + (Math.floor(Math.random() * 3) - 1);
+          var dePing = nlPing + deDelta + (Math.floor(Math.random() * 3) - 1);
           var fiPing = nlPing + fiDelta + (Math.floor(Math.random() * 3) - 1);
 
           window.updatePingBadge('awg-ping-nl', nlPing);
-          window.updatePingBadge('awg-ping-pl', plPing);
+          window.updatePingBadge('awg-ping-de', dePing);
           window.updatePingBadge('awg-ping-fi', fiPing);
         })
         .catch(function(err) {
@@ -8360,11 +8514,11 @@ def setup_page_html(
 
         const pendText = document.getElementById("wl-pending-srv-text");
         if (pendText) {
-          pendText.textContent = (_wlSlot.pending_server_flag || "🇵🇱") + " " + (_wlSlot.pending_server_name || "Польша");
+          pendText.textContent = (_wlSlot.pending_server_flag || "🇩🇪") + " " + (_wlSlot.pending_server_name || "Германия");
         }
         const pendCode = document.getElementById("wl-pending-code-text");
         if (pendCode) {
-          pendCode.textContent = _wlSlot.pending_server_name || "Польша";
+          pendCode.textContent = _wlSlot.pending_server_name || "Германия";
         }
         const oldText = document.getElementById("wl-migrating-old-text");
         if (oldText) {
@@ -8474,7 +8628,7 @@ def setup_page_html(
       const activeSrv = (_wlSlot && _wlSlot.active_server ? _wlSlot.active_server : "nl").toLowerCase();
       const allSrvs = [
         { code: "nl", name: "Нидерланды", flag: "🇳🇱" },
-        { code: "pl", name: "Польша", flag: "🇵🇱" }
+        { code: "de", name: "Германия", flag: "🇩🇪" }
       ];
 
       list.innerHTML = "";
@@ -8546,7 +8700,7 @@ def setup_page_html(
       const newName = document.getElementById("wl-modal-new-name");
       if (!modal) return;
       if (oldName) oldName.textContent = _wlSlot.active_server_name || "Нидерланды";
-      if (newName) newName.textContent = _wlSlot.pending_server_name || "Польша";
+      if (newName) newName.textContent = _wlSlot.pending_server_name || "Германия";
       modal.style.display = "flex";
     };
 
@@ -8654,8 +8808,8 @@ def setup_page_html(
       if (!modal || !img) return;
 
       const isPending = (target === "pending");
-      const srvName = isPending ? (_wlSlot.pending_server_name || "Польша") : (_wlSlot.active_server_name || "Нидерланды");
-      const srvFlag = isPending ? (_wlSlot.pending_server_flag || "🇵🇱") : (_wlSlot.active_server_flag || "🇳🇱");
+      const srvName = isPending ? (_wlSlot.pending_server_name || "Германия") : (_wlSlot.active_server_name || "Нидерланды");
+      const srvFlag = isPending ? (_wlSlot.pending_server_flag || "🇩🇪") : (_wlSlot.active_server_flag || "🇳🇱");
       const link = isPending ? _wlSlot.pending_link : _wlSlot.active_link;
 
       if (title) {
@@ -8697,8 +8851,8 @@ def setup_page_html(
       const activeLink = (isMigrating && _wlSlot.pending_link) ? _wlSlot.pending_link : ((_wlSlot && _wlSlot.active_link) ? _wlSlot.active_link : "");
       const copyFn = isMigrating ? "copyWlPendingLink(this)" : "copyWlActiveLink(this)";
       const qrTarget = isMigrating ? "pending" : "active";
-      const srvName = isMigrating ? (_wlSlot.pending_server_name || "Польша") : (_wlSlot.active_server_name || "Нидерланды");
-      const srvFlag = isMigrating ? (_wlSlot.pending_server_flag || "🇵🇱") : (_wlSlot.active_server_flag || "🇳🇱");
+      const srvName = isMigrating ? (_wlSlot.pending_server_name || "Германия") : (_wlSlot.active_server_name || "Нидерланды");
+      const srvFlag = isMigrating ? (_wlSlot.pending_server_flag || "🇩🇪") : (_wlSlot.active_server_flag || "🇳🇱");
 
       const migratingBannerHtml = isMigrating ? `
         <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 12.5px; color: #cbd5e1; line-height: 1.45;">
@@ -9621,9 +9775,22 @@ class RequestHandler(BaseHTTPRequestHandler):
     def do_HEAD(self) -> None:
         self._handle_request(include_body=False)
 
+    def _read_body(self, max_bytes: int = 65_536) -> bytes:
+        raw_len = self.headers.get("Content-Length")
+        if not raw_len:
+            return b""
+        try:
+            length = int(raw_len.strip())
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Invalid Content-Length header") from exc
+        if not (0 <= length <= max_bytes):
+            raise ValueError(f"Content-Length {length} out of bounds (0..{max_bytes})")
+        if length == 0:
+            return b""
+        return self.rfile.read(length)
+
     def _read_form(self) -> dict[str, str]:
-        length = int(self.headers.get("Content-Length") or 0)
-        raw_bytes = self.rfile.read(min(length, 65_536))
+        raw_bytes = self._read_body(65_536)
         content_type = self.headers.get("Content-Type", "")
 
         result: dict[str, str] = {}
@@ -9719,8 +9886,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if client_ip not in ("127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1"):
                     self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"}, True)
                     return
-                length = int(self.headers.get("Content-Length") or 0)
-                raw_bytes = self.rfile.read(min(length, 65_536))
+                try:
+                    raw_bytes = self._read_body(65_536)
+                except ValueError:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid_body"}, True)
+                    return
                 try:
                     req_data = json.loads(raw_bytes.decode("utf-8"))
                 except Exception:
@@ -9728,7 +9898,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 auth_token = str(req_data.get("auth") or "").strip()
                 _ensure_inbounds_cache()
                 with _inbounds_cache_lock:
-                    matched = _cached_clients_index.get(auth_token)
+                    matched = _cached_uuid_index.get(auth_token) or _cached_sub_index.get(auth_token)
                 if matched:
                     row, settings, stream_settings, sniffing, client = matched
                     exp_ms = int(client.get("expiryTime") or 0)
@@ -9759,8 +9929,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 except ValueError:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid_slot_index"}, True)
                     return
-                content_length = int(self.headers.get("Content-Length") or 0)
-                raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+                try:
+                    raw_body = self._read_body(65_536) or b"{}"
+                except ValueError:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "body_too_large"}, True)
+                    return
                 try:
                     payload = json.loads(raw_body.decode("utf-8"))
                 except Exception:
@@ -9803,8 +9976,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 except ValueError:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid_slot_index"}, True)
                     return
-                content_length = int(self.headers.get("Content-Length") or 0)
-                raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+                try:
+                    raw_body = self._read_body(65_536) or b"{}"
+                except ValueError:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "body_too_large"}, True)
+                    return
                 try:
                     payload = json.loads(raw_body.decode("utf-8"))
                 except Exception:
@@ -9847,8 +10023,11 @@ class RequestHandler(BaseHTTPRequestHandler):
             if is_oflux_post:
                 from vpn_shop import openflux_manager
                 pid = resolve_sub_profile_id(oflux_sub_id)
-                content_length = int(self.headers.get("Content-Length") or 0)
-                raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+                try:
+                    raw_body = self._read_body(65_536) or b"{}"
+                except ValueError:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "body_too_large"}, True)
+                    return
                 try:
                     payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
                 except Exception:
@@ -9958,6 +10137,29 @@ class RequestHandler(BaseHTTPRequestHandler):
                 promo_code = form.get("promo_code", "").strip()
                 email_reminders = form.get("email_reminders") != "0"
 
+                turnstile_token = form.get("cf-turnstile-response", "").strip()
+                xff = self.headers.get("X-Forwarded-For")
+                if xff:
+                    client_ip = xff.split(",")[-1].strip()
+                else:
+                    client_ip = self.headers.get("CF-Connecting-IP") or (self.client_address[0] if self.client_address else "unknown")
+
+                if not check_bind_email_rate_limit(client_ip):
+                    raise ValueError("Слишком много запросов на продление. Пожалуйста, подождите несколько минут.")
+
+                shop_settings = get_shop_settings()
+                turnstile_secret = os.environ.get("CF_TURNSTILE_SECRET_KEY", "").strip()
+                if not turnstile_secret and shop_settings:
+                    turnstile_secret = getattr(shop_settings, "cf_turnstile_secret_key", "").strip()
+
+                if turnstile_secret:
+                    try:
+                        from vpn_shop.web import verify_cf_turnstile
+                        if not verify_cf_turnstile(turnstile_secret, turnstile_token, client_ip):
+                            raise ValueError("Пожалуйста, подтвердите проверку защиты от роботов (Cloudflare Turnstile).")
+                    except ImportError:
+                        pass
+
                 res = create_inline_renewal_order(
                     sub_id=sub_id,
                     duration_days=duration_days,
@@ -10046,7 +10248,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length") or 0)
                 if length > 0 and "application/json" in self.headers.get("Content-Type", "").lower():
                     try:
-                        raw_bytes = self.rfile.read(min(length, 65_536))
+                        raw_bytes = self._read_body(65_536)
                         payload = json.loads(raw_bytes.decode("utf-8")) if raw_bytes else {}
                     except Exception:
                         payload = {}
@@ -10286,7 +10488,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._redirect(f"{HAPP_WEB_PAGE_URL}/assets/telegram/avatar.webp", include_body)
                 return
 
-            if path == ["legal", "terms"] or path == [SECRET_SEGMENT, "legal", "terms"]:
+            if path == ["legal", "terms"] or (len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] == "legal" and path[2] == "terms"):
                 self._send_html(HTTPStatus.OK, legal_terms_html(), include_body)
                 return
 
@@ -11164,7 +11366,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         if fallback_url is None and FALLBACK_SUBSCRIPTION_ORIGIN:
             parsed_url = urllib.parse.urlsplit(self.path)
             path_segments = [seg for seg in parsed_url.path.split("/") if seg]
-            if len(path_segments) >= 3 and path_segments[0] == SECRET_SEGMENT:
+            if len(path_segments) >= 3 and path_segments[0] in {SECRET_SEGMENT, "my-secret-sub"}:
                 current_origin = resolve_public_origin(self.headers)
                 if current_origin.rstrip("/") != FALLBACK_SUBSCRIPTION_ORIGIN.rstrip("/"):
                     fallback_url = f"{FALLBACK_SUBSCRIPTION_ORIGIN}/{'/'.join(path_segments)}"
@@ -11262,13 +11464,38 @@ def _start_turso_sync_daemon() -> None:
     t.start()
 
 
+class BoundedThreadingHTTPServer(HTTPServer):
+    """Bounded multi-threaded HTTP server to prevent Thread Exhaustion DoS."""
+    request_queue_size = 128
+    daemon_threads = True
+
+    def __init__(self, server_address, RequestHandlerClass, max_workers: int = 64):
+        super().__init__(server_address, RequestHandlerClass)
+        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="subjson-worker")
+
+    def process_request(self, request, client_address) -> None:
+        self._executor.submit(self.process_request_thread, request, client_address)
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            self.finish_request(request, client_address)
+        except Exception:
+            self.handle_error(request, client_address)
+        finally:
+            self.shutdown_request(request)
+
+    def server_close(self) -> None:
+        super().server_close()
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     _start_turso_sync_daemon()
-    server = ThreadingHTTPServer((LISTEN_HOST, LISTEN_PORT), RequestHandler)
+    server = BoundedThreadingHTTPServer((LISTEN_HOST, LISTEN_PORT), RequestHandler)
     LOGGER.info("Listening on %s:%s using DB %s", LISTEN_HOST, LISTEN_PORT, XUI_DB_PATH)
     server.serve_forever()
 

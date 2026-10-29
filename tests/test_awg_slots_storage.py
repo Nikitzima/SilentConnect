@@ -393,11 +393,11 @@ class TestAwgSlotsStorage(unittest.TestCase):
         self.assertIn("RandomTrailers = on", conf_nl)
         self.assertIn("DisableCookies = on", conf_nl)
 
-        slot_pl = {"client_ip": "10.8.3.10", "private_key_enc": "privPL==", "preshared_key": "pskPL==", "server_code": "pl"}
-        conf_pl = build_slot_conf(slot_pl, server_code="pl")
-        self.assertIn("HeaderProtectionKey = CqymuFeL7ibiqrqIDF0jl3Mg1/vvl5Tmnqzl5C8IWhM=", conf_pl)
-        self.assertTrue(any(h in conf_pl for h in ("pl.silentconnect.net:44121", "pl.example.com:44121")))
-        self.assertIn("PublicKey = bi1igMRahaWDgvo7ClePLOwnXYjhdo+7PMaswXVtlAs=", conf_pl)
+        slot_pl = {"client_ip": "10.8.3.10", "private_key_enc": "privPL==", "preshared_key": "pskPL==", "server_code": "de"}
+        conf_pl = build_slot_conf(slot_pl, server_code="de")
+        self.assertIn("HeaderProtectionKey = MockHeaderProtectionKeyNL111111111111111111=", conf_pl)
+        self.assertTrue(any(h in conf_pl for h in ("de.silentconnect.net:44121", "de.example.com:44121")))
+        self.assertIn("PublicKey = MockServerPublicKeyFI2222222222222222222222=", conf_pl)
         self.assertIn("S1 = 51", conf_pl)
         self.assertIn("ContentPaddingAddition = 10-100", conf_pl)
         self.assertIn("RandomTrailers = on", conf_pl)

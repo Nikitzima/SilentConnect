@@ -6,6 +6,7 @@ import hmac
 import ipaddress
 import json
 import os
+import re
 import secrets
 import string
 import time
@@ -59,6 +60,12 @@ def hash_secret(value: str) -> str:
     return hmac.new(effective_pepper, value.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def hash_secret_candidates(value: str) -> tuple[str, ...]:
+    primary = hash_secret(value)
+    legacy = hmac.new(DEFAULT_SERVER_PEPPER.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).hexdigest()
+    return (primary,) if primary == legacy else (primary, legacy)
+
+
 def hash_token(token: str, *, purpose: str) -> str:
     """Storage-side hash for bearer tokens. Domain-separated by ``purpose``."""
     msg = f"{purpose}\x00{token}".encode("utf-8")
@@ -66,6 +73,11 @@ def hash_token(token: str, *, purpose: str) -> str:
     return hmac.new(effective_pepper, msg, hashlib.sha256).hexdigest()
 
 
+def hash_token_candidates(token: str, *, purpose: str) -> tuple[str, ...]:
+    primary = hash_token(token, purpose=purpose)
+    msg = f"{purpose}\x00{token}".encode("utf-8")
+    legacy = hmac.new(DEFAULT_SERVER_PEPPER.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+    return (primary,) if primary == legacy else (primary, legacy)
 
 
 def derive_sub_order_token(order_public_id: str, sub_id: str) -> str:
@@ -77,6 +89,17 @@ def derive_sub_order_token(order_public_id: str, sub_id: str) -> str:
     effective_pepper = _get_effective_pepper()
     msg = f"sub_order_token:{oid}:{sid}".encode("utf-8")
     return hmac.new(effective_pepper, msg, hashlib.sha256).hexdigest()
+
+
+def derive_sub_order_token_candidates(order_public_id: str, sub_id: str) -> tuple[str, ...]:
+    oid = (order_public_id or "").strip()
+    sid = (sub_id or "").strip()
+    if not oid or not sid:
+        return ()
+    primary = derive_sub_order_token(oid, sid)
+    msg = f"sub_order_token:{oid}:{sid}".encode("utf-8")
+    legacy = hmac.new(DEFAULT_SERVER_PEPPER.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+    return (primary,) if primary == legacy else (primary, legacy)
 
 def constant_time_equals(a: str | bytes | None, b: str | bytes | None) -> bool:
     if a is None or b is None:
@@ -129,7 +152,13 @@ def verify_token(token: str, *, purpose: str) -> dict[str, Any] | None:
     effective_pepper = _get_effective_pepper()
     expected = hmac.new(effective_pepper, f"{purpose}\x00".encode("utf-8") + raw, hashlib.sha256).digest()
     if not hmac.compare_digest(mac, expected):
-        return None
+        legacy_pepper = DEFAULT_SERVER_PEPPER.encode("utf-8")
+        if effective_pepper != legacy_pepper:
+            expected_legacy = hmac.new(legacy_pepper, f"{purpose}\x00".encode("utf-8") + raw, hashlib.sha256).digest()
+            if not hmac.compare_digest(mac, expected_legacy):
+                return None
+        else:
+            return None
     try:
         payload = json.loads(raw.decode("utf-8"))
     except Exception:
@@ -225,25 +254,89 @@ def _is_trusted_proxy(ip: str) -> bool:
     return any(addr in net for net in nets)
 
 
+ENC_PREFIX = "enc:v1:"
+
+
+def _derive_fernet_key(purpose: str = "awg_slot_key_v1") -> bytes:
+    pepper = _get_effective_pepper()
+    digest = hmac.new(pepper, purpose.encode("utf-8"), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest)
+
+
+def encrypt_wg_secret(plaintext: str | None) -> str:
+    """Encrypts a WireGuard key at rest using Fernet (AES-128-CBC + HMAC-SHA256)."""
+    val = (plaintext or "").strip()
+    if not val or val.startswith(ENC_PREFIX):
+        return val
+    try:
+        from cryptography.fernet import Fernet
+        f = Fernet(_derive_fernet_key())
+        token = f.encrypt(val.encode("utf-8")).decode("ascii")
+        return f"{ENC_PREFIX}{token}"
+    except Exception:
+        return val
+
+
+def decrypt_wg_secret(stored: str | None) -> str:
+    """Decrypts a WireGuard key stored with encrypt_wg_secret (backwards-compatible with plaintext)."""
+    val = (stored or "").strip()
+    if not val or not val.startswith(ENC_PREFIX):
+        return val
+    token = val[len(ENC_PREFIX):]
+    try:
+        from cryptography.fernet import Fernet
+        f = Fernet(_derive_fernet_key())
+        return f.decrypt(token.encode("ascii")).decode("utf-8")
+    except Exception:
+        return val
+
+
+EMAIL_REGEX = re.compile(r"^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,180}\.[A-Za-z]{2,24}$")
+
+
+def is_valid_email(email: str | None) -> bool:
+    if not email:
+        return False
+    clean = email.strip()
+    return bool(EMAIL_REGEX.match(clean))
+
+
+def safe_json_for_script(obj: Any) -> str:
+    """Serializes obj to JSON and safely escapes characters that can break HTML <script> tags."""
+    raw = json.dumps(obj, ensure_ascii=False)
+    return (
+        raw.replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("'", "\\u0027")
+    )
+
+
 def client_ip_from_headers(headers: Any, peer_ip: str | None) -> str:
     """Resolve the real client IP without trusting spoofable headers.
 
     Rules:
       * If the TCP peer is *not* a trusted proxy, headers are ignored entirely.
-      * ``CF-Connecting-IP`` is honoured only when the peer is trusted.
+      * ``CF-Connecting-IP`` is honoured ONLY when the peer is trusted AND TRUST_CF_HEADERS=1.
       * Otherwise walk ``X-Forwarded-For`` from the right, skipping trusted hops;
         the first untrusted address is the client (RFC 7239 semantics).
     """
     peer = (peer_ip or "").strip() or "unknown"
     if not _is_trusted_proxy(peer):
         return peer
-    cf_ip = str(headers.get("CF-Connecting-IP") or "").strip()
-    if cf_ip:
-        try:
-            return str(ipaddress.ip_address(cf_ip))
-        except ValueError:
-            pass
-    xff = str(headers.get("X-Forwarded-For") or "")
+
+    trust_cf = os.environ.get("TRUST_CF_HEADERS", "").strip().lower() in ("1", "true", "yes")
+    if trust_cf and hasattr(headers, "get"):
+        cf_ip = str(headers.get("CF-Connecting-IP") or headers.get("cf-connecting-ip") or "").strip()
+        if cf_ip:
+            try:
+                return str(ipaddress.ip_address(cf_ip))
+            except ValueError:
+                pass
+
+    xff = ""
+    if hasattr(headers, "get"):
+        xff = str(headers.get("X-Forwarded-For") or headers.get("x-forwarded-for") or "")
     hops = [h.strip() for h in xff.split(",") if h.strip()]
     for hop in reversed(hops):
         try:

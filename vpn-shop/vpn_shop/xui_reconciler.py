@@ -591,6 +591,17 @@ def notify_local_reconciler() -> bool:
         return False
     try:
         pid = int(PID_FILE_PATH.read_text(encoding="utf-8").strip())
+        if pid <= 0:
+            return False
+        cmdline_path = Path(f"/proc/{pid}/cmdline")
+        if not cmdline_path.exists():
+            return False
+        try:
+            cmdline = cmdline_path.read_bytes().decode("utf-8", errors="replace").lower()
+        except OSError:
+            return False
+        if not ("reconcile-xui" in cmdline or "xui_reconciler" in cmdline):
+            return False
         os.kill(pid, signal.SIGUSR1)
         return True
     except Exception:

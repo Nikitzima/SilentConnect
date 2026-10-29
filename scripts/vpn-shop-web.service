@@ -11,6 +11,8 @@ ExecStart=/usr/bin/python3 -m vpn_shop --env-file .env.silentconnect run-web
 Restart=always
 RestartSec=5
 User=root
+LimitNOFILE=65535
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target
