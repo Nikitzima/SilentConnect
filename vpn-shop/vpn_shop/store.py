@@ -1109,21 +1109,21 @@ class Store:
                     self._replica_mgr.force_sync()
                     if single_use:
                         cur = conn.execute(
-                            """
+                            f"""
                             UPDATE magic_links SET used_at = ?
-                            WHERE token_hash = ? AND used_at IS NULL AND expires_at >= ?
+                            WHERE token_hash IN ({tok_placeholders}) AND used_at IS NULL AND expires_at >= ?
                             RETURNING email
                             """,
-                            (now, tok_hash, now),
+                            (now, *tok_cands, now),
                         )
                     else:
                         cur = conn.execute(
-                            """
+                            f"""
                             UPDATE magic_links SET used_at = coalesce(used_at, ?)
-                            WHERE token_hash = ? AND expires_at >= ?
+                            WHERE token_hash IN ({tok_placeholders}) AND expires_at >= ?
                             RETURNING email
                             """,
-                            (now, tok_hash, now),
+                            (now, *tok_cands, now),
                         )
                     row = cur.fetchone()
                 except Exception:
