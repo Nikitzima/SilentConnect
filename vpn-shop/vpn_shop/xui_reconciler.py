@@ -507,15 +507,18 @@ class XuiReconciler:
     @staticmethod
     def _sync_local_ws443_if_present() -> None:
         """If xray-ws443 config exists locally on this node, update its client list."""
-        ws_cfg_path = Path("/usr/local/etc/xray-ws443/config.json")
-        if not ws_cfg_path.exists():
+        ws_cfg_path = "/usr/local/etc/xray-ws443/config.json"
+        try:
+            if not os.path.exists(ws_cfg_path):
+                return
+        except (OSError, PermissionError):
             return
-        sync_script = Path("/root/subjson-service/sync-xray-ws443-clients.py")
-        if sync_script.exists():
-            try:
-                subprocess.run(["python3", str(sync_script), "--local-only"], timeout=10, check=False)
-            except Exception:
-                pass
+        sync_script = "/root/subjson-service/sync-xray-ws443-clients.py"
+        try:
+            if os.path.exists(sync_script):
+                subprocess.run(["python3", sync_script, "--local-only"], timeout=10, check=False)
+        except Exception:
+            pass
 
     def _reconcile_local_awg_and_traffic(self) -> None:
         """Автономная локальная синхронизация пиров и трафика AmneziaWG без SSH."""

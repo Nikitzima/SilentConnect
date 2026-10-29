@@ -44,16 +44,23 @@ import zlib
 # Centralized pricing logic
 _vpn_shop_path = str(Path(__file__).resolve().parent.parent / "vpn-shop")
 for _p in (_vpn_shop_path, "/root/vpn-shop"):
-    if _p not in sys.path and Path(_p).exists():
-        sys.path.insert(0, _p)
+    try:
+        if _p not in sys.path and os.path.exists(_p):
+            sys.path.insert(0, _p)
+    except (OSError, PermissionError):
+        pass
 
 for _env_cand in (
-    Path(__file__).resolve().parent.parent / "vpn-shop" / ".env.silentconnect",
-    Path(__file__).resolve().parent.parent / "vpn-shop" / ".env",
-    Path("/root/vpn-shop/.env.silentconnect"),
-    Path("/root/vpn-shop/.env"),
+    str(Path(__file__).resolve().parent.parent / "vpn-shop" / ".env.silentconnect"),
+    str(Path(__file__).resolve().parent.parent / "vpn-shop" / ".env"),
+    "/root/vpn-shop/.env.silentconnect",
+    "/root/vpn-shop/.env",
 ):
-    if _env_cand.is_file():
+    try:
+        _cand_is_file = os.path.isfile(_env_cand)
+    except (OSError, PermissionError):
+        _cand_is_file = False
+    if _cand_is_file:
         try:
             with open(_env_cand, "r", encoding="utf-8") as _ef:
                 for _line in _ef:
@@ -532,8 +539,11 @@ def read_inbounds() -> list[sqlite3.Row]:
 def find_store_db_path() -> str:
     for var in ("STORE_DB_PATH", "SHOP_DATABASE_PATH", "SHOP_DB_PATH"):
         p = os.environ.get(var, "").strip()
-        if p and Path(p).exists():
-            return p
+        try:
+            if p and os.path.exists(p):
+                return p
+        except (OSError, PermissionError):
+            pass
     for var in ("STORE_DB_PATH", "SHOP_DATABASE_PATH", "SHOP_DB_PATH"):
         p = os.environ.get(var, "").strip()
         if p:
@@ -585,7 +595,10 @@ def get_shop_settings() -> Any:
     try:
         from vpn_shop.config import load_settings
         root_dir = Path(__file__).resolve().parent.parent / "vpn-shop"
-        if not root_dir.exists():
+        try:
+            if not os.path.exists(str(root_dir)):
+                root_dir = Path("/root/vpn-shop")
+        except (OSError, PermissionError):
             root_dir = Path("/root/vpn-shop")
         return load_settings(root_dir=root_dir, env_file=Path(env_file) if env_file else None)
     except Exception as exc:
@@ -602,7 +615,11 @@ def get_shop_checkout():
         db_path = find_store_db_path()
         if _shop_checkout_instance is not None:
             current_path = getattr(getattr(_shop_checkout_instance, "store", None), "database_path", None)
-            if current_path is None or not Path(current_path).exists() or Path(current_path) != Path(db_path):
+            try:
+                _db_exists = current_path is not None and os.path.exists(str(current_path))
+            except (OSError, PermissionError):
+                _db_exists = False
+            if current_path is None or not _db_exists or Path(current_path) != Path(db_path):
                 _shop_checkout_instance = None
 
         if _shop_checkout_instance is None:
@@ -1267,20 +1284,26 @@ def _notify_admins_new_renewal_order(
 ) -> None:
     try:
         db_path = find_store_db_path()
-        if not Path(db_path).exists():
+        try:
+            if not os.path.exists(str(db_path)):
+                return
+        except (OSError, PermissionError):
             return
 
         bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
         if not bot_token:
             for env_file in ["/root/vpn-shop/.env.silentconnect", "/root/vpn-shop/.env"]:
-                env_path = Path(env_file)
-                if env_path.exists():
-                    for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-                        if line.startswith("TELEGRAM_BOT_TOKEN="):
-                            val = line.split("=", 1)[1].strip()
-                            if val:
-                                bot_token = val
-                                break
+                try:
+                    if os.path.isfile(env_file):
+                        with open(env_file, "r", encoding="utf-8", errors="ignore") as _ef:
+                            for line in _ef:
+                                if line.startswith("TELEGRAM_BOT_TOKEN="):
+                                    val = line.split("=", 1)[1].strip()
+                                    if val:
+                                        bot_token = val
+                                        break
+                except (OSError, PermissionError):
+                    pass
                 if bot_token:
                     break
         if not bot_token:
@@ -1896,14 +1919,17 @@ def handle_inline_order_paid(order_public_id: str, web_token: str | None = None)
         bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
         if not bot_token:
             for env_file in ["/root/vpn-shop/.env.silentconnect", "/root/vpn-shop/.env"]:
-                env_path = Path(env_file)
-                if env_path.exists():
-                    for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-                        if line.startswith("TELEGRAM_BOT_TOKEN="):
-                            val = line.split("=", 1)[1].strip()
-                            if val:
-                                bot_token = val
-                                break
+                try:
+                    if os.path.isfile(env_file):
+                        with open(env_file, "r", encoding="utf-8", errors="ignore") as _ef:
+                            for line in _ef:
+                                if line.startswith("TELEGRAM_BOT_TOKEN="):
+                                    val = line.split("=", 1)[1].strip()
+                                    if val:
+                                        bot_token = val
+                                        break
+                except (OSError, PermissionError):
+                    pass
                 if bot_token:
                     break
 
