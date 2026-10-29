@@ -25,20 +25,20 @@ class CloudflareDnsTests(unittest.TestCase):
         self.zone_id = "test_zone_456"
         self.client = CloudflareDnsClient(token=self.token, zone_id=self.zone_id)
 
-    @patch("socket.gethostbyname", return_value="2.56.125.250")
+    @patch("socket.gethostbyname", return_value="192.0.2.250")
     def test_resolve_node_ip_dynamic_no_hardcoding(self, mock_dns: MagicMock) -> None:
         ip = resolve_node_ip("pl.silentconnect.net")
-        self.assertEqual(ip, "2.56.125.250")
+        self.assertEqual(ip, "192.0.2.250")
         mock_dns.assert_called_once_with("pl.silentconnect.net")
 
-    @patch("socket.gethostbyname", return_value="2.56.125.250")
+    @patch("socket.gethostbyname", return_value="192.0.2.250")
     @patch("urllib.request.urlopen")
     def test_switch_cluster_dns_success(self, mock_urlopen: MagicMock, mock_dns: MagicMock) -> None:
         # 1. Mock search response
         search_resp = {
             "success": True,
             "result": [
-                {"id": "rec_1", "name": "silentconnect.net", "content": "213.165.41.144", "proxied": False}
+                {"id": "rec_1", "name": "silentconnect.net", "content": "198.51.100.144", "proxied": False}
             ],
         }
         # 2. Mock update response
@@ -47,7 +47,7 @@ class CloudflareDnsTests(unittest.TestCase):
             "result": {
                 "id": "rec_1",
                 "name": "silentconnect.net",
-                "content": "2.56.125.250",
+                "content": "192.0.2.250",
                 "proxied": False,
                 "ttl": 60,
             },
@@ -68,19 +68,19 @@ class CloudflareDnsTests(unittest.TestCase):
             managed_domains=["silentconnect.net"],
         )
 
-        self.assertEqual(results["target_ip"], "2.56.125.250")
+        self.assertEqual(results["target_ip"], "192.0.2.250")
         self.assertEqual(len(results["updated"]), 1)
         self.assertFalse(results["updated"][0]["proxied"])
-        self.assertEqual(results["updated"][0]["content"], "2.56.125.250")
+        self.assertEqual(results["updated"][0]["content"], "192.0.2.250")
 
-    @patch("socket.gethostbyname", return_value="2.56.125.250")
+    @patch("socket.gethostbyname", return_value="192.0.2.250")
     @patch("urllib.request.urlopen")
     def test_switch_cluster_dns_rejects_orange_cloud_proxied(
         self, mock_urlopen: MagicMock, mock_dns: MagicMock
     ) -> None:
         search_resp = {
             "success": True,
-            "result": [{"id": "rec_1", "name": "silentconnect.net", "content": "213.165.41.144", "proxied": False}],
+            "result": [{"id": "rec_1", "name": "silentconnect.net", "content": "198.51.100.144", "proxied": False}],
         }
         # Cloudflare returned proxied=True (illegal!)
         illegal_update_resp = {
@@ -88,7 +88,7 @@ class CloudflareDnsTests(unittest.TestCase):
             "result": {
                 "id": "rec_1",
                 "name": "silentconnect.net",
-                "content": "2.56.125.250",
+                "content": "192.0.2.250",
                 "proxied": True,
                 "ttl": 60,
             },

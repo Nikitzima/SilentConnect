@@ -200,7 +200,7 @@ def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool 
     )
     default_dns = (
         "1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001"
-        if srv_code == "pl"
+        if srv_code in ("de", "pl")
         else "1.1.1.1, 1.0.0.1"
     )
     client_dns = os.environ.get(f"AWG_{srv_code.upper()}_CLIENT_DNS", os.environ.get("AWG_CLIENT_DNS", default_dns))
@@ -251,7 +251,7 @@ def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool 
     priv_key = str(slot.get("private_key_enc") or "")
     psk = str(slot.get("preshared_key") or "").strip()
 
-    if srv_code == "pl":
+    if srv_code in ("de", "pl"):
         client_last_octet = client_ip.split(".")[-1]
         addr_str = f"{client_ip}/32, fd00:8:3::{client_last_octet}/128"
         if "::/0" not in allowed_ips:
@@ -2107,7 +2107,7 @@ class WebCheckout:
                         except (ValueError, TypeError):
                             amount = 0.0
                         expected_rub = int(order.get("final_price_rub") or 0)
-                        if amount <= 0 or expected_rub <= 0 or amount >= (expected_rub - 0.5):
+                        if expected_rub <= 0 or (amount > 0 and amount >= (expected_rub - 0.5)):
                             LOGGER.info("Active reconciliation confirmed order %s via Platega API", order["public_id"])
                             meta["platega_confirmed_at"] = now
                             meta["platega_confirmed_amount"] = amount
@@ -2328,17 +2328,6 @@ class WebCheckout:
                             return prof
             except Exception:
                 pass
-            try:
-                found_email = self.provisioner.xui_db.find_client_by_email(clean)
-                if found_email:
-                    prof = self.store.get_profile_by_xui_email(clean)
-                    if prof:
-                        return prof
-            except Exception:
-                pass
-        prof = self.store.get_profile_by_xui_email(clean)
-        if prof:
-            return prof
         return None
 
     def assert_profile_awg_eligible(self, profile: dict[str, Any]) -> None:
@@ -2394,13 +2383,10 @@ class WebCheckout:
         label = default_label or f"Устройство {idx}"
 
         used_ips = self.store.get_used_awg_client_ips(server_code=target_srv)
-        reserved = {"10.8.1.1", "10.8.1.2", "10.8.1.3", "10.8.1.4", "10.8.1.5", "10.8.1.6"}
-        if target_srv == "pl":
-            reserved = {"10.8.3.1", "10.8.3.2", "10.8.3.3", "10.8.3.4", "10.8.3.5", "10.8.3.6"}
-        elif target_srv == "fi":
-            reserved = {"10.8.2.1", "10.8.2.2", "10.8.2.3", "10.8.2.4", "10.8.2.5", "10.8.2.6"}
-
-        ip_prefix = "10.8.1" if target_srv == "nl" else ("10.8.3" if target_srv == "pl" else "10.8.2")
+        from . import awg_manager
+        srv_cfg = awg_manager._get_server(target_srv)
+        ip_prefix = str(srv_cfg.get("subnet") or ("10.8.1" if target_srv == "nl" else ("10.8.4" if target_srv in ("de", "pl") else "10.8.2")))
+        reserved = set(srv_cfg.get("reserved_ips") or {f"{ip_prefix}.{i}" for i in range(1, 7)})
 
         for i in range(10, 254):
             candidate_ip = f"{ip_prefix}.{i}"
@@ -2558,6 +2544,10 @@ class WebCheckout:
 
     def get_awg_slot_conf_text(self, profile_public_id: str, slot_index: int) -> str:
         idx = int(slot_index)
+        prof = self.store.get_profile(profile_public_id)
+        if not prof:
+            raise KeyError(f"Profile '{profile_public_id}' not found")
+        self.assert_profile_awg_eligible(prof)
         slot = self.store.get_awg_slot_by_index(profile_public_id, idx)
         if not slot:
             slot = self.ensure_awg_slot(profile_public_id, idx)

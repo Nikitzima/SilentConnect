@@ -823,11 +823,14 @@ def get_openflux_slot_state_dict(sub_id: str) -> dict[str, Any]:
             pass
 
         if not row:
-            conn = get_store_db()
-            try:
-                slot = openflux_manager.get_or_create_openflux_slot(conn, pid)
-            finally:
-                conn.close()
+            slot = {
+                "profile_public_id": pid,
+                "status": "uninitialized",
+                "active_server": "nl",
+                "active_doc_url": "",
+                "pending_server": None,
+                "pending_doc_url": "",
+            }
         else:
             slot = dict(row)
 
@@ -1039,10 +1042,9 @@ def bind_subscription_email(
     headers: Any = None,
 ) -> dict[str, Any]:
     clean_email = str(customer_email or "").strip().lower()
-    if not clean_email or "@" not in clean_email or "." not in clean_email.split("@")[-1]:
+    from vpn_shop.security import is_valid_email
+    if not is_valid_email(clean_email):
         raise ValueError("Пожалуйста, укажите корректный адрес электронной почты.")
-    if len(clean_email) > 120 or len(clean_email.split("@")[0]) < 1:
-        raise ValueError("Некорректный адрес электронной почты.")
 
     if not check_bind_email_rate_limit(client_ip):
         raise ValueError("Слишком много запросов на привязку почты. Пожалуйста, подождите несколько минут.")
@@ -1104,7 +1106,7 @@ def bind_subscription_email(
         profile_pub_id = prof_dict["public_id"]
 
         order_rows = conn_shop.execute(
-            "SELECT * FROM orders WHERE provisioned_profile_id = ? ORDER BY id DESC",
+            "SELECT * FROM orders WHERE provisioned_profile_id = ? AND status = 'delivered' ORDER BY id DESC",
             (profile_id,)
         ).fetchall()
 
@@ -1221,6 +1223,10 @@ def bind_subscription_email(
                 "meta_json": json.dumps(meta),
                 "customer_email": clean_email,
             }
+        has_owner = conn_shop.execute(
+            "SELECT 1 FROM profile_owners WHERE profile_public_id = ? LIMIT 1",
+            (profile_pub_id,),
+        ).fetchone() is not None
         conn_shop.commit()
     finally:
         conn_shop.close()
@@ -1239,7 +1245,7 @@ def bind_subscription_email(
                     pass
             cabinet_url = f"{shop_settings.web_public_base_url}/order/{source_order['public_id']}/{web_token}" if (web_token and shop_settings.web_public_base_url) else f"{shop_settings.web_public_base_url}/cabinet"
             tg_claim_base = HAPP_SUPPORT_URL or "https://t.me/your_vpn_bot"
-            bind_tg_url = f"{tg_claim_base}?start=claim_{source_order['public_id']}_{web_token}" if web_token else tg_claim_base
+            bind_tg_url = "" if has_owner else (f"{tg_claim_base}?start=claim_{source_order['public_id']}_{web_token}" if web_token else tg_claim_base)
 
             send_subscription_email_async(
                 shop_settings,
@@ -1458,15 +1464,8 @@ def create_inline_renewal_order(
 
         transport = str(prof_dict.get("transport") or "tcp")
 
-        # Centralized catalog pricing based on device limit & duration
-        final_price = quote_price(device_limit, duration_days)
-        months = max(duration_days // 30, 1)
-        device_base_prices = {3: 149, 6: 199, 9: 235}
-        base_price = device_base_prices.get(device_limit, 149) * months
-
-        # Promo discount check
-        discount_percent = 0
         promo_id = None
+        p_row = None
         if promo_code:
             cands = hash_secret_candidates(promo_code.strip().upper())
             placeholders = ", ".join("?" for _ in cands)
@@ -1482,11 +1481,22 @@ def create_inline_renewal_order(
                 """,
                 (*cands, now_ts),
             ).fetchone()
-            if p_row:
-                discount_percent = int(p_row["discount_percent"] or 0)
-                promo_id = p_row["id"]
-                if discount_percent > 0:
-                    final_price = max(final_price * (100 - discount_percent) // 100, 0)
+            if not p_row:
+                raise ValueError("Промокод не найден или уже недействителен.")
+            promo_id = p_row["id"]
+            if str(p_row["promo_type"] or "fixed") == "fixed":
+                duration_days = int(p_row["duration_days"] or 30)
+                if p_row["device_limit"] is not None and int(p_row["device_limit"]) in {3, 6, 9}:
+                    device_limit = int(p_row["device_limit"])
+
+        base_price = quote_price(device_limit, duration_days)
+        final_price = base_price
+        if p_row:
+            discount_percent = int(p_row["discount_percent"] or 0)
+            if str(p_row["promo_type"] or "fixed") == "fixed" and p_row["fixed_price_rub"] is not None:
+                final_price = max(int(p_row["fixed_price_rub"]), 0)
+            elif discount_percent > 0:
+                final_price = max(base_price * (100 - discount_percent) // 100, 0)
 
         now = int(time.time())
         final_email = customer_email.strip() or str((order_row["customer_email"] if order_row else "") or "")
@@ -1659,6 +1669,7 @@ def create_inline_renewal_order(
         "status": status if final_price > 0 else "delivered",
         "web_token": token,
         "duration_days": duration_days,
+        "device_limit": device_limit,
         "customer_email": final_email,
     }
 
@@ -2200,21 +2211,46 @@ def _find_subscription_impl(subscription_id: str) -> tuple[sqlite3.Row, dict[str
 
 
 def find_subscription_by_network(subscription_id: str, network: str = "tcp") -> tuple[sqlite3.Row, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
-    target = subscription_id.strip()
+    # Сначала резолвим клиента через защищённый find_subscription (блокирует anon-, ord_ и сырой email)
+    base_row, base_settings, base_stream, base_sniffing, base_client = find_subscription(subscription_id)
+    if base_stream.get("network", "tcp") == network:
+        return base_row, base_settings, base_stream, base_sniffing, base_client
+    target_email = str(base_client.get("email") or "").strip()
+    target_sub = str(base_client.get("subId") or "").strip()
     _ensure_inbounds_cache()
     with _inbounds_cache_lock:
         for row, settings, stream_settings, sniffing, clients in _cached_inbounds_parsed:
+            if stream_settings.get("network", "tcp") != network:
+                continue
             for client in clients:
                 c_sub = str(client.get("subId") or "").strip()
                 c_email = str(client.get("email") or "").strip()
-                c_id = str(client.get("id") or "").strip()
-                if target in (c_sub, c_email, c_id):
-                    if stream_settings.get("network", "tcp") == network:
-                        return row, copy.deepcopy(settings), copy.deepcopy(stream_settings), copy.deepcopy(sniffing), copy.deepcopy(client)
+                if (target_sub and c_sub == target_sub) or (target_email and c_email == target_email):
+                    return row, copy.deepcopy(settings), copy.deepcopy(stream_settings), copy.deepcopy(sniffing), copy.deepcopy(client)
+    return base_row, base_settings, base_stream, base_sniffing, base_client
+
+
+def _is_approved_import_url(url: str, request_headers: Any = None) -> bool:
+    if not url:
+        return False
     try:
-        return find_subscription(subscription_id)
-    except KeyError:
-        raise KeyError(subscription_id)
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.scheme != "https":
+            return False
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return False
+        if request_headers:
+            curr = resolve_public_host(request_headers).lower().split(":")[0]
+            if host == curr:
+                return True
+        if host in {"sub.silentconnect.net", "edge.silentconnect.net", "silentconnect.net"}:  # PLACEHOLDER
+            return True
+        if host.endswith(".silentconnect.net"):  # PLACEHOLDER
+            return True
+        return False
+    except Exception:
+        return False
 
 
 def parse_hybrid_subscription_id(subscription_id: str) -> tuple[str, str]:
@@ -2715,7 +2751,7 @@ def build_ws443_client_config(
         raise ValueError("WS 443 fallback supports only VLESS clients with UUID id")
 
     target_host = ws_host or WS443_PUBLIC_HOST
-    
+
     # Resolve target_host to an IP address for the 'address' field to prevent routing loops in Windows TUN mode
     connect_address = target_host
     if not target_host.replace(".", "").isdigit():
@@ -4632,7 +4668,7 @@ def build_xhttp_test_profiles(
     if nl_maxru_cfg:
         nl_kernel_cfg = copy.deepcopy(nl_maxru_cfg)
         nl_kernel_cfg["remarks"] = f"{email} NL XHTTP kernel.org (8443)"
-        
+
         try:
             outbound = nl_kernel_cfg["outbounds"][0]
             outbound["settings"]["vnext"][0]["address"] = public_host
@@ -4640,7 +4676,7 @@ def build_xhttp_test_profiles(
             outbound["settings"]["vnext"][0]["users"][0]["id"] = client_uuid
             outbound["settings"]["vnext"][0]["users"][0]["email"] = email
             outbound["settings"]["vnext"][0]["users"][0]["encryption"] = "none"
-            
+
             # Safe check and initialization to avoid KeyError: 'realitySettings'
             stream_settings = outbound.setdefault("streamSettings", {})
             reality = stream_settings.setdefault("realitySettings", {})
@@ -4668,7 +4704,7 @@ def build_xhttp_test_profiles(
             outbound["settings"]["vnext"][0]["users"][0]["id"] = client_uuid
             outbound["settings"]["vnext"][0]["users"][0]["email"] = email
             outbound["settings"]["vnext"][0]["users"][0]["encryption"] = "none"
-            
+
             outbound["streamSettings"]["network"] = "grpc"
             outbound["streamSettings"]["grpcSettings"] = {
                 "serviceName": "grpc-maxru",
@@ -4688,7 +4724,7 @@ def build_xhttp_test_profiles(
         except (KeyError, IndexError) as e:
             LOGGER.error(f"Error building NL gRPC profile: {e}")
             nl_grpc_cfg = None
-            
+
         if nl_grpc_cfg:
             if isinstance(nl_grpc_cfg.get("meta"), dict):
                 nl_grpc_cfg["meta"]["serverDescription"] = "NL gRPC (vk.com, 29443)"
@@ -4706,7 +4742,7 @@ def build_xhttp_test_profiles(
             outbound["settings"]["vnext"][0]["users"][0]["email"] = email
         except (KeyError, IndexError) as e:
             LOGGER.error(f"Error customizing Frankfurt XHTTP profile: {e}")
-            
+
         if isinstance(fk_xhttp_cfg.get("meta"), dict):
             fk_xhttp_cfg["meta"]["serverDescription"] = "Frankfurt XHTTP (kernel.org, 8443)"
             fk_xhttp_cfg["meta"]["sub-info-text"] = "Frankfurt VLESS over XHTTP. Port: 8443, SNI: www.kernel.org. Dynamic personal config."
@@ -4721,7 +4757,7 @@ def build_xhttp_test_profiles(
             outbound["settings"]["vnext"][0]["port"] = 29443
             outbound["settings"]["vnext"][0]["users"][0]["id"] = client_uuid
             outbound["settings"]["vnext"][0]["users"][0]["email"] = email
-            
+
             outbound["streamSettings"]["network"] = "grpc"
             outbound["streamSettings"]["grpcSettings"] = {
                 "serviceName": "grpc-kernel",
@@ -4731,7 +4767,7 @@ def build_xhttp_test_profiles(
         except (KeyError, IndexError) as e:
             LOGGER.error(f"Error building Frankfurt gRPC profile: {e}")
             fk_grpc_cfg = None
-            
+
         if fk_grpc_cfg:
             if isinstance(fk_grpc_cfg.get("meta"), dict):
                 fk_grpc_cfg["meta"]["serverDescription"] = "Frankfurt gRPC (kernel.org, 29443)"
@@ -4843,30 +4879,30 @@ def build_four_frankfurt_profiles(
             return None
         auto_cfg = copy.deepcopy(tcp_cfg)
         auto_cfg["remarks"] = remarks
-        
+
         tcp_outbound = copy.deepcopy(tcp_cfg["outbounds"][0])
         tcp_outbound["tag"] = "proxy-tcp"
         try:
             tcp_outbound["streamSettings"]["realitySettings"]["fingerprint"] = fingerprint
         except (KeyError, IndexError):
             pass
-        
+
         wifi_outbound = copy.deepcopy(wifi_cfg["outbounds"][0])
         wifi_outbound["tag"] = "proxy-wifi"
-        
+
         proxy_idx = -1
         for idx, o in enumerate(auto_cfg["outbounds"]):
             if o.get("tag") == "proxy":
                 proxy_idx = idx
                 break
-        
+
         if proxy_idx != -1:
             auto_cfg["outbounds"] = (
                 auto_cfg["outbounds"][:proxy_idx] +
                 [tcp_outbound, wifi_outbound] +
                 auto_cfg["outbounds"][proxy_idx+1:]
             )
-            
+
         auto_cfg["routing"] = build_balanced_routing("split-ru")
         auto_cfg["observatory"] = {
             "subjectSelector": ["proxy-"],
@@ -4874,7 +4910,7 @@ def build_four_frankfurt_profiles(
             "probeInterval": "15s",
             "enableConcurrency": True,
         }
-        
+
         if isinstance(auto_cfg.get("meta"), dict):
             auto_cfg["meta"]["serverDescription"] = description
             auto_cfg["meta"]["sub-info-text"] = "Frankfurt Auto. Автовыбор между TCP и WebSocket."
@@ -5610,7 +5646,7 @@ def build_happ_config_meta(subscription_id: str) -> dict[str, Any] | None:
     if HAPP_PROVIDER_ID and HAPP_SUB_INFO_ENABLED:
         summary = subscription_summary(subscription_id)
         subtitle = str(summary.get("subtitle") or "срок не определён").strip().rstrip(".")
-        
+
         if summary.get("status_kind") != "active":
             info_text = f"❌ Подписка ИСТЕКЛА ({subtitle}). Продлите её в Telegram!"
             meta["sub-info-color"] = "red"
@@ -5888,7 +5924,7 @@ def setup_page_html(
       font-family:'Inter', system-ui, -apple-system, sans-serif;
       color:var(--text);
       background-color: var(--bg);
-      background-image: 
+      background-image:
         radial-gradient(circle at 15% 50%, rgba(47, 191, 113, 0.08), transparent 25%),
         radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.08), transparent 25%);
       background-attachment: fixed;
@@ -5915,7 +5951,7 @@ def setup_page_html(
     }
     .top { min-height:64px; padding:0 20px; display:flex; align-items:center; justify-content:space-between; gap:16px; }
     .brand { min-width:0; display:flex; align-items:center; gap:12px; font-weight:800; font-size:20px; text-decoration:none; color:#fff; }
-    .brand span { 
+    .brand span {
       background: linear-gradient(to right, #fff, #2fbf71);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
@@ -7037,12 +7073,12 @@ def setup_page_html(
         <h2 style="margin:0; font-size:20px; font-weight:700; display:flex; align-items:center; gap:8px;">⚡ Продлить подписку</h2>
         <span id="renew-arrow" style="font-size:16px; color:var(--green); transition:transform 0.32s cubic-bezier(0.16, 1, 0.3, 1);">▼</span>
       </div>
-      
+
       <div id="renew-wrapper" style="display:grid; grid-template-rows:0fr; transition:grid-template-rows 0.32s cubic-bezier(0.16, 1, 0.3, 1);">
         <div style="overflow:hidden;">
           <div id="renew-content" style="padding:0 24px 24px 24px; border-top:1px solid rgba(255,255,255,0.06); opacity:0; transition:opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1);">
             <p style="color:var(--muted); font-size:14px; margin-top:12px; margin-bottom:16px;">Выберите период продления. При оплате ваш текущий ключ доступа и настройки в приложении сразу продлятся.</p>
-            
+
             __LINKED_EMAIL_BADGE__
 
             <form method="post" action="/__SECRET_SEGMENT__/renew/__SUB_ID__">
@@ -7505,7 +7541,7 @@ def setup_page_html(
         <div style="font-size: 13.5px; color: var(--muted); margin-bottom: 12px;">
           Устройство: <strong id="awg-switch-slot-name" style="color: #fff;">Устройство</strong>
         </div>
-        
+
         <div style="margin-bottom: 14px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
             <label style="display: block; font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; margin: 0;">Выберите новую локацию:</label>
@@ -7638,7 +7674,7 @@ def setup_page_html(
         card.type = "button";
         const isActive = app.id === currentApp;
         card.className = "app-card" + (isActive ? " active" : "");
-        
+
         let appName = app.name;
         let appIcon = app.iconUrl;
         if (value === "ios") {
@@ -7660,10 +7696,10 @@ def setup_page_html(
         else if (badgeLower.includes("windows")) badgeClass = "badge-windows";
         else if (badgeLower.includes("android")) badgeClass = "badge-android";
         else if (badgeLower.includes("sing")) badgeClass = "badge-singbox";
-        
+
         const badgeHtml = app.badge ? '<span class="app-badge ' + badgeClass + '">' + app.badge + '</span>' : '';
-        
-        card.innerHTML = 
+
+        card.innerHTML =
           '<img class="app-icon-img" src="' + appIcon + '" alt="' + appName + '" />' +
           '<div class="app-info">' +
             '<div class="app-name-row">' +
@@ -7672,7 +7708,7 @@ def setup_page_html(
             '</div>' +
           '</div>' +
           '<div class="app-check">' + (isActive ? '✓' : '') + '</div>';
-          
+
         card.addEventListener("click", () => {
           currentApp = app.id;
           renderApps();
@@ -8175,7 +8211,7 @@ def setup_page_html(
       newLabel = newLabel.trim();
       if (!newLabel) return;
       if (newLabel.length > 16) newLabel = newLabel.substring(0, 16);
-      
+
       fetch('/sub/awg/' + encodeURIComponent(subId) + '/slot/' + slotIdx + '/rename', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -8222,8 +8258,8 @@ def setup_page_html(
           // Calibrate raw wire/TCP latency from HTTP RTT:
           // Over keep-alive HTTP, wire RTT is ~40-45% of HTTP RTT.
           // On initial cold connection (with TLS negotiation), wire RTT is ~10-12% of HTTP RTT.
-          var baseWirePing = httpRtt > 130 
-            ? Math.round(httpRtt * 0.11) 
+          var baseWirePing = httpRtt > 130
+            ? Math.round(httpRtt * 0.11)
             : Math.round(httpRtt * 0.42);
 
           var jitter = (Math.floor(Math.random() * 5) - 2); // -2..+2 ms
@@ -9951,6 +9987,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "profile_not_found"}, True)
                     return
                 try:
+                    wc.assert_profile_awg_eligible(prof)
+                except ValueError as exc:
+                    self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": str(exc)}, True)
+                    return
+                try:
                     slot_idx = int(slot_idx_str)
                 except ValueError:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid_slot_index"}, True)
@@ -9996,6 +10037,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 prof = find_profile_for_sub(wc, sub_id)
                 if not prof:
                     self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "profile_not_found"}, True)
+                    return
+                try:
+                    wc.assert_profile_awg_eligible(prof)
+                except ValueError as exc:
+                    self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": str(exc)}, True)
                     return
                 try:
                     slot_idx = int(slot_idx_str)
@@ -10126,7 +10172,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                         <h2 style="color:var(--green); margin:0; font-size:20px;">Почта успешно привязана!</h2>
                       </div>
                       <p style="color:#fff; font-size:15px; line-height:1.5; margin:0;">
-                        Адрес <strong>{html.escape(res['customer_email'])}</strong> привязан к вашей подписке. 
+                        Адрес <strong>{html.escape(res['customer_email'])}</strong> привязан к вашей подписке.
                         Напоминания об окончании за 24ч и 1ч включены, а ссылки для подключения и входа в кабинет отправлены на вашу почту.
                       </p>
                     </section>
@@ -10476,8 +10522,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                         link = str(slot.get("active_link") or "").strip()
 
                     if not link:
-                        fallback_c = country_override if country_override in {"nl", "pl"} else (str(slot.get("active_server") or "nl").lower())
-                        if fallback_c not in {"nl", "pl"}:
+                        fallback_c = country_override if country_override in {"nl", "de", "pl"} else (str(slot.get("active_server") or "nl").lower())
+                        if fallback_c not in {"nl", "de", "pl"}:
                             fallback_c = "nl"
                         link, _, _ = build_openflux_v1_link(fallback_c, pid)
 
@@ -10530,11 +10576,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                         self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"}, include_body)
                         return
                     sub_id = path[2]
+                    find_subscription(sub_id)
                     public_host = resolve_public_host(self.headers)
                     payload = build_four_profiles(sub_id, public_host, "split-ru")
                     self._send_json(HTTPStatus.OK, payload, include_body)
                     return
                 public_host = resolve_public_host(self.headers)
+                if path[1] not in {"order-status", "order-status-sub", "legal"}:
+                    find_subscription(path[2])
 
                 if path[1] in {"json-global", "sub-global", "happ-global"}:
                     payload = build_four_profiles(path[2], public_host, "global")
@@ -10897,6 +10946,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "profile_not_found"}, include_body)
                     return
                 try:
+                    wc.assert_profile_awg_eligible(prof)
+                except ValueError as exc:
+                    self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": str(exc)}, include_body)
+                    return
+                try:
                     slot_idx = int(slot_idx_str)
                 except ValueError:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid_slot_index"}, include_body)
@@ -10960,6 +11014,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 prof = find_profile_for_sub(wc, sub_id)
                 if not prof:
                     self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "profile_not_found"}, include_body)
+                    return
+                try:
+                    wc.assert_profile_awg_eligible(prof)
+                except ValueError as exc:
+                    self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": str(exc)}, include_body)
                     return
                 try:
                     slot_idx = int(slot_idx_str)
@@ -11028,6 +11087,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "profile_not_found"}, include_body)
                     return
                 try:
+                    wc.assert_profile_awg_eligible(prof)
+                except ValueError as exc:
+                    self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": str(exc)}, include_body)
+                    return
+                try:
                     slot_idx = int(slot_idx_str)
                 except ValueError:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid_slot_index"}, include_body)
@@ -11080,9 +11144,13 @@ class RequestHandler(BaseHTTPRequestHandler):
 
             if len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] in {"import", "setup"}:
                 sub_id = path[2]
-                raw_source = first_non_empty(query.get("url")) or public_subscription_url(self.headers, "json", sub_id)
-                parsed_source = urllib.parse.urlsplit(raw_source)
-                source_url = urllib.parse.urlunsplit((parsed_source.scheme, parsed_source.netloc, parsed_source.path, "", "")) if parsed_source.scheme else raw_source
+                find_subscription(sub_id)
+                raw_source = first_non_empty(query.get("url")) or ""
+                if not _is_approved_import_url(raw_source, self.headers):
+                    source_url = public_subscription_url(self.headers, "json", sub_id)
+                else:
+                    parsed_source = urllib.parse.urlsplit(raw_source)
+                    source_url = urllib.parse.urlunsplit((parsed_source.scheme, parsed_source.netloc, parsed_source.path, "", "")) if parsed_source.scheme else raw_source
                 quoted_sub_id = urllib.parse.quote(sub_id, safe="")
                 import_query = ""
                 pending_card = check_pending_payment_card(sub_id)
@@ -11101,7 +11169,12 @@ class RequestHandler(BaseHTTPRequestHandler):
             if len(path) == 4 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] == "import":
                 target = path[2]
                 sub_id = path[3]
-                source_url = first_non_empty(query.get("url")) or public_subscription_url(self.headers, "json", sub_id)
+                find_subscription(sub_id)
+                raw_source = first_non_empty(query.get("url")) or ""
+                if not _is_approved_import_url(raw_source, self.headers):
+                    source_url = public_subscription_url(self.headers, "json", sub_id)
+                else:
+                    source_url = raw_source
                 if target == "happ":
                     encrypted = encrypt_happ_link(source_url)
                     if encrypted:
@@ -11528,3 +11601,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

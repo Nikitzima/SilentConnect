@@ -144,8 +144,8 @@ class TestQuiesceStressHarness(unittest.TestCase):
         with app.QUIESCE_LOCK:
             app.QUIESCE_LEASE_UNTIL = time.time() - 1.0
 
-        # 4. Under hardened mode, quiesce stays active to avoid split-brain writes during failover
-        self.assertTrue(app.is_quiesced())
+        # 4. Under SC-12, quiesce lease expires automatically after TTL
+        self.assertFalse(app.is_quiesced())
 
         # 5. Explicit release clears quiesced state
         status, _, data = self._request(

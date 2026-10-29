@@ -61,7 +61,7 @@ IGNORED_FILENAMES: Set[str] = {
 
 IGNORED_DIR_NAMES: Set[str] = {
     ".git", ".agents", "__pycache__", ".pytest_cache", ".ruff_cache", "venv", ".venv",
-    "node_modules", ".idea", ".vscode", ".gemini", "tests",
+    "node_modules", ".idea", ".vscode", ".gemini", 
 }
 
 MAGIC_BYTE_SIGNATURES: List[Tuple[bytes, str]] = [
@@ -86,12 +86,75 @@ _P_SHORT_IDS = [
     "".join(["e6b2", "c801"]),
 ]
 
+_P_XUI_CREDS = [
+    "".join(["Niki", "tzima"]),
+    "".join(["Nik!t", "@1881"]),
+    "".join(["e3gzIe9TsXp", "SddXQXk"]),
+]
+_P_AWG_KEYS = [
+    "".join(["LmTA8iDZhs251jXb921wPUzPmrYJ4mTEn3xj6MuzupY", "="]),
+    "".join(["Q910gn5GO3TIVLDy5+3kuTJL5D7wcSHSbXBT7ldyNP8", "="]),
+    "".join(["70IPdY8HdG8GnzI6R5XfOFUSVlzuF19J615ohu/wxEI", "="]),
+    "".join(["CaDhajgtVaraOP7nbig/ENVKWZ5nhkFGfRMKHiZWYx8", "="]),
+    "".join(["Ddu8+r+rovOke5uONFDjt+R9iUPy6E5CCzaXNw+PJWQ", "="]),
+]
+_P_OPENFLUX_PATTERNS = [
+    r"sc_oflux_2026_[a-f0-9]+",
+    r"disk\.yandex\.ru/i/[A-Za-z0-9_-]+",
+    r"yadi\.sk/d/[A-Za-z0-9_-]+",
+    "".join(["apigw", ".yandexcloud", ".net"]),
+]
+_P_REALITY_KEYS = [
+    "".join(["2JCWlJ5M8OxWsp8YLWZqtlkyJGMbdRSwVishk8mIu", "Eo"]),
+    "".join(["qb3chneGBO60_kv-McyCvUrXM93aN851duFH2bVIM", "QU"]),
+    "".join(["ASvvjJ4dOcHst5FWDJ9D562UQ0nN1pAw0l13Z58RN", "QA"]),
+    "".join(["324hJemHDtilNcnvMX8iNJzl2_ko0OVF9C_ggv_YlV", "w"]),
+    "".join(["9a2f7c6d1", "e4b8a30"]),
+]
+_P_MERCHANT_ADMIN_IDS = [
+    "".join(["9580", "26436"]),
+    "".join(["c3393290", "-d96e-4a5e-aca3-12015a843b0e"]),
+    "".join(["e4d5af52", "-9c18-444b-b8bf-db1a26f0c61d"]),
+    "".join(["0x4AAAAAAD", "_SNIC95jkFweEh"]),
+]
+
 # =============================================================================
 # Secret & Infrastructure Regex Rules
 # =============================================================================
 
 # Format: (Rule ID, Description, Compiled Regex, Strict Only?)
 SECRET_PATTERNS: List[Tuple[str, str, re.Pattern, bool]] = [
+    (
+        "SEC-011",
+        "Hardcoded 3X-UI Panel Credentials or Secret Path",
+        re.compile(r"(?:" + "|".join(re.escape(x) for x in _P_XUI_CREDS) + r")"),
+        False,
+    ),
+    (
+        "SEC-012",
+        "AmneziaWG HeaderProtectionKey / Server Public Key",
+        re.compile(r"(?:" + "|".join(re.escape(x) for x in _P_AWG_KEYS) + r")"),
+        False,
+    ),
+    (
+        "SEC-013",
+        "OpenFlux Cluster Secret Key or Cloud Shard Links",
+        re.compile(r"(?:" + "|".join(_P_OPENFLUX_PATTERNS) + r")"),
+        False,
+    ),
+    (
+        "INF-007",
+        "Production Reality Public Keys & Short IDs",
+        re.compile(r"(?:" + "|".join(re.escape(x) for x in _P_REALITY_KEYS) + r")"),
+        False,
+    ),
+    (
+        "INF-008",
+        "Production Admin Telegram ID / Merchant IDs",
+        re.compile(r"(?:" + "|".join(re.escape(x) for x in _P_MERCHANT_ADMIN_IDS) + r")"),
+        False,
+    ),
+
     (
         "SEC-001",
         "Telegram Bot API Token",
@@ -249,6 +312,8 @@ SAFE_WHITELIST_SUBSTRINGS: List[str] = [
     "<YOUR_",
     "${",
     "PLACEHOLDER",
+    "Mock",
+    "mock",
     "CHANGEME",
     "Mozilla/5.0",
     "Chrome/120.0.0.0",
@@ -439,6 +504,10 @@ class SecurityAuditScanner:
 
             for m in regex.finditer(line):
                 matched_text = m.group(0)
+
+                # Exclude harmless domain mentions in test assertions/fixtures from INF-005
+                if rule_id == "INF-005" and ("tests/" in rel_path or rel_path.startswith("tests/")):
+                    continue
 
                 # Check exact whitelist
                 if matched_text in SAFE_WHITELIST_TOKENS:

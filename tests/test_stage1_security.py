@@ -67,7 +67,7 @@ class TestSecurityHardening(unittest.TestCase):
     def test_client_ip_from_headers_walks_xff_right_to_left(self) -> None:
         with patch.dict(os.environ, {"TRUST_CF_HEADERS": "0", "TRUSTED_PROXY_CIDRS": "127.0.0.0/8,10.0.0.0/8"}):
             # Spoofed IP, Real Client IP, Trusted Intermediate Proxy
-            headers = {"X-Forwarded-For": "1.2.3.4, 203.0.113.99, 10.0.0.1"}
+            headers = {"X-Forwarded-For": "192.0.2.4, 203.0.113.99, 10.0.0.1"}
             ip = security.client_ip_from_headers(headers, "127.0.0.1")
             self.assertEqual(ip, "203.0.113.99")
 

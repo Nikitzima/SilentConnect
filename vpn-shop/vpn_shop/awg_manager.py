@@ -378,7 +378,7 @@ def _get_server(server_code: str = "nl") -> dict[str, Any]:
 
 def _dex(*args: Any, **kwargs: Any) -> str:
     """Execute command inside target container either locally (NL) or over SSH (FI).
-    
+
     Supports flexible signatures:
     - _dex(cmd, inp=None, server_code="nl")
     - _dex(server_code, cmd, inp=None)
@@ -694,7 +694,7 @@ def create_peer(sub_id: str, server_code: str = "nl") -> dict[str, Any]:
 
     # live add in container via stdin
     peer_ips = f"{ip}/32"
-    if server_code == "pl":
+    if server_code in ("de", "pl"):
         peer_ips = f"{ip}/32,fd00:8:3::{ip.split('.')[-1]}/128"
     _dex(
         f"awg set awg0 peer {shlex.quote(pub)} allowed-ips {shlex.quote(peer_ips)} preshared-key /dev/stdin",
@@ -705,7 +705,7 @@ def create_peer(sub_id: str, server_code: str = "nl") -> dict[str, Any]:
     # персистентность: дописать только блок [Peer] в awg0.conf внутри контейнера (если ещё не присутствует)
     if pub not in conf:
         peer_ips_conf = f"{ip}/32"
-        if server_code == "pl":
+        if server_code in ("de", "pl"):
             peer_ips_conf = f"{ip}/32, fd00:8:3::{ip.split('.')[-1]}/128"
         block = (
             f"\n[Peer]\nPublicKey = {pub}\nPresharedKey = {psk}\n"
@@ -820,17 +820,17 @@ def readd_peer(sub_id: str, server_code: str = "nl") -> bool:
             return False
         conf = _server_conf(server_code)
         peer_ips = f"{peer['tunnel_ip']}/32"
-        if server_code == "pl":
+        if server_code in ("de", "pl"):
             peer_ips = f"{peer['tunnel_ip']}/32,fd00:8:3::{peer['tunnel_ip'].split('.')[-1]}/128"
         _dex(
             f"awg set awg0 peer {shlex.quote(pub)} allowed-ips {shlex.quote(peer_ips)} preshared-key /dev/stdin",
             inp=psk,
             server_code=server_code,
         )
-        
+
         if pub not in conf:
             peer_ips_conf = f"{peer['tunnel_ip']}/32"
-            if server_code == "pl":
+            if server_code in ("de", "pl"):
                 peer_ips_conf = f"{peer['tunnel_ip']}/32, fd00:8:3::{peer['tunnel_ip'].split('.')[-1]}/128"
             block = (
                 f"\n[Peer]\nPublicKey = {pub}\n"
@@ -867,7 +867,7 @@ def build_conf(sub_id: str, server_code: str = "nl") -> str:
     except OSError:
         pass
 
-    if server_code == "pl":
+    if server_code in ("de", "pl"):
         client_last_octet = peer['tunnel_ip'].split('.')[-1]
         addr_str = f"{peer['tunnel_ip']}/32, fd00:8:3::{client_last_octet}/128"
         if "::/0" not in allowed:
@@ -994,7 +994,7 @@ def add_slot_peer(
         # 1. Live add in container via stdin
         try:
             peer_ips = f"{ip}/32"
-            if server_code == "pl":
+            if server_code in ("de", "pl"):
                 peer_ips = f"{ip}/32,fd00:8:3::{ip.split('.')[-1]}/128"
             if psk:
                 _dex(
@@ -1013,7 +1013,7 @@ def add_slot_peer(
             conf = _server_conf(server_code)
             if pub not in conf:
                 peer_ips_conf = f"{ip}/32"
-                if server_code == "pl":
+                if server_code in ("de", "pl"):
                     peer_ips_conf = f"{ip}/32, fd00:8:3::{ip.split('.')[-1]}/128"
                 if psk:
                     block = f"\n[Peer]\nPublicKey = {pub}\nPresharedKey = {psk}\nAllowedIPs = {peer_ips_conf}\n"
@@ -1255,7 +1255,7 @@ def reconcile_awg_peers(
                 des_slot = desired_by_pubkey[pk]
                 cur_allowed = cur_p.get("allowed_ips", "").strip()
                 des_ip = str(des_slot.get("client_ip") or "").strip()
-                des_allowed = f"{des_ip}/32, fd00:8:3::{des_ip.split('.')[-1]}/128" if code == "pl" else f"{des_ip}/32"
+                des_allowed = f"{des_ip}/32, fd00:8:3::{des_ip.split('.')[-1]}/128" if code in ("de", "pl") else f"{des_ip}/32"
                 cur_psk = cur_p.get("preshared_key", "").strip()
                 des_psk = str(des_slot.get("preshared_key") or "").strip()
 
@@ -1297,7 +1297,7 @@ def reconcile_awg_peers(
             sorted_slots = sorted(desired_by_pubkey.values(), key=lambda x: str(x.get("client_ip", "")))
             for s in sorted_slots:
                 ip_val = s["client_ip"]
-                if code == "pl":
+                if code in ("de", "pl"):
                     peer_ips = f"{ip_val}/32, fd00:8:3::{ip_val.split('.')[-1]}/128"
                 else:
                     peer_ips = f"{ip_val}/32"

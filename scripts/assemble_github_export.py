@@ -8,6 +8,7 @@ strictly excluding any databases, backups, legacy binaries, active env files, or
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -61,6 +62,8 @@ FORBIDDEN_EXTENSIONS = {
 }
 
 FORBIDDEN_EXACT_FILENAMES = {
+    # Credential-leaking panel scripts
+    "sync_env_keys.py", "test_3xui.py", "test_http_login.py", "test_pl_fi_http.py",
     ".env", ".env.local", ".env.production", ".env.staging", ".env.silentconnect", ".env.platega", "subjson.env",
     "outage_metrics.json", "cluster_doctor.py",
     # Operational deployment & failover scripts with production IPs / secrets
@@ -90,13 +93,78 @@ ALLOWED_PUBLIC_SCRIPTS = {
     "Caddyfile.fi", "assemble_github_export.py", "backup_fi.sh", "backup_nl.sh",
     "build_audit_zip.py", "cluster_node_tool.py", "digiseller_tool.py", "failback_merge.py",
     "fi_xray_config.json", "git_pre_commit.py", "git_pre_push.py", "litestream_fi.yml",
-    "litestream_pl.yml", "local_xray_config.json", "lookup_user.py", "patch_config.py",
-    "provision_openflux_pool.py", "security_audit_scanner.py", "set_quiet_logging_mode.py",
-    "socks_connect.py", "sync_env_keys.py", "test_3xui.py", "test_failback_merge.py",
-    "test_failback_merge_stress.py", "test_http_login.py", "test_lease.py", "test_nl_xui.py",
-    "test_outage_simulation.py", "test_pl_fi_http.py", "test_quiesce_live.py",
+    "litestream_pl.yml", "local_xray_config.json", "lookup_user.py",     "provision_openflux_pool.py", "security_audit_scanner.py", "set_quiet_logging_mode.py",
+    "socks_connect.py", "test_failback_merge.py",
+    "test_failback_merge_stress.py", "test_lease.py", "test_nl_xui.py",
+    "test_outage_simulation.py", "test_quiesce_live.py",
     "vpn-shop-silentconnect.service", "vpn-shop-web.service",
 }
+
+
+
+TEXT_EXTENSIONS = {
+    ".py", ".md", ".txt", ".json", ".sh", ".yml", ".yaml", ".service", ".html", ".css", ".example"
+}
+
+EXPORT_REPLACEMENTS = [
+    # 3X-UI credentials / paths
+    ("xui_admin", "xui_admin"),
+    ("xui_password_placeholder", "xui_password_placeholder"),
+    ("secret_xui_path_placeholder", "secret_xui_path_placeholder"),
+
+    # OpenFlux cluster key & Cloud Shard Links
+    ("sc_oflux_2026_mock_placeholder_key", "sc_oflux_2026_mock_placeholder_key"),
+    ("https://example.com/docs/shard1", "https://example.com/docs/shard1"),
+    ("https://example.com/docs/shard2", "https://example.com/docs/shard2"),
+    ("https://example.com/docs/shard3", "https://example.com/docs/shard3"),
+    ("https://example.com/docs/shard4", "https://example.com/docs/shard4"),
+    ("apigw.example.com", "apigw.example.com"),
+
+    # Reality Public Keys & Short IDs
+    ("MockRealityPublicKey1111111111111111111111", "MockRealityPublicKey1111111111111111111111"),
+    ("MockRealityPublicKey2222222222222222222222", "MockRealityPublicKey2222222222222222222222"),
+    ("MockRealityPublicKey3333333333333333333333", "MockRealityPublicKey3333333333333333333333"),
+    ("MockRealityPublicKey4444444444444444444444", "MockRealityPublicKey4444444444444444444444"),
+    ("0123456789abcdef", "0123456789abcdef"),
+    ("fedcba9876543210", "fedcba9876543210"),
+
+    # AmneziaWG Keys (44 chars valid base64)
+    ("MockHeaderProtectionKeyNL111111111111111111=", "MockHeaderProtectionKeyNL111111111111111111="),
+    ("MockHeaderProtectionKeyDE222222222222222222=", "MockHeaderProtectionKeyDE222222222222222222="),
+    ("MockServerPublicKeyNL1111111111111111111111=", "MockServerPublicKeyNL1111111111111111111111="),
+    ("MockServerPublicKeyFI2222222222222222222222=", "MockServerPublicKeyFI2222222222222222222222="),
+    ("MockServerPublicKeyDE3333333333333333333333=", "MockServerPublicKeyDE3333333333333333333333="),
+
+    # Secret transport paths
+    ("/sc-ws-path", "/sc-ws-path"),
+    ("/xh-mx-path", "/xh-mx-path"),
+    ("/xh-7m-path", "/xh-7m-path"),
+    ("/xh-b3-path", "/xh-b3-path"),
+
+    # Admin ID & Merchant IDs
+    ("123456789", "123456789"),
+    ("00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000001"),
+    ("00000000-0000-0000-0000-000000000002", "00000000-0000-0000-0000-000000000002"),
+    ("0x4AAAAAAAMockTurnstileSiteKey", "0x4AAAAAAAMockTurnstileSiteKey"),
+]
+
+
+def sanitize_and_copy_file(src: Path, dst: Path) -> None:
+    if src.name == "security_audit_scanner.py":
+        shutil.copy2(src, dst)
+        return
+    if src.suffix.lower() in TEXT_EXTENSIONS or src.name in ALLOWED_EXEMPT_NAMES:
+        try:
+            content = src.read_text(encoding="utf-8")
+            for old_val, new_val in EXPORT_REPLACEMENTS:
+                content = content.replace(old_val, new_val)
+            content = re.sub(r"sc_oflux_2026_[a-f0-9]+", "sc_oflux_2026_mock_placeholder_key", content)
+            dst.write_text(content, encoding="utf-8")
+            shutil.copystat(src, dst)
+            return
+        except UnicodeDecodeError:
+            pass
+    shutil.copy2(src, dst)
 
 
 def is_file_allowed(path: Path) -> bool:
@@ -150,7 +218,7 @@ def copy_tree_sanitized(src_dir: Path, dst_dir: Path) -> int:
                 continue
 
             target_file_path = target_sub_dir / file_name
-            shutil.copy2(file_path, target_file_path)
+            sanitize_and_copy_file(file_path, target_file_path)
             copied_count += 1
 
     return copied_count
@@ -172,7 +240,7 @@ def assemble():
     for root_file in ROOT_FILES:
         src_path = SOURCE_ROOT / root_file
         if src_path.exists():
-            shutil.copy2(src_path, EXPORT_DIR / root_file)
+            sanitize_and_copy_file(src_path, EXPORT_DIR / root_file)
             root_copied += 1
             print(f"[COPY-ROOT] {root_file}")
         elif root_file == ".gitignore" and (EXPORT_DIR / ".gitignore").exists():
@@ -212,3 +280,4 @@ def assemble():
 
 if __name__ == "__main__":
     assemble()
+

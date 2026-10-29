@@ -174,8 +174,8 @@ def get_server_ip(server_code: str) -> str:
     code = (server_code or "").lower().strip()
     if code == "nl":
         return os.environ.get("NL_HOST", os.environ.get("NL_MASTER_IP", "192.0.2.1"))
-    if code == "pl":
-        return os.environ.get("PL_HOST", os.environ.get("PL_STANDBY_IP", "192.0.2.2"))
+    if code in ("de", "pl"):
+        return os.environ.get("DE_STANDBY_IP", os.environ.get("DE_HOST", os.environ.get("PL_HOST", "192.0.2.3")))
     if code == "fi":
         return os.environ.get("FI_HOST", os.environ.get("FI_STANDBY_IP", "198.51.100.1"))
     return "192.0.2.1"
