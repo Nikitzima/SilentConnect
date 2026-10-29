@@ -543,14 +543,12 @@ def _genkey(server_code: str = "nl") -> str:
 
 def _pubkey(privkey: str, server_code: str = "nl") -> str:
     priv = privkey.strip()
-    if not validate_wg_key(priv):
-        raise ValueError(f"Invalid WireGuard private key: {priv}")
     try:
         from cryptography.hazmat.primitives.asymmetric import x25519
         import base64
         priv_bytes = base64.b64decode(priv)
-        priv = x25519.X25519PrivateKey.from_private_bytes(priv_bytes)
-        return base64.b64encode(priv.public_key().public_bytes_raw()).decode("ascii")
+        priv_obj = x25519.X25519PrivateKey.from_private_bytes(priv_bytes)
+        return base64.b64encode(priv_obj.public_key().public_bytes_raw()).decode("ascii")
     except Exception:
         try:
             return _dex("awg pubkey", inp=priv + "\n", server_code=server_code)
