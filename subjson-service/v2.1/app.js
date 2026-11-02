@@ -963,25 +963,73 @@ function badgeClassOf(badge) {
   return 'badge-recommended';
 }
 
+function pluralSlots(n) {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return `${n} слот`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return `${n} слота`;
+  return `${n} слотов`;
+}
+
+function updatePlatformSlider(track) {
+  if (!track) return;
+  const slider = track.querySelector('.platform-tab-slider');
+  const activeTab = track.querySelector('.platform-tab.active');
+  if (!slider || !activeTab) return;
+  const left = activeTab.offsetLeft;
+  const width = activeTab.offsetWidth;
+  slider.style.transform = `translateX(${left}px)`;
+  slider.style.width = `${width}px`;
+  slider.classList.add('ready');
+}
+
 function renderPlatformTrack(track, list, activeId, onPick, suffix) {
   if (!track) return;
-  track.innerHTML = '';
-  list.forEach(p => {
-    const b = document.createElement('button');
-    const on = p.id === activeId;
-    b.type = 'button';
-    b.className = 'platform-tab' + (on ? ' active' : '');
-    b.setAttribute('role', 'tab');
-    b.setAttribute('aria-selected', String(on));
-    b.innerHTML = p.svg.replace(/finder-(blue|silver)/g, 'finder-$1-' + suffix) + `<span>${p.label}</span>`;
-    b.addEventListener('click', () => {
-      onPick(p.id);
-      centerActiveTab(track);
+  const listKey = suffix || 'default';
+  const needsRebuild = track.dataset.listKey !== listKey;
+
+  if (needsRebuild) {
+    track.innerHTML = '';
+    track.dataset.listKey = listKey;
+
+    const slider = document.createElement('div');
+    slider.className = 'platform-tab-slider';
+    track.appendChild(slider);
+
+    list.forEach(p => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'platform-tab';
+      b.dataset.platformId = p.id;
+      b.setAttribute('role', 'tab');
+      b.innerHTML = p.svg.replace(/finder-(blue|silver)/g, 'finder-$1-' + suffix) + `<span>${p.label}</span>`;
+      b.addEventListener('click', () => {
+        onPick(p.id);
+      });
+      track.appendChild(b);
     });
-    track.appendChild(b);
+
+    setupDraggableTrack(track);
+
+    if (!track.dataset.hasResize) {
+      track.dataset.hasResize = 'true';
+      window.addEventListener('resize', () => {
+        updatePlatformSlider(track);
+      });
+    }
+  }
+
+  // Update active state on tab buttons
+  const tabs = track.querySelectorAll('.platform-tab');
+  tabs.forEach(b => {
+    const on = b.dataset.platformId === activeId;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', String(on));
   });
-  setupDraggableTrack(track);
-  centerActiveTab(track);
+
+  requestAnimationFrame(() => {
+    updatePlatformSlider(track);
+    centerActiveTab(track);
+  });
 }
 
 function dlButtonsHtml(items) {
@@ -1020,30 +1068,42 @@ function renderMainSetup() {
 
   const grid = $('#appsGridMain');
   if (grid) {
-    grid.innerHTML = '';
-    avail.forEach(a => {
-      let name = a.name, icon = a.icon;
-      if (os === 'ios') {
-        if (a.id === 'singbox') name = 'sing-box MT';
-        else if (a.id === 'clash') { name = 'Clash Mi'; if (a.iosIcon) icon = a.iosIcon; }
-      }
-      const on = a.id === cur.id;
-      const card = document.createElement('button');
-      card.type = 'button';
-      card.className = 'app-card' + (on ? ' active' : '');
-      card.innerHTML = `
-        <img src="${icon}" alt="${name}" class="app-icon-img" onerror="this.style.display='none'">
-        <div class="app-info"><div class="app-name-row">
-          <span class="app-name">${name}</span>
-          ${a.badge ? `<span class="app-badge ${badgeClassOf(a.badge)}">${a.badge}</span>` : ''}
-        </div></div>
-        <span class="app-check" aria-hidden="true">${on ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}</span>`;
-      card.addEventListener('click', () => {
-        S.appMain = a.id;
-        renderMainSetup();
+    const isSameOs = grid.dataset.renderedOs === os;
+    if (!isSameOs) {
+      grid.innerHTML = '';
+      grid.dataset.renderedOs = os;
+      avail.forEach(a => {
+        let name = a.name, icon = a.icon;
+        if (os === 'ios') {
+          if (a.id === 'singbox') name = 'sing-box MT';
+          else if (a.id === 'clash') { name = 'Clash Mi'; if (a.iosIcon) icon = a.iosIcon; }
+        }
+        const on = a.id === cur.id;
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'app-card' + (on ? ' active' : '');
+        card.dataset.appId = a.id;
+        card.innerHTML = `
+          <img src="${icon}" alt="${name}" class="app-icon-img" onerror="this.style.display='none'">
+          <div class="app-info"><div class="app-name-row">
+            <span class="app-name">${name}</span>
+            ${a.badge ? `<span class="app-badge ${badgeClassOf(a.badge)}">${a.badge}</span>` : ''}
+          </div></div>
+          <span class="app-check" aria-hidden="true">${on ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}</span>`;
+        card.addEventListener('click', () => {
+          S.appMain = a.id;
+          renderMainSetup();
+        });
+        grid.appendChild(card);
       });
-      grid.appendChild(card);
-    });
+    } else {
+      grid.querySelectorAll('.app-card').forEach(card => {
+        const on = card.dataset.appId === cur.id;
+        card.classList.toggle('active', on);
+        const check = card.querySelector('.app-check');
+        if (check) check.innerHTML = on ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '';
+      });
+    }
   }
 
   const title = cur.id === 'singbox' && os === 'ios' ? 'sing-box MT' : (cur.id === 'clash' && os === 'ios' ? 'Clash Mi' : cur.name);
@@ -1248,6 +1308,8 @@ PersistentKeepalive = 25`;
 }
 
 function renderAwgSetup() {
+  if (!S.awgTargetSlot) S.awgTargetSlot = (AWG_SLOTS[0] && AWG_SLOTS[0].id) || 1;
+
   renderPlatformTrack($('#osTabsAwg'), AWG_OS_LIST, S.osAwg, id => {
     S.osAwg = id;
     renderAwgSetup();
@@ -1256,19 +1318,46 @@ function renderAwgSetup() {
   const curOsEl = $('#curOsNameAwg');
   if (curOsEl) curOsEl.textContent = OS_LABEL[S.osAwg] || S.osAwg;
 
+  // Sync count badge & slots collapse/expand
+  const countBadge = $('#awgSlotsCountBadge');
+  if (countBadge) countBadge.textContent = pluralSlots(AWG_SLOTS.length);
+
   const slotsCont = $('#awgSlotsGrid');
+  const toggleBtn = $('#awgSlotsToggleBtn');
+  const toggleText = $('#awgSlotsToggleText');
+  const toggleIco = $('#awgSlotsToggleIco');
+
+  function updateSlotsVisibility() {
+    if (!slotsCont) return;
+    const isCollapsed = Boolean(S.awgSlotsCollapsed);
+    slotsCont.classList.toggle('collapsed', isCollapsed);
+    if (toggleText) toggleText.textContent = isCollapsed ? `Показать все слоты (${AWG_SLOTS.length})` : 'Свернуть список';
+    if (toggleIco) toggleIco.style.transform = isCollapsed ? 'rotate(180deg)' : 'rotate(0deg)';
+  }
+
+  if (toggleBtn && !toggleBtn.dataset.hasListener) {
+    toggleBtn.dataset.hasListener = 'true';
+    toggleBtn.addEventListener('click', () => {
+      S.awgSlotsCollapsed = !S.awgSlotsCollapsed;
+      updateSlotsVisibility();
+    });
+  }
+  updateSlotsVisibility();
+
   if (slotsCont) {
     slotsCont.innerHTML = '';
     AWG_SLOTS.forEach(slot => {
       const srv = AWG_SERVERS[slot.server] || AWG_SERVERS.nl;
+      const isTarget = slot.id === S.awgTargetSlot;
       const card = document.createElement('div');
-      card.className = 'slot';
+      card.className = 'slot' + (isTarget ? ' active-target' : '');
+      card.dataset.slotId = slot.id;
       card.innerHTML = `
         <div>
           <div class="slot-top">
             <span style="font-weight:700;color:#fff;font-size:14.5px;display:inline-flex;align-items:center;gap:6px">
               <span><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg></span> <span id="slotNameText-${slot.id}">${slot.name}</span>
-              <button type="button" style="font-size:12px;opacity:.75;cursor:pointer" title="Переименовать" onclick="promptRenameSlot(${slot.id})"><svg class="ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+              <button type="button" style="font-size:12px;opacity:.75;cursor:pointer" title="Переименовать" onclick="event.stopPropagation();promptRenameSlot(${slot.id})"><svg class="ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
             </span>
             <span class="status ${slot.active ? 'ok' : 'wait'}"><i></i>${slot.active ? 'Активен' : 'Свободен'}</span>
           </div>
@@ -1278,42 +1367,62 @@ function renderAwgSetup() {
           </div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
-          <button type="button" class="btn btn-primary btn-sm" onclick="downloadSlotConf(${slot.id})"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> .conf</button>
-          <button type="button" class="btn btn-ghost btn-sm" onclick="openSlotQrModal(${slot.id})"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> QR-код</button>
-          <button type="button" class="btn btn-ghost btn-sm" onclick="copySlotConf(${slot.id})"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Ключ</button>
-          <button type="button" class="btn btn-ghost btn-sm" onclick="openAwgSwitchModal(${slot.id})"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-1.19"/></svg> Сервер</button>
+          <button type="button" class="btn btn-primary btn-sm" onclick="event.stopPropagation();downloadSlotConf(${slot.id})"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> .conf</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openSlotQrModal(${slot.id})"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> QR-код</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();copySlotConf(${slot.id})"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Ключ</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openAwgSwitchModal(${slot.id})"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-1.19"/></svg> Сервер</button>
         </div>`;
+      card.addEventListener('click', () => {
+        S.awgTargetSlot = slot.id;
+        renderAwgSetup();
+      });
       slotsCont.appendChild(card);
     });
   }
 
   const grid = $('#appsGridAwg');
   if (grid) {
-    grid.innerHTML = '';
+    const isSameOs = grid.dataset.renderedOs === S.osAwg;
     const avail = AWG_APPS.filter(a => a.platforms.includes(S.osAwg));
     const cur = avail.find(a => a.id === S.appAwg) || avail[0];
-    avail.forEach(a => {
-      const on = a.id === cur.id;
-      const card = document.createElement('button');
-      card.type = 'button';
-      card.className = 'app-card' + (on ? ' active' : '');
-      card.innerHTML = `
-        <img src="${a.icon}" alt="${a.name}" class="app-icon-img" onerror="this.style.display='none'">
-        <div class="app-info"><div class="app-name-row">
-          <span class="app-name">${a.name}</span>
-          ${a.badge ? `<span class="app-badge ${badgeClassOf(a.badge)}">${a.badge}</span>` : ''}
-        </div></div>
-        <span class="app-check" aria-hidden="true">${on ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}</span>`;
-      card.addEventListener('click', () => { S.appAwg = a.id; renderAwgSetup(); });
-      grid.appendChild(card);
-    });
+
+    if (!isSameOs) {
+      grid.innerHTML = '';
+      grid.dataset.renderedOs = S.osAwg;
+      avail.forEach(a => {
+        const on = a.id === cur.id;
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'app-card' + (on ? ' active' : '');
+        card.dataset.appId = a.id;
+        card.innerHTML = `
+          <img src="${a.icon}" alt="${a.name}" class="app-icon-img" onerror="this.style.display='none'">
+          <div class="app-info"><div class="app-name-row">
+            <span class="app-name">${a.name}</span>
+            ${a.badge ? `<span class="app-badge ${badgeClassOf(a.badge)}">${a.badge}</span>` : ''}
+          </div></div>
+          <span class="app-check" aria-hidden="true">${on ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}</span>`;
+        card.addEventListener('click', () => { S.appAwg = a.id; renderAwgSetup(); });
+        grid.appendChild(card);
+      });
+    } else {
+      grid.querySelectorAll('.app-card').forEach(card => {
+        const on = card.dataset.appId === cur.id;
+        card.classList.toggle('active', on);
+        const check = card.querySelector('.app-check');
+        if (check) check.innerHTML = on ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '';
+      });
+    }
+
+    const targetSlot = AWG_SLOTS.find(s => s.id === S.awgTargetSlot) || AWG_SLOTS[0];
+    const targetSrv = AWG_SERVERS[targetSlot.server] || AWG_SERVERS.nl;
 
     const stepsGrid = $('#stepsGridAwg');
     if (stepsGrid) {
       stepsGrid.innerHTML = `
         <div class="s-step">
           <div>
-            <div class="s-step-head"><span class="s-step-num">1</span><h4>Установка клиента Amnezia VPN</h4></div>
+            <div class="s-step-head"><span class="s-step-num">1</span><h4>Установка клиента ${cur.name}</h4></div>
             <details class="step-details">
               <summary class="step-details-summary">
                 <span>Подробнее</span>
@@ -1333,22 +1442,56 @@ function renderAwgSetup() {
                 <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
               </summary>
               <div class="step-details-text">
-                <p>Выберите нужный слот в блоке выше (например, «Устройство 1» для смартфона, «Устройство 2» для ПК):</p>
+                <p>Выберите нужное устройство из списка ниже или в блоке слотов выше:</p>
                 <ul>
-                  <li><b>На смартфоне:</b> Нажмите «🔲 QR-код» у слота, в Amnezia VPN нажмите <b>«+»</b> → <b>«Сканировать QR-код»</b>.</li>
-                  <li><b>На компьютере:</b> Нажмите «📥 .conf», в Amnezia VPN выберите <b>«Файл с настройками»</b> и укажите скачанный файл.</li>
+                  <li><b>На смартфоне:</b> Нажмите «🔲 QR-код», в приложении нажмите <b>«+»</b> → <b>«Сканировать QR-код»</b>.</li>
+                  <li><b>На компьютере:</b> Нажмите «📥 Скачать .conf», в приложении выберите <b>«Файл с настройками»</b> и укажите скачанный файл.</li>
                 </ul>
               </div>
             </details>
           </div>
-          <div class="step-btns"><button type="button" class="btn btn-primary btn-sm" onclick="downloadSlotConf(1)"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Скачать слот #1 (.conf)</button></div>
+          <div class="awg-step-slot-picker">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <label for="awgStepSlotSelect" style="font-size:11.5px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em">Устройство / слот:</label>
+              <span style="font-size:12px;color:var(--em-t);font-weight:600" id="awgStepSlotServerLabel">${targetSrv.flag} ${targetSrv.name} (${targetSlot.ip})</span>
+            </div>
+            <select id="awgStepSlotSelect" class="field" style="height:38px;padding:6px 10px;font-size:13px;font-weight:600;background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;width:100%;cursor:pointer">
+              ${AWG_SLOTS.map(s => {
+                const srvSlot = AWG_SERVERS[s.server] || AWG_SERVERS.nl;
+                const sel = (s.id === targetSlot.id) ? 'selected' : '';
+                return `<option value="${s.id}" ${sel}>${s.name} · ${srvSlot.name} (${s.ip}) ${s.active ? '· Активен' : ''}</option>`;
+              }).join('')}
+            </select>
+          </div>
+          <div class="step-btns" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px">
+            <button type="button" class="btn btn-primary btn-sm" id="awgStepDlBtn" style="flex:1 1 auto;min-width:140px"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Скачать .conf (<span id="awgStepSlotName">${targetSlot.name}</span>)</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="awgStepQrBtn" title="Показать QR-код"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> QR-код</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="awgStepCopyBtn" title="Скопировать конфиг"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Ключ</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="awgStepSwitchBtn" title="Сменить сервер"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-1.19"/></svg> Сервер</button>
+          </div>
         </div>
         <div class="s-step done">
           <div>
             <div class="s-step-head"><span class="s-step-num">3</span><h4>Подключение и работа</h4></div>
-            <p>Нажмите центральную кнопку подключения в Amnezia VPN. Весь заблокированный трафик пойдёт через наш скоростной шифрованный WireGuard-канал без потери скорости.</p>
+            <p>Нажмите кнопку подключения в ${cur.name}. Весь заблокированный трафик пойдёт через наш скоростной шифрованный WireGuard-канал без потери скорости.</p>
           </div>
         </div>`;
+
+      const selectEl = $('#awgStepSlotSelect');
+      if (selectEl) {
+        selectEl.addEventListener('change', e => {
+          S.awgTargetSlot = parseInt(e.target.value, 10);
+          renderAwgSetup();
+        });
+      }
+      const dlBtn = $('#awgStepDlBtn');
+      if (dlBtn) dlBtn.addEventListener('click', () => downloadSlotConf(targetSlot.id));
+      const qrBtn = $('#awgStepQrBtn');
+      if (qrBtn) qrBtn.addEventListener('click', () => openSlotQrModal(targetSlot.id));
+      const copyBtn = $('#awgStepCopyBtn');
+      if (copyBtn) copyBtn.addEventListener('click', () => copySlotConf(targetSlot.id));
+      const switchBtn = $('#awgStepSwitchBtn');
+      if (switchBtn) switchBtn.addEventListener('click', () => openAwgSwitchModal(targetSlot.id));
     }
   }
 }
@@ -1485,6 +1628,28 @@ function setOfState(state) {
 
   const ofImportBtn = $('#ofImportBtn');
   if (ofImportBtn && keyInput) ofImportBtn.href = keyInput.value;
+
+  const ofTopDeeplinkBtn = $('#ofTopDeeplinkBtn');
+  if (ofTopDeeplinkBtn && keyInput) ofTopDeeplinkBtn.href = keyInput.value;
+
+  const ofNewTopDeeplinkBtn = $('#ofNewTopDeeplinkBtn');
+  if (ofNewTopDeeplinkBtn && newKeyInput) ofNewTopDeeplinkBtn.href = newKeyInput.value;
+
+  const ofTopCopyBtn = $('#ofTopCopyBtn');
+  if (ofTopCopyBtn && !ofTopCopyBtn.dataset.hasListener) {
+    ofTopCopyBtn.dataset.hasListener = 'true';
+    ofTopCopyBtn.addEventListener('click', () => {
+      copyToClipboard($('#ofKeyInput')?.value || '', 'Ключ OpenFlux скопирован в буфер обмена');
+    });
+  }
+
+  const ofNewTopCopyBtn = $('#ofNewTopCopyBtn');
+  if (ofNewTopCopyBtn && !ofNewTopCopyBtn.dataset.hasListener) {
+    ofNewTopCopyBtn.dataset.hasListener = 'true';
+    ofNewTopCopyBtn.addEventListener('click', () => {
+      copyToClipboard($('#ofNewKeyInput')?.value || '', 'Новый ключ OpenFlux скопирован в буфер обмена');
+    });
+  }
 
   if (state === 'migrating') startOfHandoverTimer();
   else clearInterval(ofTimerInterval);
@@ -2755,8 +2920,15 @@ if (window.SC_PROD) {
         ofTimeRemaining = Of.remainingSeconds;
       }
       setOfState(Of.state || 'inactive');
-      if (Of.keyUri && $('#ofKeyInput')) $('#ofKeyInput').value = Of.keyUri;
-      if (Of.newKeyUri && $('#ofNewKeyInput')) $('#ofNewKeyInput').value = Of.newKeyUri;
+      if (Of.keyUri) {
+        if ($('#ofKeyInput')) $('#ofKeyInput').value = Of.keyUri;
+        if ($('#ofTopDeeplinkBtn')) $('#ofTopDeeplinkBtn').href = Of.keyUri;
+        if ($('#ofImportBtn')) $('#ofImportBtn').href = Of.keyUri;
+      }
+      if (Of.newKeyUri) {
+        if ($('#ofNewKeyInput')) $('#ofNewKeyInput').value = Of.newKeyUri;
+        if ($('#ofNewTopDeeplinkBtn')) $('#ofNewTopDeeplinkBtn').href = Of.newKeyUri;
+      }
 
       const ofCancelBtn = $('#ofCancelMigBtn');
       if (ofCancelBtn && Of.apiBase) {
