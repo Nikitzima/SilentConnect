@@ -349,8 +349,9 @@ def verify_cf_turnstile(secret_key: str, response_token: str, client_ip: str = "
             "response": response_token.strip(),
             "remoteip": client_ip,
         }).encode("utf-8")
+        verify_url = os.environ.get("CF_TURNSTILE_VERIFY_URL", "https://challenges.cloudflare.com/turnstile/v0/siteverify")
         req = urllib.request.Request(
-            "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+            verify_url,
             data=post_data,
             headers={"Content-Type": "application/x-www-form-urlencoded", "User-Agent": "SilentConnectWeb/1.0"},
         )
@@ -4532,7 +4533,7 @@ class WebCheckout:
             <li><strong style="color:#fff;">Приватность сетевого доступа:</strong> На серверных узлах отключена фиксация сетевых маршрутов, DNS и истории посещаемых ресурсов. Временные системные журналы серверов автоматически очищаются каждые 48 часов.</li>
             <li><strong style="color:#fff;">Европейские гигабитные узлы:</strong> Серверы размещены в современных дата-центрах Нидерландов и Финляндии с прямыми магистральными каналами связи и минимальным пингом.</li>
             <li><strong style="color:#fff;">Умная доставка и личный кабинет:</strong> Мгновенная генерация подписки, отправка чеков и ключей на Email, удобное управление через веб-интерфейс и Telegram-бота.</li>
-            <li><strong style="color:#fff;">Поддержка любых устройств:</strong> Готовые мастера установки под iOS (Happ, Streisand), Android (Happ, V2RayTun), Windows, macOS, Linux, Android TV и Apple TV.</li>
+            <li><strong style="color:#fff;">Поддержка любых устройств:</strong> Готовые мастера установки под iOS (Happ, INCY, Streisand), Android (Happ, INCY, V2RayTun), Windows, macOS, Linux, Android TV и Apple TV.</li>
           </ul>
 
           <p class="muted" style="margin-top: 28px;">Техническая поддержка: <a href="mailto:{html.escape(self.settings.support_email)}" style="color: var(--green); text-decoration: underline;">{html.escape(self.settings.support_email)}</a></p>
@@ -4737,7 +4738,7 @@ class WebCheckout:
             <div class="card">
               <strong style="color: var(--green); font-size: 32px; margin-bottom: 12px;">02</strong>
               <strong>Скачайте приложение</strong>
-              <p class="muted" style="font-size: 15px;">Страница заказа и письмо на почте определят ваше устройство и покажут кнопку скачивания Happ / Streisand / v2rayN.</p>
+              <p class="muted" style="font-size: 15px;">Страница заказа и письмо на почте определят ваше устройство и покажут кнопку скачивания Happ / INCY / Streisand / v2rayN.</p>
             </div>
             <div class="card">
               <strong style="color: var(--green); font-size: 32px; margin-bottom: 12px;">03</strong>
@@ -5447,7 +5448,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             asset_name = path[2]
             allowed_apps = {
                 "amneziavpn.webp", "amneziawg.webp", "clash.webp", "clash_mi.webp",
-                "happ.webp", "nekobox.webp", "singbox.webp", "streisand.webp",
+                "happ.webp", "incy.webp", "nekobox.webp", "singbox.webp", "streisand.webp",
                 "v2rayn.webp", "v2rayng.webp"
             }
             if asset_name in allowed_apps:

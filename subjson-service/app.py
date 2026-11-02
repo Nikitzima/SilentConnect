@@ -360,6 +360,13 @@ HAPP_DOWNLOAD_URL = "https://www.happ.su/main"
 HAPP_IOS_URL = "https://apps.apple.com/us/app/happ-proxy-utility/id6504287215"
 HAPP_ANDROID_URL = "https://play.google.com/store/apps/details?id=com.happproxy"
 HAPP_ANDROID_APK_URL = "https://github.com/Happ-proxy/happ-android/releases/latest/download/Happ.apk"
+INCY_DOWNLOAD_URL = "https://incy.cc/#downloads"
+INCY_IOS_URL = "https://apps.apple.com/app/incy/id6756943388"
+INCY_ANDROID_URL = "https://play.google.com/store/apps/details?id=llc.itdev.incy"
+INCY_ANDROID_APK_URL = "https://github.com/INCY-DEV/incy-platforms/releases/download/latest/Incy.apk"
+INCY_WIN_URL = "https://github.com/INCY-DEV/incy-platforms/releases/download/latest/incy-windows-setup.exe"
+INCY_MAC_DMG_URL = "https://github.com/INCY-DEV/incy-platforms/releases/download/latest/incy-macos-arm64.dmg"
+INCY_LINUX_URL = "https://github.com/INCY-DEV/incy-platforms"
 STREISAND_IOS_URL = "https://apps.apple.com/us/app/streisand/id6450534064"
 STREISAND_MACOS_URL = "https://apps.apple.com/us/app/streisand/id6450534064"
 CLASH_MI_IOS_URL = "https://apps.apple.com/app/clash-mi/id6744321968"
@@ -377,6 +384,7 @@ OFFICIAL_CLASH_ICON = "/assets/apps/clash.webp"
 OFFICIAL_NEKOBOX_ICON = "/assets/apps/nekobox.webp"
 OFFICIAL_V2RAYNG_ICON = "/assets/apps/v2rayng.webp"
 OFFICIAL_HAPP_ICON = "/assets/apps/happ.webp"
+OFFICIAL_INCY_ICON = "/assets/apps/incy.webp"
 OFFICIAL_STREISAND_ICON = "/assets/apps/streisand.webp"
 OFFICIAL_V2RAYN_ICON = "/assets/apps/v2rayn.webp"
 OFFICIAL_SINGBOX_ICON = "/assets/apps/singbox.webp"
@@ -5235,6 +5243,27 @@ def encrypt_happ_link(subscription_url: str) -> str | None:
     return result
 
 
+INCY_K1_KEY = bytes.fromhex("f6d40ea0c8a8899d7c682d09ba0d4165dfe2b3dd45e6bb3e25cb233cf00c2462")
+
+
+def encrypt_incy_link(subscription_url: str, name: str = "SilentConnect") -> str:
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        payload = {"url": subscription_url, "v": 1}
+        if name:
+            payload["n"] = name[:128]
+        plaintext = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        iv = os.urandom(12)
+        aesgcm = AESGCM(INCY_K1_KEY)
+        ct_and_tag = aesgcm.encrypt(iv, plaintext, None)
+        wire = iv + ct_and_tag
+        b64url = base64.urlsafe_b64encode(wire).decode("ascii").rstrip("=")
+        return f"incy://crypt1/{b64url}"
+    except Exception:
+        LOGGER.exception("Failed to encrypt Incy link")
+        return f"incy://add/{subscription_url}"
+
+
 def import_page_html(
     *,
     title: str,
@@ -5665,18 +5694,6 @@ def build_happ_config_meta(subscription_id: str) -> dict[str, Any] | None:
     return meta or None
 
 
-def resolve_web_page_url(headers: Any = None, subscription_url: str = "") -> str:
-    host = ""
-    if headers is not None:
-        host = str(headers.get("X-Forwarded-Host") or headers.get("Host") or "").split(",")[0].strip().lower()
-    if not host and subscription_url:
-        host = urllib.parse.urlsplit(subscription_url).netloc.strip().lower()
-    host_only = host.split(":")[0]
-    if host_only in ("previewsub.example.com", "preview.example.com"):
-        return "https://preview.example.com"
-    return HAPP_WEB_PAGE_URL
-
-
 def setup_page_html(
     *,
     subscription_url: str,
@@ -5690,6 +5707,7 @@ def setup_page_html(
     query_suffix = f"?{import_query}" if import_query else ""
     fallback_links = {
         "happ": f"/{SECRET_SEGMENT}/import/happ/{quoted_sub_id}{query_suffix}",
+        "incy": f"/{SECRET_SEGMENT}/import/incy/{quoted_sub_id}{query_suffix}",
         "streisand": f"/{SECRET_SEGMENT}/import/streisand/{quoted_sub_id}{query_suffix}",
         "clash": f"/{SECRET_SEGMENT}/import/clash/{quoted_sub_id}{query_suffix}",
         "v2rayn": f"/{SECRET_SEGMENT}/import/v2rayn/{quoted_sub_id}{query_suffix}",
@@ -5698,6 +5716,7 @@ def setup_page_html(
         "singbox": f"/{SECRET_SEGMENT}/import/singbox/{quoted_sub_id}{query_suffix}",
     }
     happ_link = encrypt_happ_link(subscription_url) or fallback_links["happ"]
+    incy_link = encrypt_incy_link(subscription_url) or fallback_links["incy"]
     apps = [
         {
             "id": "happ",
@@ -5721,6 +5740,39 @@ def setup_page_html(
                     {"label": "GitHub Релизы (.apk)", "url": HAPP_ANDROID_APK_URL, "icon": "github"},
                 ],
                 "appletv": [{"label": "App Store", "url": HAPP_IOS_URL, "icon": "appstore"}],
+            },
+        },
+        {
+            "id": "incy",
+            "name": "INCY",
+            "badge": "xray-core",
+            "iconUrl": OFFICIAL_INCY_ICON,
+            "platforms": ["ios", "android", "windows", "macos", "linux", "androidtv", "appletv"],
+            "importUrl": incy_link,
+            "description": "Современный клиент на базе Xray-core с нативной поддержкой REALITY, фрагментации TLS и умной маршрутизации трафика.",
+            "downloads": {
+                "ios": [{"label": "App Store", "url": INCY_IOS_URL, "icon": "appstore"}],
+                "android": [
+                    {"label": "Google Play", "url": INCY_ANDROID_URL, "icon": "googleplay"},
+                    {"label": "Скачать APK (GitHub)", "url": INCY_ANDROID_APK_URL, "icon": "github"},
+                ],
+                "windows": [
+                    {"label": "GitHub (.exe)", "url": INCY_WIN_URL, "icon": "github"},
+                    {"label": "Официальный сайт", "url": INCY_DOWNLOAD_URL, "icon": "globe"},
+                ],
+                "macos": [
+                    {"label": "Mac App Store", "url": INCY_IOS_URL, "icon": "appstore"},
+                    {"label": "GitHub (.dmg)", "url": INCY_MAC_DMG_URL, "icon": "github"},
+                ],
+                "linux": [
+                    {"label": "GitHub (.deb / AppImage)", "url": INCY_LINUX_URL, "icon": "github"},
+                    {"label": "Официальный сайт", "url": INCY_DOWNLOAD_URL, "icon": "globe"},
+                ],
+                "androidtv": [
+                    {"label": "Google Play", "url": INCY_ANDROID_URL, "icon": "googleplay"},
+                    {"label": "Скачать APK (GitHub)", "url": INCY_ANDROID_APK_URL, "icon": "github"},
+                ],
+                "appletv": [{"label": "App Store", "url": INCY_IOS_URL, "icon": "appstore"}],
             },
         },
         {
@@ -9402,11 +9454,10 @@ def setup_page_html(
         bot_username = "SilentConnectVPNBot"
     bot_referral_url = f"https://t.me/{bot_username}?start=referral"
 
-    web_page_url = resolve_web_page_url(headers, subscription_url)
     result = result.replace("__BOT_REFERRAL_URL__", html.escape(bot_referral_url, quote=True))
     result = result.replace("__APPS_JSON__", apps_json)
     result = result.replace("__PLATFORM_LABELS_JSON__", platform_labels_json)
-    result = result.replace("__WEB_PAGE_URL__", web_page_url)
+    result = result.replace("__WEB_PAGE_URL__", HAPP_WEB_PAGE_URL)
 
     try:
         tpl_path = Path(__file__).resolve().parent / "v2.1" / "template.html"
@@ -9415,15 +9466,20 @@ def setup_page_html(
         if tpl_path.is_file():
             tpl_html = tpl_path.read_text(encoding="utf-8")
             tg_bot_url = f"https://t.me/{bot_username}"
-            pub_base = web_page_url.rstrip("/")
-            cf_site_key = str(os.getenv("CF_TURNSTILE_SITE_KEY", "") or "").strip()
+            pub_base = str(os.getenv("SUB_PUBLIC_BASE_URL", "https://example.com") or "https://example.com").rstrip("/")  # PLACEHOLDER
+            req_host = (headers.get("Host") or headers.get("host") or "") if headers else ""
+            if "previewsub." in req_host or "preview." in req_host:
+                pub_base = "https://preview.example.com"
+            cf_site_key = ""
+            shop_st = None
+            try:
+                shop_st = get_shop_settings()
+            except Exception:
+                pass
+            if shop_st and getattr(shop_st, "cf_turnstile_site_key", None):
+                cf_site_key = str(shop_st.cf_turnstile_site_key).strip()
             if not cf_site_key:
-                try:
-                    s_cfg = get_shop_settings()
-                    if s_cfg:
-                        cf_site_key = str(getattr(s_cfg, "cf_turnstile_site_key", "") or "").strip()
-                except Exception:
-                    pass
+                cf_site_key = str(os.getenv("CF_TURNSTILE_SITE_KEY", "") or "").strip()
             awg_limit_bytes = 250 * (1024**3)
             awg_used_bytes = 0
             awg_free_gb = 250.0
@@ -9474,21 +9530,19 @@ def setup_page_html(
             plan_badge = {3: "Личный", 6: "Домашний", 9: "Расширенный"}.get(awg_max_slots, "Тариф")
             oflux_state_raw = str(oflux_slot_data.get("status") or "uninitialized")
             oflux_ui_state = "active" if oflux_state_raw == "active" else ("migrating" if oflux_state_raw == "migrating" else "inactive")
-            traffic_lbl = f"{traffic_str} · Безлимит" if traffic_str and "безлимит" not in traffic_str.lower() else (traffic_str or "Безлимит")
             sc_prod = {
                 "view": "sub",
-                "turnstileSiteKey": cf_site_key,
                 "cfTurnstileSiteKey": cf_site_key,
+                "turnstileSiteKey": cf_site_key,
                 "supportTelegramUrl": support_url,
                 "botUrl": tg_bot_url,
                 "publicBaseUrl": pub_base,
-                "shopBaseUrl": pub_base,
                 "sub": {
                     "subId": subscription_id,
                     "subUrl": clean_sub_url,
                     "subImportUrl": f"/{SECRET_SEGMENT}/import/{quoted_sub_id}",
                     "importBase": f"/{SECRET_SEGMENT}/import",
-                    "importLinks": {**fallback_links, "happ": happ_link},
+                    "importLinks": {**fallback_links, "happ": happ_link, "incy": incy_link},
                     "qrUrl": f"/{SECRET_SEGMENT}/qr/{quoted_sub_id}",
                     "botUrl": tg_bot_url,
                     "partnerBotUrl": bot_referral_url,
@@ -9503,9 +9557,6 @@ def setup_page_html(
                     "expireDateLabel": expires_str,
                     "daysLeftLabel": subtitle,
                     "devicesLimitLabel": device_limit,
-                    "deviceLimit": awg_max_slots,
-                    "trafficLabel": traffic_lbl,
-                    "customerEmail": customer_email,
                     "emailBound": bool(customer_email),
                     "boundEmailMasked": masked_email,
                     "flashHtml": payment_card_html,
@@ -9533,20 +9584,14 @@ def setup_page_html(
                 },
             }
             payload_json = json.dumps(sc_prod, ensure_ascii=False).replace("</", "<\\/")
-            script_tag = f"<script>window.SC_PROD = {payload_json}; window.__SC_BOOT__ = window.SC_PROD;</script>"
-            body_match = re.search(r"<body[^>]*>(.*)</body>", result, flags=re.DOTALL | re.IGNORECASE)
-            compat_inner = body_match.group(1) if body_match else result
-            safe_compat = (
-                compat_inner
-                .replace("<template", "<div data-legacy-tpl")
-                .replace("</template>", "</div>")
-                .replace("<script", "<div data-legacy-script")
-                .replace("</script>", "</div>")
-            )
+            safe_compat = result.replace("<script", "<template data-legacy-script").replace("</script>", "</template>")
             compat_block = f'<template id="sc-ssr-compat" style="display:none">{safe_compat}</template>'
-            rendered = tpl_html.replace("<!--__SC_PROD_SCRIPT__-->", f"{compat_block}\n{script_tag}", 1)
-            rendered = rendered.replace('<main id="view-landing" data-view>', '<main id="view-landing" data-view hidden>', 1)
-            rendered = rendered.replace('<main id="view-sub" data-view hidden>', '<main id="view-sub" data-view>', 1)
+            script_tag = f"{compat_block}\n<script>window.SC_PROD = {payload_json}; window.__SC_BOOT__ = window.SC_PROD;</script>"
+            rendered = tpl_html.replace("<!--__SC_PROD_SCRIPT__-->", script_tag, 1)
+
+            # SSR pre-toggles: #view-sub visible, #view-landing hidden
+            rendered = re.sub(r'<main([^>]*id="view-landing"[^>]*)>', r'<main\1 hidden>', rendered)
+            rendered = re.sub(r'<main([^>]*id="view-sub"[^>]*)\bhidden\b([^>]*)>', r'<main\1\2>', rendered)
             return rendered.encode("utf-8")
     except Exception as v21_exc:
         LOGGER.warning("Could not render v2.1 setup page: %s", v21_exc)
@@ -10366,7 +10411,6 @@ class RequestHandler(BaseHTTPRequestHandler):
                         import_query=import_query,
                         customer_email=res["customer_email"],
                         payment_card_html=success_card,
-                        headers=self.headers,
                     )
                     self._send_html(HTTPStatus.OK, generic_html, include_body=True)
                     return
@@ -10409,8 +10453,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     email_reminders=email_reminders,
                 )
 
-                web_page_url = resolve_web_page_url(self.headers).rstrip("/")
-                unified_order_url = f"{web_page_url}/order/{res['public_id']}/{res['web_token']}"
+                unified_order_url = f"{HAPP_WEB_PAGE_URL}/order/{res['public_id']}/{res['web_token']}"
 
                 if is_ajax:
                     self._send_json(HTTPStatus.OK, {
@@ -10761,32 +10804,6 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(qr_bytes)))
                 self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
                 pass  # SC-23: removed wildcard CORS header
-                for k, v in SECURITY_HEADERS:
-                    self.send_header(k, v)
-                self.end_headers()
-                if include_body:
-                    self.wfile.write(qr_bytes)
-                return
-
-            # Main Subscription QR Code
-            # GET /<SECRET_SEGMENT>/qr/<sub_id>
-            if len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] in {"qr", "qrcode"}:
-                sub_id = path[2]
-                find_subscription(sub_id)
-                sub_qr_link = public_subscription_url(self.headers, "json", sub_id)
-                qr_bytes = b""
-                try:
-                    from vpn_shop import qr
-                    qr_bytes = qr.generate_qr_png(sub_qr_link, box_size=6, border=2)
-                except Exception as exc:
-                    LOGGER.warning("Main subscription QR generation failed: %s", exc)
-                if not qr_bytes:
-                    self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "qr_generation_failed"}, include_body)
-                    return
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", "image/png")
-                self.send_header("Content-Length", str(len(qr_bytes)))
-                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
                 for k, v in SECURITY_HEADERS:
                     self.send_header(k, v)
                 self.end_headers()
@@ -11406,7 +11423,6 @@ class RequestHandler(BaseHTTPRequestHandler):
                     import_query=import_query,
                     customer_email=existing_email,
                     payment_card_html=pending_card,
-                    headers=self.headers,
                 )
                 self._send_html(HTTPStatus.OK, generic_html, include_body)
                 return
@@ -11454,6 +11470,31 @@ class RequestHandler(BaseHTTPRequestHandler):
                             "android_apk": HAPP_ANDROID_APK_URL,
                             "windows": HAPP_DOWNLOAD_URL,
                             "fallback": HAPP_DOWNLOAD_URL,
+                        },
+                    )
+                    self._send_html(HTTPStatus.OK, page, include_body)
+                    return
+
+                if target == "incy":
+                    encrypted = encrypt_incy_link(source_url)
+                    page = import_page_html(
+                        title="Открыть в INCY",
+                        body=(
+                            "Пробуем открыть INCY автоматически и передать защищённую ссылку подписки. "
+                            "Если приложение не открылось само, нажмите кнопку ниже."
+                        ),
+                        subscription_url=source_url,
+                        primary_label="Открыть в INCY",
+                        primary_url=encrypted,
+                        auto_url=encrypted,
+                        install_urls={
+                            "ios": INCY_IOS_URL,
+                            "android": INCY_ANDROID_URL,
+                            "android_apk": INCY_ANDROID_APK_URL,
+                            "windows": INCY_WIN_URL,
+                            "macos": INCY_IOS_URL,
+                            "linux": INCY_LINUX_URL,
+                            "fallback": INCY_DOWNLOAD_URL,
                         },
                     )
                     self._send_html(HTTPStatus.OK, page, include_body)

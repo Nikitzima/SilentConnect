@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import secrets
 import urllib.error
 import urllib.parse
@@ -39,7 +40,7 @@ class PlategaClient:
         secret: str = "",
         secret_bot: str = "",
         secret_web: str = "",
-        base_url: str = "https://app.platega.io",
+        base_url: str = "",
         timeout_seconds: int = 15,
     ) -> None:
         self.merchant_id_bot = (merchant_id_bot or "").strip()
@@ -47,7 +48,8 @@ class PlategaClient:
         self.secret = (secret or "").strip()
         self.secret_bot = (secret_bot or "").strip() or self.secret
         self.secret_web = (secret_web or "").strip() or self.secret
-        self.base_url = (base_url or "https://app.platega.io").rstrip("/")
+        env_base = os.environ.get("PLATEGA_BASE_URL", "").strip()
+        self.base_url = (base_url or env_base or "https://app.platega.io").rstrip("/")
         self.timeout_seconds = max(3, int(timeout_seconds))
 
     @property

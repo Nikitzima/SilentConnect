@@ -848,6 +848,13 @@ const U = {
   HAPP_IOS: 'https://apps.apple.com/us/app/happ-proxy-utility/id6504287215',
   HAPP_ANDROID: 'https://play.google.com/store/apps/details?id=com.happproxy',
   HAPP_APK: 'https://github.com/Happ-proxy/happ-android/releases/latest/download/Happ.apk',
+  INCY_DOWNLOAD: 'https://incy.cc/#downloads',
+  INCY_IOS: 'https://apps.apple.com/app/incy/id6756943388',
+  INCY_ANDROID: 'https://play.google.com/store/apps/details?id=llc.itdev.incy',
+  INCY_APK: 'https://github.com/INCY-DEV/incy-platforms/releases/download/latest/Incy.apk',
+  INCY_WIN: 'https://github.com/INCY-DEV/incy-platforms/releases/download/latest/incy-windows-setup.exe',
+  INCY_MAC_DMG: 'https://github.com/INCY-DEV/incy-platforms/releases/download/latest/incy-macos-arm64.dmg',
+  INCY_LINUX: 'https://github.com/INCY-DEV/incy-platforms',
   STREISAND_IOS: 'https://apps.apple.com/us/app/streisand/id6450534064',
   STREISAND_MACOS: 'https://apps.apple.com/us/app/streisand/id6450534064',
   CLASH_MI_IOS: 'https://apps.apple.com/app/clash-mi/id6744321968',
@@ -867,12 +874,24 @@ const MAIN_APPS = [
     description: 'Флагманский клиент с поддержкой протоколов REALITY и XHTTP. Обеспечивает максимальную скорость и незаметность подключения на любых устройствах.',
     downloads: {
       ios: [dl('App Store', U.HAPP_IOS, 'appstore')],
-      android: [dl('Google Play', U.HAPP_ANDROID, 'googleplay'), dl('GitHub Релизы (.apk)', U.HAPP_APK, 'github')],
+      android: [dl('Google Play', U.HAPP_ANDROID, 'googleplay'), dl('Скачать APK (GitHub)', U.HAPP_APK, 'github')],
       windows: [dl('Официальный сайт (.exe)', U.HAPP_DOWNLOAD, 'globe')],
       macos: [dl('Официальный сайт (.dmg)', U.HAPP_DOWNLOAD, 'globe')],
       linux: [dl('Официальный сайт (.deb / AppImage)', U.HAPP_DOWNLOAD, 'globe')],
-      androidtv: [dl('Google Play', U.HAPP_ANDROID, 'googleplay'), dl('GitHub Релизы (.apk)', U.HAPP_APK, 'github')],
+      androidtv: [dl('Google Play', U.HAPP_ANDROID, 'googleplay'), dl('Скачать APK (GitHub)', U.HAPP_APK, 'github')],
       appletv: [dl('App Store', U.HAPP_IOS, 'appstore')]
+    } },
+  { id: 'incy', name: 'INCY', badge: 'xray-core', icon: `${ASSET_ROOT}apps/incy.webp`,
+    platforms: ['ios', 'android', 'windows', 'macos', 'linux', 'androidtv', 'appletv'],
+    description: 'Современный клиент на базе Xray-core с нативной поддержкой REALITY, фрагментации TLS и умной маршрутизации трафика.',
+    downloads: {
+      ios: [dl('App Store', U.INCY_IOS, 'appstore')],
+      android: [dl('Google Play', U.INCY_ANDROID, 'googleplay'), dl('Скачать APK (GitHub)', U.INCY_APK, 'github')],
+      windows: [dl('GitHub (.exe)', U.INCY_WIN, 'github'), dl('Официальный сайт', U.INCY_DOWNLOAD, 'globe')],
+      macos: [dl('Mac App Store', U.INCY_IOS, 'appstore'), dl('GitHub (.dmg)', U.INCY_MAC_DMG, 'github')],
+      linux: [dl('GitHub (.deb / AppImage)', U.INCY_LINUX, 'github'), dl('Официальный сайт', U.INCY_DOWNLOAD, 'globe')],
+      androidtv: [dl('Google Play', U.INCY_ANDROID, 'googleplay'), dl('Скачать APK (GitHub)', U.INCY_APK, 'github')],
+      appletv: [dl('App Store', U.INCY_IOS, 'appstore')]
     } },
   { id: 'clash', name: 'Clash Mi / Mihomo', badge: 'авто-выбор', icon: `${ASSET_ROOT}apps/clash.webp`, iosIcon: `${ASSET_ROOT}apps/clash_mi.webp`,
     platforms: ['windows', 'macos', 'android', 'linux', 'ios'],
@@ -918,6 +937,7 @@ const MAIN_APPS = [
 function usageText(appId, os) {
   const map = {
     happ: 'Запустите Happ и нажмите большую центральную кнопку включения. При первом запуске разрешите системе добавление сетевого профиля в появившемся запросе.',
+    incy: 'Запустите INCY и нажмите большую кнопку подключения. При первом запуске разрешите системе добавление сетевого профиля в появившемся запросе.',
     streisand: 'Откройте Streisand, подтвердите добавление профиля SilentConnect и переключите верхний тумблер в активное состояние.',
     clash: os === 'ios'
       ? 'Откройте Clash Mi, импортируйте профиль SilentConnect (кнопка выше сделает это автоматически), выберите профиль и включите тумблер подключения.'
@@ -939,6 +959,7 @@ function badgeClassOf(badge) {
   if (b.includes('windows')) return 'badge-windows';
   if (b.includes('android')) return 'badge-android';
   if (b.includes('sing')) return 'badge-singbox';
+  if (b.includes('xray')) return 'badge-xray';
   return 'badge-recommended';
 }
 
@@ -1030,14 +1051,26 @@ function renderMainSetup() {
       <div class="s-step">
         <div>
           <div class="s-step-head"><span class="s-step-num">1</span><h4>Установка клиента</h4></div>
-          <p>${cur.description} Операционная система: ${OS_LABEL[os]}.</p>
+          <details class="step-details">
+            <summary class="step-details-summary">
+              <span>Подробнее</span>
+              <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+            </summary>
+            <p class="step-details-text">${cur.description} Операционная система: ${OS_LABEL[os]}.</p>
+          </details>
         </div>
         <div class="step-btns">${dlButtonsHtml(cur.downloads[os] || [])}</div>
       </div>
       <div class="s-step">
         <div>
           <div class="s-step-head"><span class="s-step-num">2</span><h4>Автоматический импорт ключа</h4></div>
-          <p>Нажмите «Добавить подписку». Приложение откроется автоматически и применит зашифрованный профиль SilentConnect.</p>
+          <details class="step-details">
+            <summary class="step-details-summary">
+              <span>Подробнее</span>
+              <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+            </summary>
+            <p class="step-details-text">Нажмите «Добавить подписку». Приложение откроется автоматически и применит зашифрованный профиль SilentConnect.</p>
+          </details>
         </div>
         <div class="step-btns"><a href="${importUrlFor(cur.id)}" class="btn btn-primary btn-sm" onclick="${window.SC_PROD ? '' : 'event.preventDefault();'}toast('Открываем ${title} и передаём профиль…')">Добавить подписку <svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></a></div>
       </div>
@@ -1050,7 +1083,13 @@ function renderMainSetup() {
       <div class="s-step">
         <div>
           <div class="s-step-head"><span class="s-step-num">4</span><h4>Резервный способ (ручной импорт)</h4></div>
-          <p>Если бесшовный переход не сработал: скопируйте ссылку ниже в буфер обмена и выберите «Импорт из буфера обмена» в настройках приложения.</p>
+          <details class="step-details">
+            <summary class="step-details-summary">
+              <span>Подробнее</span>
+              <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+            </summary>
+            <p class="step-details-text">Если бесшовный переход не сработал: скопируйте ссылку ниже в буфер обмена и выберите «Импорт из буфера обмена» в настройках приложения.</p>
+          </details>
         </div>
         <div class="step-btns"><button type="button" class="btn btn-ghost btn-sm" onclick="copyToClipboard('${SUB_URL || SUB_IMPORT_URL}', 'Ссылка подписки скопирована!')">Скопировать ссылку <svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button></div>
         <input class="field mono-field" name="sub_manual_url" readonly value="${SUB_URL || SUB_IMPORT_URL}" aria-label="Ссылка подписки" onclick="this.select()">
@@ -1273,18 +1312,32 @@ function renderAwgSetup() {
         <div class="s-step">
           <div>
             <div class="s-step-head"><span class="s-step-num">1</span><h4>Установка клиента Amnezia VPN</h4></div>
-            <p>Скачайте официальное бесплатное приложение с открытым исходным кодом для вашей операционной системы (${OS_LABEL[S.osAwg]}):</p>
+            <details class="step-details">
+              <summary class="step-details-summary">
+                <span>Подробнее</span>
+                <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+              </summary>
+              <p class="step-details-text">Скачайте официальное бесплатное приложение с открытым исходным кодом для вашей операционной системы (${OS_LABEL[S.osAwg]}):</p>
+            </details>
           </div>
           <div class="step-btns">${dlButtonsHtml(cur.downloads[S.osAwg] || [])}</div>
         </div>
         <div class="s-step">
           <div>
             <div class="s-step-head"><span class="s-step-num">2</span><h4>Добавление конфигурации устройства</h4></div>
-            <p>Выберите нужный слот в блоке выше (например, «Устройство 1» для смартфона, «Устройство 2» для ПК):</p>
-            <ul style="margin:6px 0 0 18px;padding:0;font-size:13px;color:var(--dim);line-height:1.5">
-              <li><b>На смартфоне:</b> Нажмите «🔲 QR-код» у слота, в Amnezia VPN нажмите <b>«+»</b> → <b>«Сканировать QR-код»</b>.</li>
-              <li><b>На компьютере:</b> Нажмите «📥 .conf», в Amnezia VPN выберите <b>«Файл с настройками»</b> и укажите скачанный файл.</li>
-            </ul>
+            <details class="step-details">
+              <summary class="step-details-summary">
+                <span>Подробнее</span>
+                <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+              </summary>
+              <div class="step-details-text">
+                <p>Выберите нужный слот в блоке выше (например, «Устройство 1» для смартфона, «Устройство 2» для ПК):</p>
+                <ul>
+                  <li><b>На смартфоне:</b> Нажмите «🔲 QR-код» у слота, в Amnezia VPN нажмите <b>«+»</b> → <b>«Сканировать QR-код»</b>.</li>
+                  <li><b>На компьютере:</b> Нажмите «📥 .conf», в Amnezia VPN выберите <b>«Файл с настройками»</b> и укажите скачанный файл.</li>
+                </ul>
+              </div>
+            </details>
           </div>
           <div class="step-btns"><button type="button" class="btn btn-primary btn-sm" onclick="downloadSlotConf(1)"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Скачать слот #1 (.conf)</button></div>
         </div>
@@ -1372,6 +1425,7 @@ if (pingBtn) {
       const t0 = performance.now();
       try {
         const r = await fetch('/sub/awg/ping_servers?t=' + Date.now());
+        if (!r.ok) throw new Error('ping http ' + r.status);
         const d = await r.json().catch(() => ({}));
         const httpRtt = Math.round(performance.now() - t0);
         const baseWire = httpRtt > 130 ? Math.round(httpRtt * 0.12) : Math.round(httpRtt * 0.42);
@@ -1518,14 +1572,26 @@ function renderOfSetup() {
       <div class="s-step">
         <div>
           <div class="s-step-head"><span class="s-step-num">1</span><h4>Установка ${data.name}</h4></div>
-          <p>${data.step1}</p>
+          <details class="step-details">
+            <summary class="step-details-summary">
+              <span>Подробнее</span>
+              <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+            </summary>
+            <p class="step-details-text">${data.step1}</p>
+          </details>
         </div>
         <div class="step-btns">${dlButtonsHtml(data.downloads)}</div>
       </div>
       <div class="s-step">
         <div>
           <div class="s-step-head"><span class="s-step-num">2</span><h4>Добавление подключения</h4></div>
-          <p>${data.step2}</p>
+          <details class="step-details">
+            <summary class="step-details-summary">
+              <span>Подробнее</span>
+              <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+            </summary>
+            <p class="step-details-text">${data.step2}</p>
+          </details>
         </div>
         <div class="step-btns">
           <button type="button" class="btn btn-primary btn-sm" onclick="copyToClipboard($('#ofKeyInput')?.value || '', 'Ключ OpenFlux скопирован!')"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Скопировать ключ OpenFlux</button>
@@ -1599,11 +1665,73 @@ const renewAcc = $('#renewAcc');
 const renewToggle = $('#renewToggle');
 const bindEmailOnlyChk = $('#bindEmailOnly');
 
-function setRenewOpen(open) {
+let isRenewAnimating = false;
+function setRenewOpen(open, immediate = false) {
   window.setRenewOpen = setRenewOpen;
   if (!renewAcc) return;
-  renewAcc.setAttribute('data-open', String(open));
-  if (renewToggle) renewToggle.setAttribute('aria-expanded', String(open));
+  const wrap = renewAcc.querySelector('.renew-body-wrap');
+  const inner = renewAcc.querySelector('.renew-body-inner');
+  const wasOpen = renewAcc.getAttribute('data-open') === 'true';
+  const shouldOpen = Boolean(open);
+
+  renewAcc.setAttribute('data-open', String(shouldOpen));
+  if (renewToggle) renewToggle.setAttribute('aria-expanded', String(shouldOpen));
+
+  if (!wrap || !inner) return;
+
+  if (immediate) {
+    wrap.style.display = shouldOpen ? 'block' : 'none';
+    wrap.style.height = shouldOpen ? 'auto' : '0px';
+    wrap.style.overflow = shouldOpen ? 'visible' : 'hidden';
+    return;
+  }
+
+  if (shouldOpen === wasOpen && ((shouldOpen && wrap.offsetHeight > 0) || (!shouldOpen && wrap.offsetHeight === 0))) {
+    return;
+  }
+  if (isRenewAnimating) return;
+
+  isRenewAnimating = true;
+  wrap.style.overflow = 'hidden';
+
+  if (shouldOpen) {
+    wrap.style.display = 'block';
+    wrap.style.height = 'auto';
+    const targetH = inner.scrollHeight;
+    wrap.style.height = '0px';
+
+    const anim = wrap.animate([
+      { height: '0px', opacity: 0.35 },
+      { height: targetH + 'px', opacity: 1 }
+    ], {
+      duration: 280,
+      easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+      fill: 'forwards'
+    });
+
+    anim.onfinish = () => {
+      wrap.style.height = 'auto';
+      wrap.style.overflow = 'visible';
+      isRenewAnimating = false;
+    };
+  } else {
+    const startH = wrap.offsetHeight || inner.scrollHeight;
+    const anim = wrap.animate([
+      { height: startH + 'px', opacity: 1 },
+      { height: '0px', opacity: 0.35 }
+    ], {
+      duration: 220,
+      easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+      fill: 'forwards'
+    });
+
+    anim.onfinish = () => {
+      wrap.style.display = 'none';
+      wrap.style.height = '0px';
+      wrap.style.overflow = 'hidden';
+      isRenewAnimating = false;
+    };
+  }
 }
 
 if (renewToggle) {
@@ -1878,7 +2006,7 @@ const LEGAL_DOCS = {
         <li><strong style="color:#fff">Приватность сетевого доступа:</strong> На серверных узлах отключена фиксация сетевых маршрутов, DNS и истории посещаемых ресурсов. Временные системные журналы серверов автоматически очищаются каждые 48 часов.</li>
         <li><strong style="color:#fff">Европейские гигабитные узлы:</strong> Серверы размещены в современных дата-центрах Нидерландов и Финляндии с прямыми магистральными каналами связи и минимальным пингом.</li>
         <li><strong style="color:#fff">Умная доставка и личный кабинет:</strong> Мгновенная генерация подписки, отправка чеков и ключей на Email, удобное управление через веб-интерфейс и Telegram-бота.</li>
-        <li><strong style="color:#fff">Поддержка любых устройств:</strong> Готовые мастера установки под iOS (Happ, Streisand), Android (Happ, V2RayTun), Windows, macOS, Linux, Android TV и Apple TV.</li>
+        <li><strong style="color:#fff">Поддержка любых устройств:</strong> Готовые мастера установки под iOS (Happ, INCY, Streisand), Android (Happ, INCY, V2RayTun), Windows, macOS, Linux, Android TV и Apple TV.</li>
       </ul>
 
       <p style="margin-top:24px;color:var(--mut)">Техническая поддержка: <a href="mailto:support@silentconnect.net" style="color:var(--em-t);text-decoration:underline">support@silentconnect.net</a></p>` /* PLACEHOLDER */
@@ -2423,9 +2551,31 @@ if (window.SC_PROD) {
     if ($('#copyMainImportBtn')) $('#copyMainImportBtn').dataset.copyUrl = SUB_URL;
     if ($('#subBotLink') && Sub.botUrl) $('#subBotLink').href = Sub.botUrl;
     if ($('#subPartnerBotLink') && Sub.partnerBotUrl) $('#subPartnerBotLink').href = Sub.partnerBotUrl;
-    if ($('#subMetricPlan')) $('#subMetricPlan').textContent = `${Sub.planBadge || 'Личный'} · ${Sub.devicesLimitLabel || 'до 3 устр.'}`;
-    if ($('#subMetricExpires')) $('#subMetricExpires').textContent = Sub.expireDateLabel ? `${Sub.expireDateLabel} (${Sub.daysLeftLabel || ''})` : (Sub.daysLeftLabel || 'Активна');
-    if ($('#subMetricMainTraffic')) $('#subMetricMainTraffic').textContent = Sub.trafficLabel || 'Безлимит';
+    if ($('#subMetricPlan')) {
+      const pBadge = Sub.planBadge || 'Личный';
+      const devRaw = String(Sub.devicesLimitLabel || Sub.deviceLimit || 'до 3 устр.');
+      const devShort = devRaw.replace(/устройств(а)?/, 'устр.').trim();
+      $('#subMetricPlan').textContent = `${pBadge} · ${devShort}`;
+    }
+    if ($('#subMetricExpires')) {
+      const dLabel = (Sub.daysLeftLabel || '').trim();
+      const eLabel = (Sub.expireDateLabel || '').trim();
+      const isUnlimited = !Sub.isExpired && (eLabel.toLowerCase().includes('огранич') || dLabel.toLowerCase().includes('огранич') || (!Sub.expireAt && !Sub.expiresAt && !eLabel && !dLabel));
+      if (isUnlimited) {
+        $('#subMetricExpires').textContent = 'Без ограничений';
+      } else if (eLabel && dLabel && !eLabel.includes(dLabel)) {
+        $('#subMetricExpires').textContent = `${eLabel} (${dLabel})`;
+      } else if (eLabel) {
+        $('#subMetricExpires').textContent = eLabel;
+      } else if (dLabel) {
+        $('#subMetricExpires').textContent = dLabel;
+      } else {
+        $('#subMetricExpires').textContent = 'Активна';
+      }
+    }
+    const tRaw = Sub.trafficLabel || '∞';
+    const tClean = tRaw.replace(/\s*·\s*безлимит/gi, '').trim();
+    if ($('#subMetricMainTraffic')) $('#subMetricMainTraffic').textContent = tClean || '∞';
     if ($('#renewRemainDaysNote')) {
       $('#renewRemainDaysNote').textContent = (!Sub.isExpired && Sub.daysLeftLabel) ? `суммируются с вашим остатком (${Sub.daysLeftLabel})` : 'активируются сразу после оплаты';
     }
@@ -2467,7 +2617,8 @@ if (window.SC_PROD) {
       if ($('#awgPctText')) $('#awgPctText').textContent = `${Awg.percentRemaining ?? 100}% доступно`;
       if ($('#awgQuotaFill')) $('#awgQuotaFill').style.width = `${Awg.percentRemaining ?? 100}%`;
       if ($('#awgResetDate')) $('#awgResetDate').textContent = Awg.resetLabel ? `сброс ${Awg.resetLabel}` : 'сброс 1-го числа';
-      if ($('#subMetricAwgQuota')) $('#subMetricAwgQuota').textContent = `${Awg.remainingLabel || '250 ГБ'} остаток из ${Awg.packageGb || 250}`;
+      const remNum = (Awg.remainingLabel || '250').replace(/\s*ГБ/gi, '').trim();
+      if ($('#subMetricAwgQuota')) $('#subMetricAwgQuota').textContent = `${remNum} / ${Awg.packageGb || 250} ГБ`;
 
       if (Array.isArray(Awg.slots) && Awg.slots.length > 0) {
         AWG_SLOTS.length = 0;

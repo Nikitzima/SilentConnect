@@ -36,8 +36,9 @@
   --spring:cubic-bezier(.3,1.35,.5,1);
   --ease:cubic-bezier(.22,.8,.28,1);
   --font:"Inter",ui-sans-serif,-apple-system,"SF Pro Display","Segoe UI",system-ui,sans-serif;
-  --lab-h:40px;
+  --lab-h:0px;
 }
+:root:has(.lab){--lab-h:40px}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 [hidden]{display:none!important}
 html{scroll-behavior:smooth;scroll-padding-top:120px;background:var(--ink)}
@@ -316,17 +317,18 @@ h1, h2, h3, .hero h1, .sec-head h2, .bcard h3 {
 .check input{margin-top:2px;accent-color:var(--em);width:15px;height:15px;flex:none}
 .pay-note{text-align:center;font-size:12px;color:var(--dim);margin-top:2px}
 
-/* Cloudflare Turnstile Widget */
-.cf-widget{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border-radius:13px;
-  background:rgba(12,16,15,.85);border:1px solid rgba(255,255,255,.13);user-select:none;cursor:pointer;transition:border-color .2s}
-.cf-widget:hover{border-color:rgba(255,255,255,.24)}
-.cf-left{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:500;color:#e4e9e7}
-.cf-check{width:22px;height:22px;border-radius:6px;border:1.5px solid rgba(52,227,164,.65);background:rgba(16,185,129,.18);
-  display:grid;place-items:center;color:var(--em);font-weight:800;font-size:13px;transition:background .2s,border-color .2s,color .2s,transform .2s}
+/* Cloudflare Turnstile Widget (чистый без рамок, компактный) */
+.cf-widget{display:flex;align-items:center;justify-content:center;gap:8px;padding:2px 0;border-radius:10px;
+  background:transparent!important;border:none!important;box-shadow:none!important;user-select:none;
+  transform:scale(0.85);transform-origin:center center;margin:-4px auto}
+.cf-turnstile, .cf-turnstile>iframe{border:none!important;margin:0 auto}
+.cf-left{display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:500;color:#e4e9e7}
+.cf-check{width:18px;height:18px;border-radius:5px;border:1.2px solid rgba(52,227,164,.65);background:rgba(16,185,129,.18);
+  display:grid;place-items:center;color:var(--em);font-weight:800;font-size:11.5px;transition:background .2s,border-color .2s,color .2s,transform .2s}
 .cf-widget[data-checked="false"] .cf-check{border-color:rgba(255,255,255,.28);background:rgba(255,255,255,.04);color:transparent}
 .cf-right{text-align:right;line-height:1.15}
-.cf-brand{font-size:10.5px;font-weight:700;letter-spacing:.03em;color:#f59e0b;display:block}
-.cf-sub{font-size:9px;color:var(--dim)}
+.cf-brand{font-size:9.5px;font-weight:700;letter-spacing:.03em;color:#f59e0b;display:block}
+.cf-sub{font-size:8px;color:var(--dim)}
 
 /* =========================================================================
    ВОЗМОЖНОСТИ (Компактная Bento-сетка)
@@ -420,6 +422,18 @@ h1, h2, h3, .hero h1, .sec-head h2, .bcard h3 {
 .pay-chip{padding:5px 11px;border-radius:9px;font-size:12px;color:var(--mut);background:rgba(255,255,255,.035);border:1px solid var(--line)}
 
 /* Мастер подключения */
+.sub-hero-top{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:14px}
+.sub-hero-identity{display:flex;align-items:center;gap:12px;min-width:0;flex:1 1 320px}
+.sub-hero-avatar{width:44px;height:44px;border-radius:12px;border:1px solid var(--line-2);object-fit:cover;flex-shrink:0}
+.sub-hero-titles{min-width:0;flex:1 1 auto}
+.sub-hero-title-row{display:flex;align-items:center;gap:10px;flex-wrap:nowrap}
+.sub-hero-title{font-size:clamp(1.25rem,2.4vw,1.95rem);font-weight:600;letter-spacing:-.035em;margin:0;line-height:1.15;white-space:nowrap}
+.sub-hero-status{flex-shrink:0;font-size:11.5px;padding:3px 8px}
+.sub-lead-meta{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--mut);margin-top:3px}
+.sub-lead-meta .sub-meta-id, .sub-lead-meta .sub-meta-email{white-space:nowrap}
+.setup-master-title{font-size:22px;font-weight:600;letter-spacing:-.03em}
+.sub-hero-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
 .sub-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:18px}
 .s-metric{padding:14px 16px;border-radius:16px;background:rgba(0,0,0,.28);border:1px solid var(--line)}
 .s-metric small{display:block;font-size:11.5px;color:var(--dim)}
@@ -433,13 +447,12 @@ h1, h2, h3, .hero h1, .sec-head h2, .bcard h3 {
 .renew-head-left{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .renew-head-title{font-size:16.5px;font-weight:600;letter-spacing:-.02em;color:var(--hi);display:flex;align-items:center;gap:8px}
 .renew-chevron{width:32px;height:32px;border-radius:50%;border:1px solid rgba(52,227,164,.4);background:rgba(16,185,129,.14);
-  display:grid;place-items:center;color:var(--em-t);flex-shrink:0;transition:transform .35s var(--spring),background .25s}
+  display:grid;place-items:center;color:var(--em-t);flex-shrink:0;transition:transform .28s cubic-bezier(.16,1,.3,1),background .25s}
 .renew-acc[data-open="true"] .renew-chevron{transform:rotate(180deg);background:rgba(16,185,129,.26)}
-.renew-body-wrap{display:grid;grid-template-rows:0fr;transition:grid-template-rows .35s var(--ease)}
-.renew-acc[data-open="true"] .renew-body-wrap{grid-template-rows:1fr}
-.renew-body-inner{overflow:hidden}
-.renew-body{padding:0 24px 24px;border-top:1px solid var(--line);opacity:0;transition:opacity .25s var(--ease)}
-.renew-acc[data-open="true"] .renew-body{opacity:1}
+.renew-body-wrap{display:none;overflow:hidden;will-change:height,opacity}
+.renew-acc[data-open="true"] .renew-body-wrap{display:block}
+.renew-body-inner{overflow:hidden;width:100%;min-height:max-content}
+.renew-body{padding:0 24px 24px;border-top:1px solid var(--line)}
 
 .email-bound-pill{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:11px 14px;border-radius:12px;
   background:rgba(16,185,129,.1);border:1px solid rgba(52,227,164,.28);margin-top:14px;margin-bottom:14px;font-size:13px}
@@ -496,6 +509,7 @@ h1, h2, h3, .hero h1, .sec-head h2, .bcard h3 {
 .badge-android{background:rgba(34,197,94,.16);color:#4ade80;border:1px solid rgba(34,197,94,.35)}
 .badge-ios{background:rgba(59,130,246,.16);color:#60a5fa;border:1px solid rgba(59,130,246,.35)}
 .badge-singbox{background:rgba(249,115,22,.16);color:#fb923c;border:1px solid rgba(249,115,22,.35)}
+.badge-xray{background:rgba(236,72,153,.16);color:#f472b6;border:1px solid rgba(236,72,153,.35)}
 .app-check{width:22px;height:22px;border-radius:50%;border:1.5px solid var(--line-2);display:grid;place-items:center;font-size:12px;color:transparent;flex-shrink:0;transition:background .2s,border-color .2s,color .2s,transform .2s}
 .app-card.active .app-check{background:var(--em);border-color:var(--em);color:#04150e;font-weight:800}
 
@@ -507,6 +521,15 @@ h1, h2, h3, .hero h1, .sec-head h2, .bcard h3 {
 .s-step.done .s-step-num{background:var(--em);color:#04150e;border-color:var(--em)}
 .s-step h4{font-size:15px;font-weight:600;letter-spacing:-.015em;color:var(--hi)}
 .s-step p{font-size:13px;color:var(--mut);line-height:1.5;margin-top:6px}
+.step-details{margin-top:5px}
+.step-details-summary{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:500;color:var(--mut);cursor:pointer;user-select:none;list-style:none;transition:color .15s ease;padding:2px 0}
+.step-details-summary::-webkit-details-marker{display:none}
+.step-details-summary:hover,.step-details-summary:focus-visible{color:var(--em-t)}
+.step-details-arrow{flex-shrink:0;transition:transform .2s cubic-bezier(.16,1,.3,1);color:var(--dim)}
+.step-details[open] .step-details-arrow{transform:rotate(180deg);color:var(--em-t)}
+.step-details-text{font-size:12px;color:var(--dim);line-height:1.45;margin-top:6px;padding-left:1px}
+.step-details-text p{margin:0 0 6px;font-size:inherit;color:inherit;line-height:inherit}
+.step-details-text ul{margin:4px 0 0 16px;padding:0;font-size:11.5px;color:var(--dim);line-height:1.45}
 .step-btns{display:flex;flex-wrap:wrap;gap:8px}
 .mono-field{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;min-height:40px}
 
@@ -590,12 +613,12 @@ h1, h2, h3, .hero h1, .sec-head h2, .bcard h3 {
     -webkit-backdrop-filter:none;backdrop-filter:none;
   }
   .nav-links,.kbd-hint,.hide-sm,.lab-label{display:none}
-  :root{--lab-h:34px}
+  :root:has(.lab){--lab-h:34px}
   .lab .container{padding:0 10px;justify-content:center}
   .lab-group{justify-content:space-between;gap:2px;width:100%}
   .lab-pill{padding:3px 8px;font-size:11px}
 
-  .nav-wrap{top:calc(var(--lab-h) + 6px);padding:0 10px}
+  .nav-wrap{top:calc(var(--lab-h) + 8px);padding:0 10px}
   .nav{height:48px;padding:0 8px 0 12px}
   .brand{font-size:14px;gap:8px}
   .brand-logo{width:28px;height:28px;border-radius:8px}
@@ -603,7 +626,7 @@ h1, h2, h3, .hero h1, .sec-head h2, .bcard h3 {
   .nav-actions .btn-sm{min-height:32px;padding:0 12px;font-size:12px}
 
   /* Компактный выразительный Split-Hero на мобилках с увеличенным 3D-глобусом и текстом */
-  .hero{padding-top:calc(var(--lab-h) + 70px);padding-bottom:20px}
+  .hero{padding-top:calc(var(--lab-h) + 64px);padding-bottom:20px}
   .hero-grid{
     grid-template-columns:minmax(0,1.18fr) auto;
     grid-template-areas:
@@ -923,6 +946,8 @@ h1, h2, h3, .hero h1, .sec-head h2, .bcard h3 {
   .setup-steps{gap:10px}
   .s-step{padding:12px 14px;gap:10px}
   .s-step p{font-size:12px;line-height:1.42}
+  .step-details-summary{font-size:11px}
+  .step-details-text{font-size:11.5px;line-height:1.4}
   .s-step h4{font-size:14px}
   .s-step-num{width:22px;height:22px;font-size:11.5px}
   .s-step .btn{min-height:34px;font-size:12.5px}
@@ -1522,8 +1547,11 @@ h1, h2, h3, .hero h1, .sec-head h2, .bcard h3 {
   margin-top: auto;
 }
 #renewAcc .cf-widget {
-  padding: 9px 13px;
-  border-radius: 12px;
+  padding: 2px 0;
+  border-radius: 10px;
+  transform: scale(0.84);
+  transform-origin: center center;
+  margin: -4px auto;
 }
 #renewAcc .contour-desc-box {
   display: flex;
@@ -1702,5 +1730,117 @@ h1, h2, h3, .hero h1, .sec-head h2, .bcard h3 {
   }
   #renewAcc #renSubmitBtn {
     width: 100%;
+  }
+}
+
+/* =========================================================================
+   Мобильная оптимизация страницы подписки (view-sub) и карточек
+   ========================================================================= */
+@media (max-width: 768px) {
+  #view-sub .page {
+    padding-top: calc(var(--lab-h) + 62px) !important;
+    padding-bottom: 24px !important;
+  }
+  #view-sub .sub-page-lead {
+    display: none !important;
+  }
+  #view-sub .sub-hero-card {
+    padding: 14px 14px 16px !important;
+    border-radius: 18px !important;
+  }
+  .sub-hero-top {
+    gap: 10px;
+  }
+  .sub-hero-identity {
+    gap: 10px;
+    width: 100%;
+    flex: 1 1 100%;
+    flex-wrap: nowrap;
+  }
+  .sub-hero-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+  .sub-hero-title-row {
+    gap: 7px;
+    flex-wrap: nowrap;
+  }
+  .sub-hero-title {
+    font-size: clamp(14px, 4vw, 16.5px) !important;
+    letter-spacing: -.02em !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+  .sub-hero-status {
+    font-size: 10.5px !important;
+    padding: 2px 7px !important;
+  }
+  .sub-lead-meta {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 2px !important;
+    font-size: 11px !important;
+    margin-top: 3px !important;
+    line-height: 1.25 !important;
+  }
+  .sub-lead-meta .sub-meta-id,
+  .sub-lead-meta .sub-meta-email {
+    white-space: nowrap !important;
+  }
+  .setup-master-title {
+    font-size: clamp(16.5px, 4.8vw, 20px) !important;
+    font-weight: 600 !important;
+    letter-spacing: -.03em !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+  /* Кнопки в 2 ряда без пустых мест справа */
+  .sub-hero-actions {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 7px !important;
+    width: 100% !important;
+    margin-top: 6px !important;
+  }
+  .sub-hero-actions .btn {
+    width: 100% !important;
+    min-height: 36px !important;
+    padding: 0 8px !important;
+    font-size: 12px !important;
+    justify-content: center !important;
+    text-align: center !important;
+  }
+  .sub-hero-actions .btn:nth-child(3),
+  .sub-hero-actions #subBotLink {
+    grid-column: 1 / -1 !important;
+  }
+
+  /* Кубы со сроком действия и лимитами: компактный аккуратный текст */
+  .sub-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 7px !important;
+    margin-top: 10px !important;
+  }
+  .s-metric {
+    padding: 9px 11px !important;
+    border-radius: 13px !important;
+    min-height: 56px !important;
+  }
+  .s-metric small {
+    font-size: 10.5px !important;
+    line-height: 1.2 !important;
+    margin-bottom: 2px !important;
+    color: var(--mut) !important;
+  }
+  .s-metric b {
+    font-size: 12.5px !important;
+    line-height: 1.22 !important;
+    letter-spacing: -.01em !important;
+    word-break: normal !important;
+    margin-top: 1px !important;
   }
 }
