@@ -10629,7 +10629,8 @@ class RequestHandler(BaseHTTPRequestHandler):
         payload = candidate.read_bytes()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "public, max-age=3600")
+        cache_header = "no-cache, must-revalidate" if ext in (".css", ".js") else "public, max-age=3600"
+        self.send_header("Cache-Control", cache_header)
         self.send_header("Content-Length", str(len(payload)))
         for name, value in SECURITY_HEADERS:
             self.send_header(name, value)
