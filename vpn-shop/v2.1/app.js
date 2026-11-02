@@ -1216,9 +1216,8 @@ function syncSubViewport(options) {
   const h = pane.offsetHeight;
   if (h > 0) viewport.style.height = h + 'px';
   if (instant) {
-    requestAnimationFrame(() => {
-      viewport.classList.remove('no-transition');
-    });
+    void viewport.offsetHeight;
+    viewport.classList.remove('no-transition');
   }
   MODES.forEach(m => {
     const p = $(`#pane-${m}`);
