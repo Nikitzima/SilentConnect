@@ -836,10 +836,9 @@ h1, h2, h3, .hero h1, .sec-head h2, .bcard h3 {
   width: 100%;
   overflow: hidden;
   position: relative;
-  transition: height 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.sub-mode-viewport.no-transition {
-  transition: none !important;
+.sub-mode-viewport.animating-mode {
+  transition: height 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .sub-mode-slider {
   display: flex;

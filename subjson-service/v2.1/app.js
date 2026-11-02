@@ -153,7 +153,10 @@ function setupDraggableTrack(track) {
     scrollLeft = track.scrollLeft;
     moved = false;
   });
-  window.addEventListener('mouseup', () => { isDown = false; });
+  window.addEventListener('mouseup', () => {
+    isDown = false;
+    setTimeout(() => { moved = false; }, 50);
+  });
   track.addEventListener('mousemove', e => {
     if (!isDown) return;
     e.preventDefault();
@@ -163,7 +166,11 @@ function setupDraggableTrack(track) {
     track.scrollLeft = scrollLeft - walk;
   });
   track.addEventListener('click', e => {
-    if (moved) { e.preventDefault(); e.stopPropagation(); }
+    if (moved) {
+      e.preventDefault();
+      e.stopPropagation();
+      moved = false;
+    }
   }, true);
 }
 
@@ -1054,6 +1061,51 @@ function preferredMainApp(os) {
   return first ? first.id : 'incy';
 }
 
+/* =========================================================================
+   6. РЕЖИМЫ ПОДКЛЮЧЕНИЯ И СИНХРОНИЗАЦИЯ КАРТОЧКИ (Main / Awg / OpenFlux)
+   ========================================================================= */
+const MODES = ['main', 'awg', 'openflux'];
+
+/* Высота окна карусели = высота активной панели */
+function syncSubViewport(options) {
+  const viewport = $('#subViewport');
+  const pane = $(`#pane-${S.subMode}`);
+  if (!viewport || !pane) return;
+  if (viewport.scrollLeft !== 0) viewport.scrollLeft = 0;
+  if (!viewport._noScrollBound) {
+    viewport._noScrollBound = true;
+    viewport.addEventListener('scroll', () => {
+      if (viewport.scrollLeft !== 0) viewport.scrollLeft = 0;
+    }, { passive: true });
+  }
+  const shouldAnimate = Boolean(options && options.animate);
+  if (shouldAnimate) {
+    viewport.classList.add('animating-mode');
+  } else {
+    viewport.classList.remove('animating-mode');
+  }
+  const h = pane.offsetHeight;
+  if (h > 0) viewport.style.height = h + 'px';
+  if (shouldAnimate) {
+    setTimeout(() => {
+      viewport.classList.remove('animating-mode');
+    }, 400);
+  }
+  MODES.forEach(m => {
+    const p = $(`#pane-${m}`);
+    if (!p) return;
+    const isHidden = m !== S.subMode;
+    if (p.inert !== isHidden) p.inert = isHidden;
+    if (p.getAttribute('aria-hidden') !== String(isHidden)) {
+      p.setAttribute('aria-hidden', String(isHidden));
+    }
+  });
+}
+if (window.ResizeObserver) {
+  const subRO = new ResizeObserver(syncSubViewport);
+  MODES.forEach(m => { const p = $(`#pane-${m}`); if (p) subRO.observe(p); });
+}
+
 function renderMainSetup() {
   renderPlatformTrack($('#osTabsMain'), OS_META, S.osMain, id => {
     S.osMain = id;
@@ -1160,14 +1212,13 @@ function renderMainSetup() {
         <input class="field mono-field" name="sub_manual_url" readonly value="${SUB_URL || SUB_IMPORT_URL}" aria-label="Ссылка подписки" onclick="this.select()">
       </div>`;
   }
-  syncSubViewport({ instant: true });
+  syncSubViewport();
 }
 renderMainSetup();
 
 /* =========================================================================
    6. ПЕРЕКЛЮЧАТЕЛЬ 3 РЕЖИМОВ ПОДКЛЮЧЕНИЯ (Liquid Glass с физикой перетаскивания)
    ========================================================================= */
-const MODES = ['main', 'awg', 'openflux'];
 const setModeSegVisual = bindLiquidSegmented(
   $('#modeSeg'),
   () => MODES.indexOf(S.subMode),
@@ -1193,46 +1244,9 @@ function setSubMode(mode) {
   if (mode === 'main') renderMainSetup();
   else if (mode === 'awg') renderAwgSetup();
   else if (mode === 'openflux') renderOfSetup();
-  syncSubViewport();
+  syncSubViewport({ animate: true });
 }
 window.setSubMode = setSubMode;
-
-/* Высота окна карусели = высота активной панели (плавно, следит за изменением контента) */
-function syncSubViewport(options) {
-  const viewport = $('#subViewport');
-  const pane = $(`#pane-${S.subMode}`);
-  if (!viewport || !pane) return;
-  if (viewport.scrollLeft !== 0) viewport.scrollLeft = 0;
-  if (!viewport._noScrollBound) {
-    viewport._noScrollBound = true;
-    viewport.addEventListener('scroll', () => {
-      if (viewport.scrollLeft !== 0) viewport.scrollLeft = 0;
-    }, { passive: true });
-  }
-  const instant = !!(options && options.instant);
-  if (instant) {
-    viewport.classList.add('no-transition');
-  }
-  const h = pane.offsetHeight;
-  if (h > 0) viewport.style.height = h + 'px';
-  if (instant) {
-    void viewport.offsetHeight;
-    viewport.classList.remove('no-transition');
-  }
-  MODES.forEach(m => {
-    const p = $(`#pane-${m}`);
-    if (!p) return;
-    const isHidden = m !== S.subMode;
-    if (p.inert !== isHidden) p.inert = isHidden;
-    if (p.getAttribute('aria-hidden') !== String(isHidden)) {
-      p.setAttribute('aria-hidden', String(isHidden));
-    }
-  });
-}
-if (window.ResizeObserver) {
-  const subRO = new ResizeObserver(syncSubViewport);
-  MODES.forEach(m => { const p = $(`#pane-${m}`); if (p) subRO.observe(p); });
-}
 syncSubViewport();
 
 /* =========================================================================
@@ -1509,7 +1523,7 @@ function renderAwgSetup() {
       if (switchBtn) switchBtn.addEventListener('click', () => openAwgSwitchModal(targetSlot.id));
     }
   }
-  syncSubViewport({ instant: true });
+  syncSubViewport();
 }
 
 window.downloadSlotConf = function(slotId) {
@@ -1794,7 +1808,7 @@ function renderOfSetup() {
         </div>
       </div>`;
   }
-  syncSubViewport({ instant: true });
+  syncSubViewport();
 }
 
 $$('[data-of-state]').forEach(b => b.addEventListener('click', () => setOfState(b.dataset.ofState)));
