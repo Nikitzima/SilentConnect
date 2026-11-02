@@ -26,8 +26,14 @@ from .store import Store, default_awg_quota_bytes_for_devices
 
 LOGGER = logging.getLogger("vpn_shop.awg_traffic")
 
-DEFAULT_STATE_FILE = Path("/dev/shm/awg_last_counters.json")
+PERSISTENT_STATE_DIRS = (
+    Path("/var/lib/vpn-shop"),
+    Path("/root/vpn-shop/data-silentconnect"),
+    Path("/dev/shm"),
+)
+DEFAULT_STATE_FILE = Path("/var/lib/vpn-shop/awg_last_counters.json")
 FALLBACK_STATE_FILE = Path(os.environ.get("TEMP", os.environ.get("TMP", "/tmp"))) / "awg_last_counters.json"
+MAX_UNSEEN_PEER_FIRST_TICK_BYTES = 10 * 1024 * 1024 * 1024  # 10 GB per 60s tick (850+ Mbps sustained)
 
 
 @dataclass(frozen=True)
@@ -127,11 +133,25 @@ class CounterStateTracker:
         if state_file:
             self.state_file = Path(state_file)
         else:
-            # Выбор пути: /dev/shm (ОЗУ) если доступно, иначе временная папка ОС
-            if DEFAULT_STATE_FILE.parent.exists() and os.access(str(DEFAULT_STATE_FILE.parent), os.W_OK):
-                self.state_file = DEFAULT_STATE_FILE
-            else:
-                self.state_file = FALLBACK_STATE_FILE
+            selected: Path | None = None
+            # Если уже есть существующий state-файл (включая /dev/shm), используем или мигрируем его
+            for d in PERSISTENT_STATE_DIRS:
+                cand = d / "awg_last_counters.json"
+                try:
+                    if cand.exists():
+                        selected = cand
+                        break
+                except OSError:
+                    pass
+            if selected is None:
+                for d in PERSISTENT_STATE_DIRS:
+                    try:
+                        if d.exists() and os.access(str(d), os.W_OK):
+                            selected = d / "awg_last_counters.json"
+                            break
+                    except OSError:
+                        pass
+            self.state_file = selected or FALLBACK_STATE_FILE
 
         self.previous_counters: dict[str, tuple[int, int, int]] = {}
         self.load_state()
@@ -184,9 +204,21 @@ class CounterStateTracker:
                 continue
 
             if pubkey not in self.previous_counters:
-                # Первый замер для данного пира — дельта равна текущему значению
-                delta_rx = curr_rx
-                delta_tx = curr_tx
+                # Первый замер для данного пира.
+                # Если в ядре уже накоплено > 10 ГБ (например, после потери/миграции state-файла),
+                # принимаем текущие счётчики за базовую точку отсчёта (baseline), чтобы не списать
+                # многомесячный кумулятивный счётчик ядра за один 60-секундный тик.
+                if (curr_rx + curr_tx) > MAX_UNSEEN_PEER_FIRST_TICK_BYTES:
+                    LOGGER.warning(
+                        "Peer %s unseen in state tracker with large cumulative counter (%d bytes); baselining to 0 delta",
+                        pubkey,
+                        curr_rx + curr_tx,
+                    )
+                    delta_rx = 0
+                    delta_tx = 0
+                else:
+                    delta_rx = curr_rx
+                    delta_tx = curr_tx
             else:
                 prev_rx, prev_tx, _ = self.previous_counters[pubkey]
 
@@ -269,7 +301,12 @@ class AwgTrafficCollector:
 
 
 def evaluate_profile_quota(profile_public_id: str, store: Store) -> QuotaEvaluation:
-    """Оценка остатка трафика AmneziaWG для указанного профиля."""
+    """Оценка остатка трафика AmneziaWG для указанного профиля (с автоматическим сбросом 30-дневного цикла)."""
+    if hasattr(store, "ensure_awg_cycle_up_to_date"):
+        try:
+            store.ensure_awg_cycle_up_to_date(profile_public_id)
+        except Exception as exc:
+            LOGGER.debug("Could not auto-reset AWG cycle for %s: %s", profile_public_id, exc)
     quota = store.get_awg_profile_quota(profile_public_id)
     if not quota:
         return QuotaEvaluation(

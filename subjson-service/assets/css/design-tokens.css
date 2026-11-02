@@ -1,0 +1,198 @@
+/**
+ * =========================================================================
+ * SILENTCONNECT DESIGN SYSTEM TOKENS (RAYCAST + RESEND SYNTHESIS)
+ * =========================================================================
+ * Base: Deep Obsidian (#060709)
+ * Signature Accent: Emerald Spectrum (#10b981 / #34d399 / #059669 / #022c22)
+ * Micro-Grid: Resend radial-masked micro-grid
+ * Cards: Tactile chamfered cards with specular rim lighting & edge illumination
+ * Spring Physics: Apple HIG / Raycast 120 FPS bezier curves
+ * =========================================================================
+ */
+
+:root {
+  /* -----------------------------------------------------------------------
+     1. COLOR PALETTE: OBSIDIAN & EMERALD
+     ----------------------------------------------------------------------- */
+  /* Deep Space Canvas */
+  --bg-space: #060709;
+  --bg-space-rgb: 6, 7, 9;
+  --bg-surface: rgba(12, 15, 20, 0.74);
+  --bg-surface-elevated: rgba(18, 22, 30, 0.85);
+  --bg-surface-glass: rgba(10, 13, 18, 0.65);
+  --bg-surface-active: rgba(22, 28, 38, 0.92);
+
+  /* Emerald Spectrum */
+  --emerald-50: #ecfdf5;
+  --emerald-100: #d1fae5;
+  --emerald-200: #a7f3d0;
+  --emerald-300: #6ee7b7;
+  --emerald-400: #34d399;
+  --emerald-500: #10b981;
+  --emerald-600: #059669;
+  --emerald-700: #047857;
+  --emerald-800: #065f46;
+  --emerald-900: #064e3b;
+  --emerald-950: #022c22;
+
+  /* Emerald Lighting & Radiance */
+  --emerald-glow: rgba(16, 185, 129, 0.35);
+  --emerald-glow-soft: rgba(16, 185, 129, 0.16);
+  --emerald-glow-intense: rgba(52, 211, 153, 0.6);
+  --emerald-subtle: rgba(16, 185, 129, 0.12);
+  --emerald-rim: rgba(16, 185, 129, 0.28);
+  --emerald-rim-bright: rgba(52, 211, 153, 0.45);
+
+  /* Glass & Hardware Specular Highlights */
+  --glass-border: 1px solid rgba(255, 255, 255, 0.08);
+  --glass-border-hover: 1px solid rgba(255, 255, 255, 0.18);
+  --glass-border-emerald: 1px solid rgba(16, 185, 129, 0.32);
+  --raycast-specular: inset 0 1px 0 0 rgba(255, 255, 255, 0.22);
+  --raycast-specular-sharp: inset 0 0.5px 0 0 rgba(255, 255, 255, 0.32);
+  --raycast-shadow: 0 24px 60px rgba(0, 0, 0, 0.8), rgba(16, 185, 129, 0.06) 0 0 50px 10px;
+  --raycast-shadow-hover: 0 32px 70px rgba(0, 0, 0, 0.85), rgba(16, 185, 129, 0.14) 0 0 60px 15px;
+
+  /* Typography Colors */
+  --text-hero: #ffffff;
+  --text-primary: #f8fafc;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+  --text-emerald: #34d399;
+
+  /* Spring Physics Timings (120 FPS Responsive) */
+  --spring-snap: cubic-bezier(0.16, 1, 0.3, 1);
+  --spring-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --spring-smooth: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-out-quad: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* -------------------------------------------------------------------------
+   2. RESEND MICRO-GRID WITH RADIAL FADE-OUT MASK
+   ------------------------------------------------------------------------- */
+.resend-grid-bg {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(ellipse 75% 55% at 50% 16%, #000 25%, transparent 85%);
+  -webkit-mask-image: radial-gradient(ellipse 75% 55% at 50% 16%, #000 25%, transparent 85%);
+  z-index: 0;
+}
+
+/* -------------------------------------------------------------------------
+   3. VOLUMETRIC RAYCAST LIGHT BEAM CANVAS CONTAINER
+   ------------------------------------------------------------------------- */
+.raycast-beam-canvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.95;
+  mix-blend-mode: screen;
+}
+
+/* -------------------------------------------------------------------------
+   4. TACTILE CHAMFERED CARDS & RIM ILLUMINATION
+   ------------------------------------------------------------------------- */
+/* Chamfered Card: Machined hardware corners + specular rim lighting */
+.chamfered-card {
+  position: relative;
+  background: var(--bg-surface);
+  border: var(--glass-border);
+  border-radius: 24px;
+  backdrop-filter: blur(36px) saturate(190%);
+  -webkit-backdrop-filter: blur(36px) saturate(190%);
+  box-shadow: var(--raycast-specular), 0 20px 50px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  transition: transform 0.22s var(--spring-smooth), border-color 0.25s ease, box-shadow 0.3s ease;
+}
+
+.chamfered-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.02) 40%, rgba(16, 185, 129, 0.15) 100%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.chamfered-card:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: var(--raycast-specular), 0 24px 60px rgba(0, 0, 0, 0.7), 0 0 35px -5px var(--emerald-glow-soft);
+  transform: translateY(-2px);
+}
+
+/* Machined Chamfer Cut: Angular beveled corners variant */
+.chamfer-cut {
+  clip-path: polygon(
+    14px 0%,
+    calc(100% - 14px) 0%,
+    100% 14px,
+    100% calc(100% - 14px),
+    calc(100% - 14px) 100%,
+    14px 100%,
+    0% calc(100% - 14px),
+    0% 14px
+  );
+}
+
+/* Edge Illumination Pulse */
+.edge-illuminated {
+  position: relative;
+}
+
+.edge-illuminated::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 16px rgba(16, 185, 129, 0.18);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.edge-illuminated:hover::after {
+  opacity: 1;
+}
+
+/* -------------------------------------------------------------------------
+   5. INTERACTIVE ACCENT ELEMENTS
+   ------------------------------------------------------------------------- */
+/* Emerald Glow Badge */
+.emerald-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 9999px;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid var(--emerald-rim);
+  color: var(--emerald-400);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* Machined KBD Key */
+.machined-kbd {
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}

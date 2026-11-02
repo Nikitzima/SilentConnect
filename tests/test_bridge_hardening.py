@@ -24,8 +24,8 @@ class TestBridgeHardening(unittest.TestCase):
     def setUp(self) -> None:
         self.secret = "test-secret-bridge-token"
         self.provisioner = MagicMock()
-        self.provisioner.settings.web_public_base_url = "https://sub.silentconnect.net"
-        self.provisioner.settings.subscription_base_url = "https://silentconnect.net/sub"
+        self.provisioner.settings.web_public_base_url = "https://sub.example.com"
+        self.provisioner.settings.subscription_base_url = "https://example.com/sub"
         self.awg_mgr = MagicMock()
 
     def _sign_and_dispatch(self, payload: dict, now: int = 1700000000) -> tuple[int, dict]:
@@ -72,9 +72,9 @@ class TestBridgeHardening(unittest.TestCase):
             "params": {
                 "customer_email": "user@example.com",
                 "order_public_id": "ord_12345",
-                "setup_url": "https://sub.silentconnect.net/setup/123",
-                "json_url": "https://silentconnect.net/sub/my-sub-id",
-                "cabinet_url": "https://nl.silentconnect.net/cabinet",
+                "setup_url": "https://sub.example.com/setup/123",
+                "json_url": "https://example.com/sub/my-sub-id",
+                "cabinet_url": "https://nl.example.com/cabinet",
                 "bind_tg_url": "https://t.me/SilentConnectBot?start=bind_123",
             },
         }

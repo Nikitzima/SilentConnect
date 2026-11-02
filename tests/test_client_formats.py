@@ -38,9 +38,9 @@ CONSTANTS = {
     "FI_XHTTP_REALITY_PORT": 39443,
     "HYSTERIA_SALAMANDER_PASSWORD": "485a96779d1ad79d0fa80ca0",
     "HTTP_204_CLOUDFLARE": "https://cp.cloudflare.com/generate_204",
-    "NL_HOST": "edge.silentconnect.net",
-    "NL_SUB_HOST": "sub.silentconnect.net",
-    "FI_HOST": "fi.silentconnect.net",
+    "NL_HOST": "edge.example.com",
+    "NL_SUB_HOST": "sub.example.com",
+    "FI_HOST": "fi.example.com",
     "TEST_UUID": "9c3d7f1e-4b8a-4c2d-9e1f-8a2b3c4d5e6f",
     "WS_PATH": "/sc-ws-path",
 }
@@ -590,7 +590,7 @@ class TestStreisandBase64Bundle(unittest.TestCase):
 
     def test_streisand_deep_link_generation(self):
         """Feature 5 & Scenario 3: Verify 1-click streisand:// import link structure."""
-        sub_url = "https://sub.silentconnect.net/my-secret/streisand/user-sub-123"
+        sub_url = "https://sub.example.com/my-secret/streisand/user-sub-123"
         encoded_name = urllib.parse.quote("SilentConnect Smart")
         deep_link = f"streisand://import/{sub_url}#{encoded_name}"
 
@@ -602,7 +602,7 @@ class TestStreisandBase64Bundle(unittest.TestCase):
 
     def test_v2raytun_deep_link_generation(self):
         """Feature 8: Verify 1-click v2raytun:// import link structure."""
-        sub_url = "https://sub.silentconnect.net/my-secret/json/user-sub-123"
+        sub_url = "https://sub.example.com/my-secret/json/user-sub-123"
         deep_link = f"v2raytun://import/{sub_url}"
 
         parsed = urllib.parse.urlparse(deep_link)
@@ -714,7 +714,7 @@ class TestAdversarialClientFormatEdgeCases(unittest.TestCase):
 
     def test_invalid_streisand_uri_detection(self):
         """Assert validator detects missing Reality PBK in Streisand VLESS URI."""
-        bad_raw = "vless://user@edge.silentconnect.net:443?type=tcp&security=reality#CorruptNode\n"
+        bad_raw = "vless://user@edge.example.com:443?type=tcp&security=reality#CorruptNode\n"
         encoded = base64.b64encode(bad_raw.encode("utf-8")).decode("utf-8")
         _, errors = parse_and_validate_streisand_bundle(encoded)
         self.assertTrue(any("Missing 'pbk'" in e for e in errors))
@@ -728,7 +728,7 @@ class TestAdversarialClientFormatEdgeCases(unittest.TestCase):
 
     def test_streisand_missing_salamander_password(self):
         """Assert validator flags missing Salamander password in Streisand hy2 URI."""
-        bad_raw = "hy2://user@sub.silentconnect.net:443?sni=sub.silentconnect.net&alpn=h3&obfs=salamander#BadHy2\n"
+        bad_raw = "hy2://user@sub.example.com:443?sni=sub.example.com&alpn=h3&obfs=salamander#BadHy2\n"
         encoded = base64.b64encode(bad_raw.encode("utf-8")).decode("utf-8")
         _, errors = parse_and_validate_streisand_bundle(encoded)
         self.assertTrue(any("Missing 'obfs-password'" in e for e in errors))

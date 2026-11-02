@@ -3533,6 +3533,87 @@ class Store:
                 )
         return self.get_awg_profile_quota(profile_public_id)
 
+    def ensure_awg_cycle_up_to_date(
+        self,
+        profile_public_id: str,
+        *,
+        now_override: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Проверяет 30-дневный цикл AmneziaWG профиля и автоматически сбрасывает/синхронизирует
+        счётчик awg_used_bytes при переходе в новый 30-дневный расчётный период."""
+        from .quota import CYCLE_SECONDS, get_quota_cycle_info
+
+        now = int(now_override if now_override is not None else now_ts())
+        with self.read_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id, public_id, created_at, expires_at, last_renewed_at,
+                       awg_quota_bytes, awg_used_bytes, awg_reset_at, status
+                FROM profiles
+                WHERE public_id = ?
+                """,
+                (profile_public_id,),
+            ).fetchone()
+        if not row:
+            return None
+
+        prof = self._row_to_dict(row) or {}
+        cycle = get_quota_cycle_info(prof, now_ts=now)
+        next_reset_utc = int(cycle["next_reset_utc"])
+        current_cycle_start_utc = int(cycle.get("current_cycle_start_utc", next_reset_utc - CYCLE_SECONDS))
+        cur_reset_at = int(prof.get("awg_reset_at") or 0)
+        cur_used = int(prof.get("awg_used_bytes") or 0)
+
+        # Цикл требует сброса/выравнивания, если:
+        # 1) awg_reset_at не задан или уже наступил (cur_reset_at <= now), ИЛИ
+        # 2) awg_reset_at был ошибочно выставлен равным далёкому expires_at (> next_reset_utc + 86400),
+        #    и с момента старта подписки уже прошёл хотя бы один 30-дневный цикл.
+        cycle_rolled_over = (cur_reset_at <= now) or (
+            cur_reset_at > next_reset_utc + 86400 and current_cycle_start_utc > int(prof.get("created_at") or 0)
+        )
+        needs_reset_ts_fix = cur_reset_at != next_reset_utc and (
+            cur_reset_at <= now or cur_reset_at > next_reset_utc + 86400
+        )
+
+        if not cycle_rolled_over and not needs_reset_ts_fix:
+            return self.get_awg_profile_quota(profile_public_id)
+
+        new_used = cur_used
+        if cycle_rolled_over:
+            # Считаем реальный трафик из журнала awg_traffic_ledger строго за текущий 30-дневный цикл,
+            # игнорируя аномальные дампы счётчиков (> 10 ГБ за один 60-секундный тик после потери state-файла).
+            MAX_SINGLE_TICK_BYTES = 10 * 1024 * 1024 * 1024
+            with self.read_connection() as conn:
+                sum_row = conn.execute(
+                    """
+                    SELECT COALESCE(SUM(delta_rx_bytes + delta_tx_bytes), 0) AS cycle_bytes
+                    FROM awg_traffic_ledger
+                    WHERE profile_public_id = ?
+                      AND collected_at >= ?
+                      AND (delta_rx_bytes + delta_tx_bytes) < ?
+                    """,
+                    (profile_public_id, current_cycle_start_utc, MAX_SINGLE_TICK_BYTES),
+                ).fetchone()
+                new_used = int(sum_row["cycle_bytes"] or 0) if sum_row else 0
+
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE profiles
+                SET awg_used_bytes = ?, awg_reset_at = ?
+                WHERE public_id = ?
+                """,
+                (new_used, next_reset_utc, profile_public_id),
+            )
+            quota_bytes = int(prof.get("awg_quota_bytes") or 0)
+            if str(prof.get("status") or "active") == "active" and (quota_bytes <= 0 or new_used < quota_bytes):
+                conn.execute(
+                    "UPDATE awg_slots SET enabled = 1, updated_at = ? WHERE profile_public_id = ? AND enabled = 0",
+                    (now, profile_public_id),
+                )
+
+        return self.get_awg_profile_quota(profile_public_id)
+
     def get_awg_traffic_ledger(
         self,
         profile_public_id: str,

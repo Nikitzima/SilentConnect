@@ -431,6 +431,72 @@ class TestAwgTrafficAccounting(unittest.TestCase):
         # Must load cleanly without raising exception
         self.assertEqual(tracker.previous_counters, {})
 
+    def test_11_auto_30day_cycle_rollover_and_anomaly_guard(self) -> None:
+        """Verify 30-day cycle auto-resets awg_used_bytes even on perpetual/100-year profiles
+        and filters out >10GB single-tick counter dump anomalies."""
+        now_sim = 1793383000  # 2026-10-30
+        created_sim = 1777251033  # 2026-04-27 (6 cycles of 30d passed -> cycle 6 started at 1792803033)
+        perpetual_exp = 4933443033  # Year 2126
+
+        prof = self.store.create_profile(
+            xui_inbound_id=1,
+            transport="tcp",
+            profile_mode="family",
+            family_label="admin",
+            xui_email="admin-cycle@silentconnect.test",
+            xui_client_id="uuid-admin-cycle",
+            expires_at=perpetual_exp,
+            awg_quota_bytes=default_awg_quota_bytes_for_devices(6),
+            awg_reset_at=perpetual_exp,
+        )
+        pid = prof["public_id"]
+
+        with self.store.transaction() as conn:
+            conn.execute(
+                "UPDATE profiles SET created_at = ?, awg_used_bytes = ? WHERE public_id = ?",
+                (created_sim, 316412566638, pid),
+            )
+            # Old traffic from cycle 5 (before 1792803033)
+            conn.execute(
+                """
+                INSERT INTO awg_traffic_ledger(node_id, profile_public_id, delta_rx_bytes, delta_tx_bytes, collected_at)
+                VALUES ('nl', ?, 5000000000, 5000000000, ?)
+                """,
+                (pid, 1792000000),
+            )
+            # Current cycle traffic (after 1792803033): 1.5 GB legitimate
+            conn.execute(
+                """
+                INSERT INTO awg_traffic_ledger(node_id, profile_public_id, delta_rx_bytes, delta_tx_bytes, collected_at)
+                VALUES ('nl', ?, 500000000, 1000000000, ?)
+                """,
+                (pid, 1793000000),
+            )
+
+        updated_q = self.store.ensure_awg_cycle_up_to_date(pid, now_override=now_sim)
+        self.assertIsNotNone(updated_q)
+        # Should be recalculated to only current cycle legitimate traffic (1.5 GB)
+        self.assertEqual(updated_q["awg_used_bytes"], 1500000000)
+        # And awg_reset_at should be aligned to the end of cycle 6 (1792803033 + 2592000 = 1795395033)
+        self.assertEqual(updated_q["awg_reset_at"], 1795395033)
+
+        # Also verify CounterStateTracker baselines unseen peer with >10GB cumulative kernel counter
+        fresh_state = Path(self.temp_dir.name) / "fresh_counters.json"
+        tracker = CounterStateTracker(state_file=fresh_state)
+        huge_pubkey = "huge_peer_pubkey_12345678901234567890123456="
+        deltas = tracker.calculate_monotonic_deltas(
+            {huge_pubkey: (20 * 1024**3, 32 * 1024**3)},
+            node_id="nl",
+        )
+        self.assertEqual(deltas, [])
+        # Next normal increment (10 MB) is tracked accurately
+        deltas_next = tracker.calculate_monotonic_deltas(
+            {huge_pubkey: (20 * 1024**3 + 5 * 1024**2, 32 * 1024**3 + 5 * 1024**2)},
+            node_id="nl",
+        )
+        self.assertEqual(len(deltas_next), 1)
+        self.assertEqual(deltas_next[0].total_bytes, 10 * 1024**2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -27,9 +27,9 @@ class CloudflareDnsTests(unittest.TestCase):
 
     @patch("socket.gethostbyname", return_value="192.0.2.250")
     def test_resolve_node_ip_dynamic_no_hardcoding(self, mock_dns: MagicMock) -> None:
-        ip = resolve_node_ip("pl.silentconnect.net")
+        ip = resolve_node_ip("pl.example.com")
         self.assertEqual(ip, "192.0.2.250")
-        mock_dns.assert_called_once_with("pl.silentconnect.net")
+        mock_dns.assert_called_once_with("pl.example.com")
 
     @patch("socket.gethostbyname", return_value="192.0.2.250")
     @patch("urllib.request.urlopen")
@@ -38,7 +38,7 @@ class CloudflareDnsTests(unittest.TestCase):
         search_resp = {
             "success": True,
             "result": [
-                {"id": "rec_1", "name": "silentconnect.net", "content": "198.51.100.144", "proxied": False}
+                {"id": "rec_1", "name": "example.com", "content": "198.51.100.144", "proxied": False}
             ],
         }
         # 2. Mock update response
@@ -46,7 +46,7 @@ class CloudflareDnsTests(unittest.TestCase):
             "success": True,
             "result": {
                 "id": "rec_1",
-                "name": "silentconnect.net",
+                "name": "example.com",
                 "content": "192.0.2.250",
                 "proxied": False,
                 "ttl": 60,
@@ -64,8 +64,8 @@ class CloudflareDnsTests(unittest.TestCase):
         mock_urlopen.side_effect = [mock_conn1, mock_conn2]
 
         results = self.client.switch_cluster_dns(
-            target_node_domain="pl.silentconnect.net",
-            managed_domains=["silentconnect.net"],
+            target_node_domain="pl.example.com",
+            managed_domains=["example.com"],
         )
 
         self.assertEqual(results["target_ip"], "192.0.2.250")
@@ -80,14 +80,14 @@ class CloudflareDnsTests(unittest.TestCase):
     ) -> None:
         search_resp = {
             "success": True,
-            "result": [{"id": "rec_1", "name": "silentconnect.net", "content": "198.51.100.144", "proxied": False}],
+            "result": [{"id": "rec_1", "name": "example.com", "content": "198.51.100.144", "proxied": False}],
         }
         # Cloudflare returned proxied=True (illegal!)
         illegal_update_resp = {
             "success": True,
             "result": {
                 "id": "rec_1",
-                "name": "silentconnect.net",
+                "name": "example.com",
                 "content": "192.0.2.250",
                 "proxied": True,
                 "ttl": 60,
@@ -106,8 +106,8 @@ class CloudflareDnsTests(unittest.TestCase):
 
         with self.assertRaises(CloudflareDnsError) as ctx:
             self.client.switch_cluster_dns(
-                target_node_domain="pl.silentconnect.net",
-                managed_domains=["silentconnect.net"],
+                target_node_domain="pl.example.com",
+                managed_domains=["example.com"],
             )
         self.assertIn("Safety Violation: Cloudflare Proxied mode is forbidden", str(ctx.exception))
 

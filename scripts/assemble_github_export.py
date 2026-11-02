@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 scripts/assemble_github_export.py
 
@@ -107,6 +107,13 @@ TEXT_EXTENSIONS = {
 }
 
 EXPORT_REPLACEMENTS = [
+    # Staging & Production Domains
+    ("previewsub.example.com", "previewsub.example.com"),
+    ("preview.example.com", "preview.example.com"),
+    ("sub.example.com", "sub.example.com"),
+    ("edge.example.com", "edge.example.com"),
+    ("fi.example.com", "fi.example.com"),
+    ("example.com", "example.com"),
     # 3X-UI credentials / paths
     ("xui_admin", "xui_admin"),
     ("xui_password_placeholder", "xui_password_placeholder"),

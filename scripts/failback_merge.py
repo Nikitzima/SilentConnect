@@ -245,7 +245,21 @@ def merge_counter_table(
 
 def merge_profiles(nl, fi, base, stats: Stats, dry_run: bool) -> dict[int, int]:
     id_map: dict[int, int] = {}
-    fields = ("expires_at", "last_renewed_at", "status", "deleted_at", "xui_client_id", "family_label", "notes")
+    nl_cols = set(columns(nl, "profiles"))
+    fields = (
+        "expires_at",
+        "last_renewed_at",
+        "status",
+        "deleted_at",
+        "xui_client_id",
+        "xui_sub_id",
+        "device_limit",
+        "awg_quota_bytes",
+        "awg_used_bytes",
+        "awg_reset_at",
+        "family_label",
+        "notes",
+    )
     for fi_p in fi.execute("SELECT * FROM profiles").fetchall():
         nl_p = nl.execute("SELECT * FROM profiles WHERE public_id = ?", (fi_p["public_id"],)).fetchone()
         if nl_p is None:
@@ -286,16 +300,33 @@ def merge_profiles(nl, fi, base, stats: Stats, dry_run: bool) -> dict[int, int]:
             if status == "active" and expires > int(_dt.datetime.now().timestamp()):
                 deleted_at = None
             if not dry_run:
-                nl.execute(
-                    """
-                    UPDATE profiles SET expires_at=?, last_renewed_at=?, status=?, deleted_at=?,
-                        xui_client_id=COALESCE(?, xui_client_id),
-                        family_label=COALESCE(?, family_label),
-                        notes=COALESCE(?, notes)
-                    WHERE id=?
-                    """,
-                    (expires, renewed, status, deleted_at, fi_p["xui_client_id"], fi_p["family_label"], fi_p["notes"], nl_p["id"]),
-                )
+                sets = [
+                    "expires_at=?",
+                    "last_renewed_at=?",
+                    "status=?",
+                    "deleted_at=?",
+                    "xui_client_id=COALESCE(?, xui_client_id)",
+                    "family_label=COALESCE(?, family_label)",
+                    "notes=COALESCE(?, notes)",
+                ]
+                params: list[Any] = [
+                    expires,
+                    renewed,
+                    status,
+                    deleted_at,
+                    fi_p["xui_client_id"],
+                    fi_p["family_label"],
+                    fi_p["notes"],
+                ]
+                if "xui_sub_id" in nl_cols and "xui_sub_id" in fi_p.keys():
+                    sets.append("xui_sub_id=COALESCE(xui_sub_id, ?)")
+                    params.append(fi_p["xui_sub_id"])
+                for max_col in ("device_limit", "awg_quota_bytes", "awg_used_bytes", "awg_reset_at"):
+                    if max_col in nl_cols and max_col in fi_p.keys() and fi_p[max_col] is not None:
+                        sets.append(f"{max_col}=MAX(COALESCE({max_col}, 0), ?)")
+                        params.append(int(fi_p[max_col] or 0))
+                params.append(nl_p["id"])
+                nl.execute(f"UPDATE profiles SET {', '.join(sets)} WHERE id=?", params)
             stats.inc("profiles_merged")
         if nl_p is not None:
             id_map[int(fi_p["id"])] = int(nl_p["id"])

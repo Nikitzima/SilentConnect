@@ -57,6 +57,8 @@ IGNORED_FILENAMES: Set[str] = {
     "test_security_audit_scanner.py",
     "test_adversarial_security_scanner.py",
     "test_challenger_m1_1.py",
+    "three.module.min.js",
+    "BufferGeometryUtils.js",
 }
 
 IGNORED_DIR_NAMES: Set[str] = {
@@ -312,8 +314,6 @@ SAFE_WHITELIST_SUBSTRINGS: List[str] = [
     "<YOUR_",
     "${",
     "PLACEHOLDER",
-    "Mock",
-    "mock",
     "CHANGEME",
     "Mozilla/5.0",
     "Chrome/120.0.0.0",

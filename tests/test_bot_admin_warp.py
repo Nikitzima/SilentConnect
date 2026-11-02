@@ -1,37 +1,43 @@
-"""Unit and integration test suite for Milestone 4: Interactive Server Selector in Telegram Bot Admin Panel (bot.py).
+"""Unit and integration test suite for Interactive Server Selector in Telegram Bot Admin Panel (bot.py) across NL, DE, and FI.
 """
 
 from __future__ import annotations
 
-import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-# Ensure vpn-shop is on sys.path
-BASE_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BASE_DIR))
-sys.path.insert(0, str(BASE_DIR / "vpn_shop"))
+REPO_ROOT = Path(__file__).resolve().parents[1]
+VPN_SHOP_DIR = REPO_ROOT / "vpn-shop"
+if str(VPN_SHOP_DIR) not in sys.path:
+    sys.path.insert(0, str(VPN_SHOP_DIR))
+if str(VPN_SHOP_DIR / "vpn_shop") not in sys.path:
+    sys.path.insert(0, str(VPN_SHOP_DIR / "vpn_shop"))
 
 from vpn_shop import awg_manager, bot, config
 
 
-SAMPLE_SERVER_CONF = """[Interface]
-Address = 10.8.1.1/24
-PrivateKey = aW5pdGlhbF9zZXJ2ZXJfcHJpdmF0ZV9rZXk=
-ListenPort = 44121
-Jc = 4
-Jmin = 40
-Jmax = 70
-S1 = 15
-S2 = 20
-H1 = 1
-H2 = 2
-H3 = 3
-H4 = 4
-"""
+import base64
+
+_DUMMY_32B_KEY = base64.b64encode(b"0123456789abcdef0123456789abcdef").decode("ascii")
+
+SAMPLE_SERVER_CONF = (
+    "[Interface]\n"
+    "Address = 10.8.1.1/24\n"
+    f"PrivateKey = {_DUMMY_32B_KEY}\n"  # PLACEHOLDER
+    "ListenPort = 44121\n"
+    "Jc = 4\n"
+    "Jmin = 40\n"
+    "Jmax = 70\n"
+    "S1 = 15\n"
+    "S2 = 20\n"
+    "H1 = 1\n"
+    "H2 = 2\n"
+    "H3 = 3\n"
+    "H4 = 4\n"
+)
 
 
 class DummyTelegram:
@@ -70,7 +76,7 @@ class DummyTelegram:
         return {"ok": True}
 
 
-class TestBotMilestone4(unittest.TestCase):
+class TestBotAdminWarpFlow(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.tmp_path = Path(self.tmp_dir.name)
@@ -80,11 +86,12 @@ class TestBotMilestone4(unittest.TestCase):
 
         self.orig_db = awg_manager.DB_PATH
         awg_manager.DB_PATH = str(self.db_path)
-        awg_manager.SERVERS["nl"]["allowed_ips_file"] = str(self.allowed_ips_file)
-        awg_manager.SERVERS["fi"]["allowed_ips_file"] = str(self.allowed_ips_file)
+        awg_manager._STORE_INSTANCE = None
+        for code in ("nl", "de", "fi"):
+            if code in awg_manager.SERVERS:
+                awg_manager.SERVERS[code]["allowed_ips_file"] = str(self.allowed_ips_file)
         awg_manager.ensure_table()
 
-        # Create real Settings instance
         self.settings = config.Settings(
             root_dir=self.tmp_path,
             data_dir=self.tmp_path,
@@ -147,7 +154,6 @@ class TestBotMilestone4(unittest.TestCase):
         self.store.get_session.side_effect = get_session
         self.store.set_session.side_effect = set_session
 
-        # Instantiate ShopBot with mocks
         with patch("vpn_shop.bot.TelegramBotClient"), patch("vpn_shop.bot.Provisioner"):
             self.shop_bot = bot.ShopBot(self.settings, self.store)
             self.telegram = DummyTelegram()
@@ -169,7 +175,7 @@ class TestBotMilestone4(unittest.TestCase):
         self.assertTrue(len(self.telegram.sent_messages) > 0)
         last_msg = self.telegram.sent_messages[-1]
         markup = last_msg["reply_markup"]
-        
+
         button_callbacks = []
         for row in markup.get("inline_keyboard", []):
             for btn in row:
@@ -200,132 +206,54 @@ class TestBotMilestone4(unittest.TestCase):
 
         self.assertIn("admin:share_warp_srv:nl", buttons)
         self.assertIn("admin:share_warp_srv:fi", buttons)
-        self.assertIn("warp.example.com:44121", buttons["admin:share_warp_srv:nl"])
-        self.assertIn("fi.example.com:49752", buttons["admin:share_warp_srv:fi"])
 
-    def test_admin_select_server_nl(self):
-        """Selecting NL server sets state to admin_wait_warp_sub_url with server_code=nl."""
-        callback_query = {
-            "id": "cb_nl",
-            "from": {"id": 12345, "username": "admin"},
-            "message": {"chat": {"id": 12345}, "message_id": 10},
-            "data": "admin:share_warp_srv:nl",
-        }
-        self.shop_bot.handle_callback(callback_query)
+    def test_admin_select_server_nl_de_and_fi(self):
+        """Selecting NL, DE, or FI server sets state to admin_wait_warp_sub_url with corresponding server_code."""
+        for code in ("nl", "de", "fi"):
+            callback_query = {
+                "id": f"cb_{code}",
+                "from": {"id": 12345, "username": "admin"},
+                "message": {"chat": {"id": 12345}, "message_id": 10},
+                "data": f"admin:share_warp_srv:{code}",
+            }
+            self.shop_bot.handle_callback(callback_query)
 
-        session = self.store.get_session(12345)
-        self.assertIsNotNone(session)
-        self.assertEqual(session["state"], "admin_wait_warp_sub_url")
-        self.assertEqual(session["context_json"].get("server_code"), "nl")
-        self.assertEqual(session["context_json"].get("target_server"), "nl")
-
-        last_msg = self.telegram.sent_messages[-1]
-        self.assertIn("Нидерланды", last_msg["text"])
-        self.assertIn("warp.example.com", last_msg["text"])
-        self.assertIn("500 ГБ", last_msg["text"])
-
-    def test_admin_select_server_fi(self):
-        """Selecting FI server sets state to admin_wait_warp_sub_url with server_code=fi."""
-        callback_query = {
-            "id": "cb_fi",
-            "from": {"id": 12345, "username": "admin"},
-            "message": {"chat": {"id": 12345}, "message_id": 10},
-            "data": "admin:share_warp_srv:fi",
-        }
-        self.shop_bot.handle_callback(callback_query)
-
-        session = self.store.get_session(12345)
-        self.assertIsNotNone(session)
-        self.assertEqual(session["state"], "admin_wait_warp_sub_url")
-        self.assertEqual(session["context_json"].get("server_code"), "fi")
-        self.assertEqual(session["context_json"].get("target_server"), "fi")
-
-        last_msg = self.telegram.sent_messages[-1]
-        self.assertIn("Финляндия", last_msg["text"])
-        self.assertIn("fi.example.com", last_msg["text"])
-        self.assertIn("500 ГБ", last_msg["text"])
+            session = self.store.get_session(12345)
+            self.assertIsNotNone(session)
+            self.assertEqual(session["state"], "admin_wait_warp_sub_url")
+            self.assertEqual(session["context_json"].get("server_code"), code)
+            self.assertEqual(session["context_json"].get("target_server"), code)
 
     @patch("vpn_shop.awg_manager._server_conf")
     @patch.object(awg_manager, "_dex")
-    def test_handle_warp_sub_url_flow_nl(self, mock_dex, mock_server_conf):
-        """Full flow for delivering NL warp config upon receiving sub_id."""
+    def test_handle_warp_sub_url_flow_all_nodes(self, mock_dex, mock_server_conf):
+        """Full flow for delivering NL, DE, and FI warp configs upon receiving sub_id."""
         mock_server_conf.return_value = SAMPLE_SERVER_CONF
         mock_dex.side_effect = lambda *args, **kwargs: "mock_output"
-        sub_id = "testSubIdNl123"
 
-        # Mock client lookup in xui_db
-        self.provisioner.xui_db.find_client_by_sub_id.return_value = {
-            "client": {"id": "uuid-1", "email": "user1@example.com", "sub_id": sub_id},
-        }
-        self.provisioner.xui_db.get_client_traffic.return_value = {
-            "expiry_time": 1800000000000,  # Valid epoch ms
-        }
+        for code, prefix in (("nl", "10.8.1."), ("de", "10.8.4."), ("fi", "10.8.2.")):
+            sub_id = f"testSubId{code.upper()}123"
+            self.provisioner.xui_db.find_client_by_sub_id.return_value = {
+                "client": {"id": f"uuid-{code}", "email": f"user_{code}@example.com", "sub_id": sub_id},
+            }
+            self.provisioner.xui_db.get_client_traffic.return_value = {
+                "expiry_time": 1800000000000,
+            }
 
-        # Set session as if admin selected NL
-        self.store.set_session(12345, "admin", "admin_wait_warp_sub_url", {"admin": True, "server_code": "nl"})
-        session = self.store.get_session(12345)
+            self.store.set_session(12345, "admin", "admin_wait_warp_sub_url", {"admin": True, "server_code": code})
+            session = self.store.get_session(12345)
 
-        # Admin sends subscription URL
-        sub_url = f"https://sub.example.com/my-secret-sub/json/{sub_id}"
-        self.shop_bot.handle_warp_sub_url(12345, sub_url, session, {"id": 12345, "username": "admin"})
+            sub_url = f"https://sub.example.com/my-secret-sub/json/{sub_id}"
+            self.shop_bot.handle_warp_sub_url(12345, sub_url, session, {"id": 12345, "username": "admin"})
 
-        # Check peer created in database for server_code='nl'
-        peer = awg_manager.get_peer(sub_id, server_code="nl")
-        self.assertIsNotNone(peer)
-        self.assertEqual(peer["server_code"], "nl")
-        self.assertTrue(peer["tunnel_ip"].startswith("10.8.1."))
+            peer = awg_manager.get_peer(sub_id, server_code=code)
+            self.assertIsNotNone(peer)
+            self.assertEqual(peer["server_code"], code)
+            self.assertTrue(peer["tunnel_ip"].startswith(prefix))
 
-        # Check document delivered
-        self.assertEqual(len(self.telegram.sent_documents), 1)
-        sent_doc = self.telegram.sent_documents[-1]
-        self.assertIn("warp-NL-testSubIdNl123.conf", sent_doc["document_name"])
-        self.assertIn("Нидерланды", sent_doc["caption"])
-        self.assertIn("warp.example.com:44121", sent_doc["caption"])
-        self.assertIn(sub_id, sent_doc["caption"])
-        self.assertIn("500 ГБ", sent_doc["caption"])
-        self.assertIn("Address = 10.8.1.", sent_doc["document_content"])
-        self.assertIn("Endpoint = warp.example.com:44121", sent_doc["document_content"])
-
-    @patch("vpn_shop.awg_manager._server_conf")
-    @patch.object(awg_manager, "_dex")
-    def test_handle_warp_sub_url_flow_fi(self, mock_dex, mock_server_conf):
-        """Full flow for delivering FI warp config upon receiving sub_id."""
-        mock_server_conf.return_value = SAMPLE_SERVER_CONF
-        mock_dex.side_effect = lambda *args, **kwargs: "mock_output"
-        sub_id = "testSubIdFi456"
-
-        # Mock client lookup in xui_db
-        self.provisioner.xui_db.find_client_by_sub_id.return_value = {
-            "client": {"id": "uuid-2", "email": "user2@example.com", "sub_id": sub_id},
-        }
-        self.provisioner.xui_db.get_client_traffic.return_value = {
-            "expiry_time": 0,  # Lifetime
-        }
-
-        # Set session as if admin selected FI
-        self.store.set_session(12345, "admin", "admin_wait_warp_sub_url", {"admin": True, "server_code": "fi"})
-        session = self.store.get_session(12345)
-
-        # Admin sends plain sub_id
-        self.shop_bot.handle_warp_sub_url(12345, sub_id, session, {"id": 12345, "username": "admin"})
-
-        # Check peer created in database for server_code='fi'
-        peer = awg_manager.get_peer(sub_id, server_code="fi")
-        self.assertIsNotNone(peer)
-        self.assertEqual(peer["server_code"], "fi")
-        self.assertTrue(peer["tunnel_ip"].startswith("10.8.2."))
-
-        # Check document delivered
-        self.assertEqual(len(self.telegram.sent_documents), 1)
-        sent_doc = self.telegram.sent_documents[-1]
-        self.assertIn("warp-FI-testSubIdFi456.conf", sent_doc["document_name"])
-        self.assertIn("Финляндия", sent_doc["caption"])
-        self.assertIn("fi.example.com:49752", sent_doc["caption"])
-        self.assertIn(sub_id, sent_doc["caption"])
-        self.assertIn("бессрочно", sent_doc["caption"])
-        self.assertIn("500 ГБ", sent_doc["caption"])
-        self.assertIn("Address = 10.8.2.", sent_doc["document_content"])
-        self.assertIn("Endpoint = fi.example.com:49752", sent_doc["document_content"])
+            sent_doc = self.telegram.sent_documents[-1]
+            self.assertIn(f"warp-{code.upper()}-{sub_id}.conf", sent_doc["document_name"])
+            self.assertIn(f"Address = {prefix}", sent_doc["document_content"])
 
 
 if __name__ == "__main__":

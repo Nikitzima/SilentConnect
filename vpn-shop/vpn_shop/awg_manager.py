@@ -84,7 +84,7 @@ SERVERS: dict[str, dict[str, Any]] = {
         "container": os.environ.get("AWG_DE_CONTAINER", "amnezia-awg2"),
         "conf_path": "/opt/amnezia/awg/awg0.conf",
         "subnet": os.environ.get("AWG_DE_SUBNET", "10.8.4"),
-        "endpoint_host": os.environ.get("AWG_DE_ENDPOINT_HOST", os.environ.get("AWG_DE_ENDPOINT", "de.silentconnect.net")),  # PLACEHOLDER
+        "endpoint_host": os.environ.get("AWG_DE_ENDPOINT_HOST", os.environ.get("AWG_DE_ENDPOINT", "de.example.com")),  # PLACEHOLDER
         "endpoint_port": os.environ.get("AWG_DE_ENDPOINT_PORT", "44121"),
         "allowed_ips_file": os.environ.get("AWG_DE_ALLOWED_IPS_FILE", os.environ.get("AWG_ALLOWED_IPS_FILE", "/root/vpn-shop/awg/allowed-ips.txt")),
         "client_dns": os.environ.get("AWG_DE_CLIENT_DNS", os.environ.get("AWG_CLIENT_DNS", "1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001")),
@@ -104,7 +104,7 @@ SERVERS: dict[str, dict[str, Any]] = {
         "container": os.environ.get("AWG_DE_CONTAINER", "amnezia-awg2"),
         "conf_path": "/opt/amnezia/awg/awg0.conf",
         "subnet": os.environ.get("AWG_DE_SUBNET", "10.8.4"),
-        "endpoint_host": os.environ.get("AWG_DE_ENDPOINT_HOST", os.environ.get("AWG_DE_ENDPOINT", "de.silentconnect.net")),  # PLACEHOLDER
+        "endpoint_host": os.environ.get("AWG_DE_ENDPOINT_HOST", os.environ.get("AWG_DE_ENDPOINT", "de.example.com")),  # PLACEHOLDER
         "endpoint_port": os.environ.get("AWG_DE_ENDPOINT_PORT", "44121"),
         "allowed_ips_file": os.environ.get("AWG_DE_ALLOWED_IPS_FILE", os.environ.get("AWG_ALLOWED_IPS_FILE", "/root/vpn-shop/awg/allowed-ips.txt")),
         "client_dns": os.environ.get("AWG_DE_CLIENT_DNS", os.environ.get("AWG_CLIENT_DNS", "1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001")),

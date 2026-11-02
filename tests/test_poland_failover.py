@@ -74,7 +74,12 @@ def create_vpn_schema(db_path: str):
             expires_at INTEGER,
             last_renewed_at INTEGER,
             deleted_at INTEGER,
-            notes TEXT
+            notes TEXT,
+            device_limit INTEGER DEFAULT 3,
+            xui_sub_id TEXT,
+            awg_quota_bytes INTEGER DEFAULT 268435456000,
+            awg_used_bytes INTEGER DEFAULT 0,
+            awg_reset_at INTEGER DEFAULT 0
         );
         CREATE TABLE orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,7 +95,8 @@ def create_vpn_schema(db_path: str):
             closed_at INTEGER,
             meta_json TEXT,
             created_at INTEGER,
-            updated_at INTEGER
+            updated_at INTEGER,
+            web_token_hash TEXT
         );
         CREATE TABLE profile_owners (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -204,8 +210,12 @@ class TestPolandMergeVpnShop(unittest.TestCase):
         pl_conn = sqlite3.connect(self.pl_db)
         pl_cur = pl_conn.cursor()
         pl_cur.execute("INSERT INTO telegram_users VALUES ('u2', 222, 'bob', 'Bob', '', 0, 1200);")
-        pl_cur.execute("INSERT INTO profiles VALUES (1, 'pl-new-profile', 1, 'vless', 'client', 'Bob', 'bob@sc.net', 'uuid-pl-1', 'active', 1200, 7000, 1200, NULL, 'created on pl');")
-        pl_cur.execute("INSERT INTO orders VALUES (1, 'pl-order-1', 'u2', 222, 'closed', 199, 30, 3, 'b@b.com', 1, 1200, '{}', 1200, 1200);")
+        pl_cur.execute(
+            "INSERT INTO profiles (id, public_id, xui_inbound_id, transport, profile_mode, family_label, xui_email, xui_client_id, status, created_at, expires_at, last_renewed_at, deleted_at, notes) VALUES (1, 'pl-new-profile', 1, 'vless', 'client', 'Bob', 'bob@sc.net', 'uuid-pl-1', 'active', 1200, 7000, 1200, NULL, 'created on pl');"
+        )
+        pl_cur.execute(
+            "INSERT INTO orders (id, public_id, user_id, chat_id, status, amount_rub, duration_days, device_limit, customer_email, provisioned_profile_id, closed_at, meta_json, created_at, updated_at) VALUES (1, 'pl-order-1', 'u2', 222, 'closed', 199, 30, 3, 'b@b.com', 1, 1200, '{}', 1200, 1200);"
+        )
         pl_conn.commit()
         pl_conn.close()
 
@@ -241,7 +251,9 @@ class TestPolandMergeVpnShop(unittest.TestCase):
             conn = sqlite3.connect(db)
             cur = conn.cursor()
             cur.execute("INSERT INTO telegram_users VALUES ('u1', 111, 'alice', 'Alice', '', 0, 1000);")
-            cur.execute("INSERT INTO profiles VALUES (1, 'shared-profiles', 1, 'vless', 'client', 'Alice', 'alice@sc.net', 'uuid-1', 'active', 1000, 3000, 1000, NULL, 'original');")
+            cur.execute(
+                "INSERT INTO profiles (id, public_id, xui_inbound_id, transport, profile_mode, family_label, xui_email, xui_client_id, status, created_at, expires_at, last_renewed_at, deleted_at, notes) VALUES (1, 'shared-profiles', 1, 'vless', 'client', 'Alice', 'alice@sc.net', 'uuid-1', 'active', 1000, 3000, 1000, NULL, 'original');"
+            )
             conn.commit()
             conn.close()
 
@@ -294,6 +306,43 @@ class TestPolandMergeVpnShop(unittest.TestCase):
         self.assertEqual(row[0], 2500)
         self.assertEqual(row[1], 1200)
         self.assertEqual(row[2], 1300)
+        nl_conn.close()
+
+    def test_de_standby_merge_awg_quota_and_device_limit(self):
+        """DE (Germany) standby node upgraded a profile's device_limit and awg_quota_bytes during outage."""
+        for db in [self.nl_db, self.pl_db]:
+            conn = sqlite3.connect(db)
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO profiles (id, public_id, xui_inbound_id, transport, profile_mode, family_label, xui_email, xui_client_id, status, created_at, expires_at, last_renewed_at, deleted_at, notes, device_limit, xui_sub_id, awg_quota_bytes, awg_used_bytes, awg_reset_at) VALUES (1, 'prof-de-upgrade', 1, 'vless', 'universal', 'SilentConnect', 'de_user@sc.net', 'uuid-de-1', 'active', 1000, 3000, 1000, NULL, 'base', 3, 'subde12345', 268435456000, 1000000, 1000);"
+            )
+            conn.commit()
+            conn.close()
+
+        # On DE standby, user upgraded to 6 devices (500 GB) and used more AWG traffic
+        de_conn = sqlite3.connect(self.pl_db)
+        de_cur = de_conn.cursor()
+        de_cur.execute(
+            "UPDATE profiles SET expires_at = 9000, last_renewed_at = 2500, device_limit = 6, awg_quota_bytes = 536870912000, awg_used_bytes = 5000000, awg_reset_at = 2500 WHERE public_id = 'prof-de-upgrade';"
+        )
+        de_conn.commit()
+        de_conn.close()
+
+        stats = failback_merge.merge_vpn_shop(self.nl_db, standby_vpn_path=self.pl_db)
+        self.assertGreaterEqual(stats["profiles_merged"], 1)
+
+        nl_conn = sqlite3.connect(self.nl_db)
+        nl_cur = nl_conn.cursor()
+        nl_cur.execute(
+            "SELECT expires_at, device_limit, awg_quota_bytes, awg_used_bytes, awg_reset_at, xui_sub_id FROM profiles WHERE public_id = 'prof-de-upgrade';"
+        )
+        row = nl_cur.fetchone()
+        self.assertEqual(row[0], 9000)
+        self.assertEqual(row[1], 6)
+        self.assertEqual(row[2], 536870912000)
+        self.assertEqual(row[3], 5000000)
+        self.assertEqual(row[4], 2500)
+        self.assertEqual(row[5], "subde12345")
         nl_conn.close()
 
 
@@ -503,7 +552,9 @@ class TestFailbackMergePLSpecific(unittest.TestCase):
         nl_conn = sqlite3.connect(self.nl_db)
         nl_cur = nl_conn.cursor()
         nl_cur.execute("INSERT INTO telegram_users VALUES ('u1', 111, 'alice', 'Alice', '', 0, 1000);")
-        nl_cur.execute("INSERT INTO profiles VALUES (1, 'prof-001', 1, 'vless', 'client', 'Alice', 'alice@sc.net', 'uuid-1', 'active', 1000, 3000, 1000, NULL, NULL);")
+        nl_cur.execute(
+            "INSERT INTO profiles (id, public_id, xui_inbound_id, transport, profile_mode, family_label, xui_email, xui_client_id, status, created_at, expires_at, last_renewed_at, deleted_at, notes) VALUES (1, 'prof-001', 1, 'vless', 'client', 'Alice', 'alice@sc.net', 'uuid-1', 'active', 1000, 3000, 1000, NULL, NULL);"
+        )
         nl_conn.commit()
         nl_conn.close()
 
@@ -511,7 +562,9 @@ class TestFailbackMergePLSpecific(unittest.TestCase):
         pl_conn = sqlite3.connect(self.pl_db)
         pl_cur = pl_conn.cursor()
         pl_cur.execute("INSERT INTO telegram_users VALUES ('u1', 111, 'alice', 'Alice', '', 0, 1500);")
-        pl_cur.execute("INSERT INTO profiles VALUES (1, 'prof-001', 1, 'vless', 'client', 'Alice', 'alice@sc.net', 'uuid-1', 'active', 1000, 5000, 1500, NULL, 'renewed');")
+        pl_cur.execute(
+            "INSERT INTO profiles (id, public_id, xui_inbound_id, transport, profile_mode, family_label, xui_email, xui_client_id, status, created_at, expires_at, last_renewed_at, deleted_at, notes) VALUES (1, 'prof-001', 1, 'vless', 'client', 'Alice', 'alice@sc.net', 'uuid-1', 'active', 1000, 5000, 1500, NULL, 'renewed');"
+        )
         pl_cur.execute("INSERT INTO profile_owners (id, profile_public_id, user_id, chat_id, source_order_public_id, created_at, updated_at) VALUES (1, 'prof-001', 'u1', 111, 'ord-old', 1000, 1500);")
         pl_conn.commit()
         pl_conn.close()

@@ -530,6 +530,19 @@ class XuiReconciler:
         except Exception:
             return
 
+        # 0. Автоматическая проверка и сброс 30-дневного цикла квот AmneziaWG
+        try:
+            with self.store.read_connection() as conn:
+                active_profs = conn.execute(
+                    "SELECT public_id FROM profiles WHERE status = 'active'"
+                ).fetchall()
+            for r in active_profs:
+                pid = str(r["public_id"] or "")
+                if pid:
+                    self.store.ensure_awg_cycle_up_to_date(pid)
+        except Exception as exc:
+            LOGGER.debug("AWG cycle check skipped on %s: %s", local_node, exc)
+
         # 1. Локальная реконсиляция пиров этой ноды из Turso (без SSH!)
         try:
             awg_manager.reconcile_awg_peers(

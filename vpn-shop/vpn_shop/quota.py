@@ -30,6 +30,7 @@ def get_quota_cycle_info(
         next_ts = now + CYCLE_SECONDS
         return {
             "period_start_utc": now,
+            "current_cycle_start_utc": now,
             "next_reset_utc": next_ts,
             "cycle_days": 30,
             "reset_date_str": time.strftime("%d.%m.%Y", time.gmtime(next_ts)),
@@ -56,6 +57,7 @@ def get_quota_cycle_info(
 
     elapsed = max(0, now - start_ts)
     cycles_passed = elapsed // CYCLE_SECONDS
+    current_cycle_start_utc = start_ts + cycles_passed * CYCLE_SECONDS
     next_reset_utc = start_ts + (cycles_passed + 1) * CYCLE_SECONDS
 
     reset_date_str = time.strftime("%d.%m.%Y", time.gmtime(next_reset_utc))
@@ -63,6 +65,7 @@ def get_quota_cycle_info(
 
     return {
         "period_start_utc": start_ts,
+        "current_cycle_start_utc": current_cycle_start_utc,
         "next_reset_utc": next_reset_utc,
         "cycle_days": 30,
         "reset_date_str": reset_date_str,

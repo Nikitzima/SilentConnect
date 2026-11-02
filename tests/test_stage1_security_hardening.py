@@ -459,7 +459,7 @@ class TestStage1SubjsonHardening(unittest.TestCase):
     def test_12_encrypt_happ_link_ttl_cache(self) -> None:
         """encrypt_happ_link caches results for TTL seconds and avoids repeat outbound calls."""
         subjson_app._HAPP_LINK_CACHE.clear()
-        test_url = "https://sub.silentconnect.net/test-sub-url"
+        test_url = "https://sub.example.com/test-sub-url"
         encrypted_val = "happ://encrypted-key-123"
 
         # Prime cache

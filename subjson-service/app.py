@@ -154,7 +154,7 @@ SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
     ("Strict-Transport-Security", "max-age=31536000; includeSubDomains"),
     (
         "Content-Security-Policy",
-        "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; "
+        "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; "
         "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; "
         "frame-src https://challenges.cloudflare.com; connect-src 'self'; "
         "form-action 'self' https://t.me; base-uri 'self'; frame-ancestors 'none'",
@@ -240,7 +240,7 @@ RELAY_XHTTP_PORT = int(os.environ.get("RELAY_XHTTP_PORT", "8443"))
 HAPP_PROVIDER_ID = os.environ.get("HAPP_PROVIDER_ID", "").strip()
 HAPP_PROFILE_TITLE = os.environ.get("HAPP_PROFILE_TITLE", "SilentConnect").strip()[:25]
 HAPP_SUPPORT_URL = os.environ.get("HAPP_SUPPORT_URL", "https://t.me/your_vpn_bot").strip()
-HAPP_WEB_PAGE_URL = os.environ.get("HAPP_WEB_PAGE_URL", "https://silentconnect.net").strip()  # PLACEHOLDER
+HAPP_WEB_PAGE_URL = os.environ.get("HAPP_WEB_PAGE_URL", "https://example.com").strip()  # PLACEHOLDER
 HAPP_RENEW_URL = os.environ.get("HAPP_RENEW_URL", "https://t.me/your_vpn_bot?start=open").strip()
 HAPP_PROFILE_UPDATE_INTERVAL = os.environ.get("HAPP_PROFILE_UPDATE_INTERVAL", "1").strip()
 HAPP_SERVER_DESCRIPTION = os.environ.get("HAPP_SERVER_DESCRIPTION", "Основной сервер").strip()[:30]
@@ -318,7 +318,7 @@ FI_REALITY_SHORT_ID = os.environ.get("FI_REALITY_SHORT_ID", "0123456789abcdef").
 FI_GRPC_REALITY_PUBLIC_KEY = os.environ.get("FI_GRPC_REALITY_PUBLIC_KEY", FI_REALITY_PUBLIC_KEY).strip()
 FI_GRPC_REALITY_SHORT_ID = os.environ.get("FI_GRPC_REALITY_SHORT_ID", FI_REALITY_SHORT_ID).strip()
 
-DE_STANDBY_HOST = os.environ.get("DE_STANDBY_HOST", "de.silentconnect.net").strip()  # PLACEHOLDER
+DE_STANDBY_HOST = os.environ.get("DE_STANDBY_HOST", "de.example.com").strip()  # PLACEHOLDER
 DE_REALITY_PUBLIC_KEY = os.environ.get("DE_REALITY_PUBLIC_KEY", NL_REALITY_PUBLIC_KEY).strip()
 DE_REALITY_SHORT_ID = os.environ.get("DE_REALITY_SHORT_ID", NL_REALITY_SHORT_ID).strip()
 DE_REALITY_SNI_CLASSIC = os.environ.get("DE_REALITY_SNI_CLASSIC", "sber.ru").strip()
@@ -1632,6 +1632,7 @@ def create_inline_renewal_order(
                 elif device_limit == 9:
                     awg_quota_bytes = 1000 * 1024 * 1024 * 1024
 
+                next_awg_reset_s = min(new_exp_s, now + 30 * 86400) if new_exp_s > now else (now + 30 * 86400)
                 conn_shop.execute(
                     """
                     UPDATE profiles
@@ -1643,7 +1644,7 @@ def create_inline_renewal_order(
                         awg_reset_at = ?
                     WHERE id = ?
                     """,
-                    (new_exp_s, now, device_limit, awg_quota_bytes, new_exp_s, prof_dict["id"])
+                    (new_exp_s, now, device_limit, awg_quota_bytes, next_awg_reset_s, prof_dict["id"])
                 )
                 conn_shop.execute("UPDATE orders SET status = 'delivered', closed_at = ? WHERE public_id = ?", (now, order_pub_id))
                 conn_shop.commit()
@@ -2244,9 +2245,9 @@ def _is_approved_import_url(url: str, request_headers: Any = None) -> bool:
             curr = resolve_public_host(request_headers).lower().split(":")[0]
             if host == curr:
                 return True
-        if host in {"sub.silentconnect.net", "edge.silentconnect.net", "silentconnect.net"}:  # PLACEHOLDER
+        if host in {"sub.example.com", "edge.example.com", "example.com"}:  # PLACEHOLDER
             return True
-        if host.endswith(".silentconnect.net"):  # PLACEHOLDER
+        if host.endswith(".example.com"):  # PLACEHOLDER
             return True
         return False
     except Exception:
@@ -2664,7 +2665,7 @@ DNS_PRESETS: dict[str, list[Any]] = {
         {
             "address": "localhost",
             "domains": [
-                "domain:silentconnect.net",  # PLACEHOLDER
+                "domain:example.com",  # PLACEHOLDER
                 "domain:max.ru",
                 "domain:kernel.org",
             ],
@@ -2949,7 +2950,7 @@ def build_dual_auto_wifi_first_test_client_config(
 def fetch_fi_internal_fragment(subscription_id: str) -> list[dict[str, Any]]:
     import urllib.request
     import json
-    fi_host = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")  # PLACEHOLDER
+    fi_host = os.environ.get("FI_STANDBY_HOST", "fi.example.com")  # PLACEHOLDER
     secret_segment = os.environ.get("SECRET_SEGMENT", "secret-sub")  # PLACEHOLDER
     url = f"https://{fi_host}/{secret_segment}/internal-fragment/{subscription_id}"
     ctx = ssl.create_default_context()
@@ -3052,9 +3053,9 @@ def build_singbox_smart_config(
 
     fi_xhttp_pbk = FI_XHTTP_REALITY_PUBLIC_KEY
     fi_xhttp_sid = FI_XHTTP_REALITY_SHORT_ID
-    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.silentconnect.net")  # PLACEHOLDER
+    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.example.com")  # PLACEHOLDER
     nl_sub = os.environ.get("PUBLIC_HOST", "sub.example.com")
-    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")  # PLACEHOLDER
+    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.example.com")  # PLACEHOLDER
 
     outbounds = [
         # --- Tier 1: Parent Selector ---
@@ -3325,11 +3326,11 @@ def build_singbox_smart_config(
         {"protocol": "dns", "action": "hijack-dns"},
         {
             "domain": [
-                "sub.silentconnect.net",  # PLACEHOLDER
-                "edge.silentconnect.net",  # PLACEHOLDER
-                "fi.silentconnect.net",  # PLACEHOLDER
-                "de.silentconnect.net",  # PLACEHOLDER
-                "pl.silentconnect.net",  # PLACEHOLDER
+                "sub.example.com",  # PLACEHOLDER
+                "edge.example.com",  # PLACEHOLDER
+                "fi.example.com",  # PLACEHOLDER
+                "de.example.com",  # PLACEHOLDER
+                "pl.example.com",  # PLACEHOLDER
                 "aiprimetech.io",
                 "platega.io",
                 "api.platega.io",
@@ -3347,13 +3348,13 @@ def build_singbox_smart_config(
                     "ru", "su", "xn--p1ai", "gosuslugi.ru", "sberbank.ru",
                     "tinkoff.ru", "yandex.ru", "vk.com", "avito.ru", "ozon.ru",
                     "wildberries.ru", "railnation.ru", "railnation-game.ru",
-                    "silentconnect.net",  # PLACEHOLDER
+                    "example.com",  # PLACEHOLDER
                 ],
                 "outbound": "direct",
             },
         ])
 
-    de_edge = os.environ.get("DE_STANDBY_HOST", os.environ.get("DE_STANDBY_IP", "de.silentconnect.net")).strip()  # PLACEHOLDER
+    de_edge = os.environ.get("DE_STANDBY_HOST", os.environ.get("DE_STANDBY_IP", "de.example.com")).strip()  # PLACEHOLDER
     pl_edge = de_edge or os.environ.get("PL_STANDBY_HOST", PL_STANDBY_HOST).strip()
     if pl_edge:
         for ob_group in outbounds:
@@ -3564,11 +3565,11 @@ def build_singbox_smart_config(
             "rules": [
                 {
                     "domain": [
-                        "sub.silentconnect.net",  # PLACEHOLDER
-                        "edge.silentconnect.net",  # PLACEHOLDER
-                        "fi.silentconnect.net",  # PLACEHOLDER
-                        "de.silentconnect.net",  # PLACEHOLDER
-                "pl.silentconnect.net",  # PLACEHOLDER
+                        "sub.example.com",  # PLACEHOLDER
+                        "edge.example.com",  # PLACEHOLDER
+                        "fi.example.com",  # PLACEHOLDER
+                        "de.example.com",  # PLACEHOLDER
+                "pl.example.com",  # PLACEHOLDER
                         "aiprimetech.io",
                         "platega.io",
                         "api.platega.io",
@@ -3578,7 +3579,7 @@ def build_singbox_smart_config(
                 },
                 {
                     "domain_suffix": [
-                        "ru", "su", "xn--p1ai", "yandex.ru", "vk.com", "gosuslugi.ru", "sberbank.ru", "tinkoff.ru", "ozon.ru", "wildberries.ru", "avito.ru", "silentconnect.net",  # PLACEHOLDER
+                        "ru", "su", "xn--p1ai", "yandex.ru", "vk.com", "gosuslugi.ru", "sberbank.ru", "tinkoff.ru", "ozon.ru", "wildberries.ru", "avito.ru", "example.com",  # PLACEHOLDER
                     ],
                     "server": "dns-direct",
                 },
@@ -3639,9 +3640,9 @@ def build_clash_meta_config(
         }
         return dump_clash_yaml(expired_doc)
 
-    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.silentconnect.net")  # PLACEHOLDER
+    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.example.com")  # PLACEHOLDER
     nl_sub = os.environ.get("PUBLIC_HOST", "sub.example.com")
-    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")  # PLACEHOLDER
+    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.example.com")  # PLACEHOLDER
 
     tcp_pk = TCP_REALITY_PUBLIC_KEY
     tcp_sid = TCP_REALITY_SHORT_ID
@@ -3782,7 +3783,7 @@ def build_clash_meta_config(
         },
     ]
 
-    de_edge = os.environ.get("DE_STANDBY_HOST", os.environ.get("DE_STANDBY_IP", "de.silentconnect.net")).strip()  # PLACEHOLDER
+    de_edge = os.environ.get("DE_STANDBY_HOST", os.environ.get("DE_STANDBY_IP", "de.example.com")).strip()  # PLACEHOLDER
     pl_edge = de_edge or os.environ.get("PL_STANDBY_HOST", PL_STANDBY_HOST).strip()
     if pl_edge:
         proxies.extend([
@@ -3982,9 +3983,9 @@ def build_streisand_bundle(
     if summary.get("status_kind") != "active":
         return base64.b64encode(b"").decode("ascii")
 
-    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.silentconnect.net")  # PLACEHOLDER
+    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.example.com")  # PLACEHOLDER
     nl_sub = os.environ.get("PUBLIC_HOST", "sub.example.com")
-    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")  # PLACEHOLDER
+    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.example.com")  # PLACEHOLDER
 
     tcp_pk = TCP_REALITY_PUBLIC_KEY
     tcp_sid = TCP_REALITY_SHORT_ID
@@ -4006,7 +4007,7 @@ def build_streisand_bundle(
         f"vless://{client_uuid}@{fi_edge}:29443?type=grpc&security=reality&pbk={FI_GRPC_REALITY_PUBLIC_KEY}&fp=chrome&sni={FI_GRPC_REALITY_SNI}&sid={FI_GRPC_REALITY_SHORT_ID}&serviceName={GRPC_SERVICE_NAME}#{urllib.parse.quote('🇫🇮 9. Запасной gRPC (FI)')}",
         f"vless://{client_uuid}@{fi_edge}:{FI_XHTTP_REALITY_PORT}?type=xhttp&security=reality&pbk={fi_xhttp_pk}&fp=chrome&sni={FI_XHTTP_REALITY_SNI}&sid={fi_xhttp_sid}&path=%2Fxh-7m2q9r4k1v8p3s6&mode=stream-one#{urllib.parse.quote('🇫🇮 10. Незаметный XHTTP Reality (FI)')}",
     ]
-    de_edge = os.environ.get("DE_STANDBY_HOST", os.environ.get("DE_STANDBY_IP", "de.silentconnect.net")).strip()  # PLACEHOLDER
+    de_edge = os.environ.get("DE_STANDBY_HOST", os.environ.get("DE_STANDBY_IP", "de.example.com")).strip()  # PLACEHOLDER
     pl_edge = de_edge or os.environ.get("PL_STANDBY_HOST", PL_STANDBY_HOST).strip()
     if pl_edge:
         uris.extend([
@@ -4040,8 +4041,8 @@ def build_xray_auto_balancer_profile(
         expired_dummy = build_expired_dummy_profile(email)
         return expired_dummy[0] if isinstance(expired_dummy, list) else expired_dummy
 
-    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.silentconnect.net")  # PLACEHOLDER
-    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")  # PLACEHOLDER
+    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.example.com")  # PLACEHOLDER
+    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.example.com")  # PLACEHOLDER
 
     nl_classic = {
         "protocol": "vless",
@@ -4204,8 +4205,8 @@ def build_four_profiles(
 
     smart_cfg = build_xray_auto_balancer_profile(subscription_id, public_host, route_mode, dns_preset)
 
-    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.silentconnect.net")  # PLACEHOLDER
-    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.silentconnect.net")  # PLACEHOLDER
+    nl_edge = os.environ.get("WS443_PUBLIC_HOST", "edge.example.com")  # PLACEHOLDER
+    fi_edge = os.environ.get("FI_STANDBY_HOST", "fi.example.com")  # PLACEHOLDER
 
     # --- Profile 1: NL Sber.ru (Classic) ---
     sber_cfg = {
@@ -4507,7 +4508,7 @@ def build_four_profiles(
         fi_grpc,
     ]
 
-    de_edge = os.environ.get("DE_STANDBY_HOST", os.environ.get("DE_STANDBY_IP", "de.silentconnect.net")).strip()  # PLACEHOLDER
+    de_edge = os.environ.get("DE_STANDBY_HOST", os.environ.get("DE_STANDBY_IP", "de.example.com")).strip()  # PLACEHOLDER
     pl_edge = de_edge or os.environ.get("PL_STANDBY_HOST", PL_STANDBY_HOST).strip()
     if pl_edge:
         # --- Profile 11: DE Classic ---
@@ -5664,6 +5665,18 @@ def build_happ_config_meta(subscription_id: str) -> dict[str, Any] | None:
     return meta or None
 
 
+def resolve_web_page_url(headers: Any = None, subscription_url: str = "") -> str:
+    host = ""
+    if headers is not None:
+        host = str(headers.get("X-Forwarded-Host") or headers.get("Host") or "").split(",")[0].strip().lower()
+    if not host and subscription_url:
+        host = urllib.parse.urlsplit(subscription_url).netloc.strip().lower()
+    host_only = host.split(":")[0]
+    if host_only in ("previewsub.example.com", "preview.example.com"):
+        return "https://preview.example.com"
+    return HAPP_WEB_PAGE_URL
+
+
 def setup_page_html(
     *,
     subscription_url: str,
@@ -5672,6 +5685,7 @@ def setup_page_html(
     import_query: str,
     customer_email: str = "",
     payment_card_html: str = "",
+    headers: Any = None,
 ) -> bytes:
     query_suffix = f"?{import_query}" if import_query else ""
     fallback_links = {
@@ -9388,11 +9402,154 @@ def setup_page_html(
         bot_username = "SilentConnectVPNBot"
     bot_referral_url = f"https://t.me/{bot_username}?start=referral"
 
+    web_page_url = resolve_web_page_url(headers, subscription_url)
     result = result.replace("__BOT_REFERRAL_URL__", html.escape(bot_referral_url, quote=True))
     result = result.replace("__APPS_JSON__", apps_json)
     result = result.replace("__PLATFORM_LABELS_JSON__", platform_labels_json)
-    result = result.replace("__WEB_PAGE_URL__", HAPP_WEB_PAGE_URL)
+    result = result.replace("__WEB_PAGE_URL__", web_page_url)
 
+    try:
+        tpl_path = Path(__file__).resolve().parent / "v2.1" / "template.html"
+        if not tpl_path.is_file():
+            tpl_path = Path(__file__).resolve().parent.parent / "vpn-shop" / "v2.1" / "template.html"
+        if tpl_path.is_file():
+            tpl_html = tpl_path.read_text(encoding="utf-8")
+            tg_bot_url = f"https://t.me/{bot_username}"
+            pub_base = web_page_url.rstrip("/")
+            cf_site_key = str(os.getenv("CF_TURNSTILE_SITE_KEY", "") or "").strip()
+            if not cf_site_key:
+                try:
+                    s_cfg = get_shop_settings()
+                    if s_cfg:
+                        cf_site_key = str(getattr(s_cfg, "cf_turnstile_site_key", "") or "").strip()
+                except Exception:
+                    pass
+            awg_limit_bytes = 250 * (1024**3)
+            awg_used_bytes = 0
+            awg_free_gb = 250.0
+            awg_pct_free = 100
+            awg_reset_str = expires_str
+            awg_max_slots = 3
+            awg_slots_payload = []
+            try:
+                wc_inst = get_shop_checkout()
+                prof_inst = find_profile_for_sub(wc_inst, subscription_id) if wc_inst else None
+                if wc_inst and prof_inst:
+                    from vpn_shop.awg_traffic import evaluate_profile_quota
+                    from vpn_shop.quota import get_quota_cycle_info
+                    q_status = evaluate_profile_quota(prof_inst["public_id"], wc_inst.store)
+                    c_info = get_quota_cycle_info(prof_inst)
+                    awg_limit_bytes = int(getattr(q_status, "awg_quota_bytes", 0) or (250 * (1024**3)))
+                    awg_used_bytes = int(getattr(q_status, "awg_used_bytes", 0) or 0)
+                    rem_b = int(getattr(q_status, "remaining_bytes", 0) or max(0, awg_limit_bytes - awg_used_bytes))
+                    awg_free_gb = round(rem_b / (1024**3), 1)
+                    awg_pct_free = max(0, min(100, int(round(100.0 - float(getattr(q_status, "usage_percent", 0.0))))))
+                    awg_reset_str = str(c_info.get("reset_date_str") or expires_str)
+                    awg_max_slots = int(prof_inst.get("device_limit") or 3)
+                    raw_slots = wc_inst.ensure_awg_slots_for_profile(prof_inst)
+                    for s_item in raw_slots:
+                        s_idx = int(s_item.get("slot_index", 1))
+                        awg_slots_payload.append({
+                            "index": s_idx,
+                            "name": s_item.get("slot_label") or f"Устройство {s_idx}",
+                            "country": str(s_item.get("server_code") or "nl").lower(),
+                            "address": s_item.get("client_ip") or f"10.8.1.{s_idx + 9}",
+                            "active": bool(s_item.get("enabled", 1)),
+                            "confUrl": f"/{SECRET_SEGMENT}/awg/{quoted_sub_id}/slot/{s_idx}/config",
+                            "qrUrl": f"/{SECRET_SEGMENT}/awg/{quoted_sub_id}/slot/{s_idx}/qr",
+                        })
+            except Exception as awg_exc:
+                LOGGER.warning("Could not hydrate v2.1 awg data for %s: %s", subscription_id, awg_exc)
+            if not awg_slots_payload:
+                for s_idx in range(1, awg_max_slots + 1):
+                    awg_slots_payload.append({
+                        "index": s_idx,
+                        "name": f"Устройство {s_idx}",
+                        "country": "nl",
+                        "address": f"10.8.1.{s_idx + 9}",
+                        "active": True,
+                        "confUrl": f"/{SECRET_SEGMENT}/awg/{quoted_sub_id}/slot/{s_idx}/config",
+                        "qrUrl": f"/{SECRET_SEGMENT}/awg/{quoted_sub_id}/slot/{s_idx}/qr",
+                    })
+            plan_badge = {3: "Личный", 6: "Домашний", 9: "Расширенный"}.get(awg_max_slots, "Тариф")
+            oflux_state_raw = str(oflux_slot_data.get("status") or "uninitialized")
+            oflux_ui_state = "active" if oflux_state_raw == "active" else ("migrating" if oflux_state_raw == "migrating" else "inactive")
+            traffic_lbl = f"{traffic_str} · Безлимит" if traffic_str and "безлимит" not in traffic_str.lower() else (traffic_str or "Безлимит")
+            sc_prod = {
+                "view": "sub",
+                "turnstileSiteKey": cf_site_key,
+                "cfTurnstileSiteKey": cf_site_key,
+                "supportTelegramUrl": support_url,
+                "botUrl": tg_bot_url,
+                "publicBaseUrl": pub_base,
+                "shopBaseUrl": pub_base,
+                "sub": {
+                    "subId": subscription_id,
+                    "subUrl": clean_sub_url,
+                    "subImportUrl": f"/{SECRET_SEGMENT}/import/{quoted_sub_id}",
+                    "importBase": f"/{SECRET_SEGMENT}/import",
+                    "importLinks": {**fallback_links, "happ": happ_link},
+                    "qrUrl": f"/{SECRET_SEGMENT}/qr/{quoted_sub_id}",
+                    "botUrl": tg_bot_url,
+                    "partnerBotUrl": bot_referral_url,
+                    "renewActionUrl": f"/{SECRET_SEGMENT}/renew/{quoted_sub_id}",
+                    "bindEmailActionUrl": f"/{SECRET_SEGMENT}/bind-email/{quoted_sub_id}",
+                    "clashUrl": f"/{SECRET_SEGMENT}/clash/{quoted_sub_id}",
+                    "singboxUrl": f"/{SECRET_SEGMENT}/singbox/{quoted_sub_id}",
+                    "v2rayUrl": f"/{SECRET_SEGMENT}/streisand/{quoted_sub_id}",
+                    "isExpired": not is_sub_active,
+                    "statusLabel": "Активна" if is_sub_active else status_str,
+                    "planBadge": plan_badge,
+                    "expireDateLabel": expires_str,
+                    "daysLeftLabel": subtitle,
+                    "devicesLimitLabel": device_limit,
+                    "deviceLimit": awg_max_slots,
+                    "trafficLabel": traffic_lbl,
+                    "customerEmail": customer_email,
+                    "emailBound": bool(customer_email),
+                    "boundEmailMasked": masked_email,
+                    "flashHtml": payment_card_html,
+                    "awg": {
+                        "packageGb": int(round(awg_limit_bytes / (1024**3))) if awg_limit_bytes > 0 else 250,
+                        "usedGb": round(awg_used_bytes / (1024**3), 1) if awg_used_bytes > 0 else 0,
+                        "remGb": awg_free_gb,
+                        "remainingLabel": f"{awg_free_gb} ГБ",
+                        "totalLabel": f"из {int(round(awg_limit_bytes / (1024**3)))} ГБ / мес",
+                        "percentRemaining": awg_pct_free,
+                        "resetLabel": awg_reset_str,
+                        "apiBase": f"/{SECRET_SEGMENT}/awg/{quoted_sub_id}",
+                        "slots": awg_slots_payload,
+                        "maxSlots": awg_max_slots,
+                    },
+                    "openflux": {
+                        "state": oflux_ui_state,
+                        "country": str(oflux_slot_data.get("active_server") or "nl").lower(),
+                        "targetCountry": str(oflux_slot_data.get("pending_server") or "de").lower(),
+                        "keyUri": oflux_slot_data.get("active_link") or oflux_nl_link,
+                        "newKeyUri": oflux_slot_data.get("pending_link") or "",
+                        "remainingSeconds": int(oflux_slot_data.get("pending_remaining_seconds") or 0),
+                        "apiBase": f"/api/sub/openflux/{quoted_sub_id}",
+                    },
+                },
+            }
+            payload_json = json.dumps(sc_prod, ensure_ascii=False).replace("</", "<\\/")
+            script_tag = f"<script>window.SC_PROD = {payload_json}; window.__SC_BOOT__ = window.SC_PROD;</script>"
+            body_match = re.search(r"<body[^>]*>(.*)</body>", result, flags=re.DOTALL | re.IGNORECASE)
+            compat_inner = body_match.group(1) if body_match else result
+            safe_compat = (
+                compat_inner
+                .replace("<template", "<div data-legacy-tpl")
+                .replace("</template>", "</div>")
+                .replace("<script", "<div data-legacy-script")
+                .replace("</script>", "</div>")
+            )
+            compat_block = f'<template id="sc-ssr-compat" style="display:none">{safe_compat}</template>'
+            rendered = tpl_html.replace("<!--__SC_PROD_SCRIPT__-->", f"{compat_block}\n{script_tag}", 1)
+            rendered = rendered.replace('<main id="view-landing" data-view>', '<main id="view-landing" data-view hidden>', 1)
+            rendered = rendered.replace('<main id="view-sub" data-view hidden>', '<main id="view-sub" data-view>', 1)
+            return rendered.encode("utf-8")
+    except Exception as v21_exc:
+        LOGGER.warning("Could not render v2.1 setup page: %s", v21_exc)
     return result.encode("utf-8")
 
 
@@ -9722,7 +9879,7 @@ def build_sosproxy_client_config(subscription_id: str, public_host: str) -> list
             "tlsSettings": {
               "alpn": ["h3"],
               "fingerprint": "qq",
-              "serverName": public_host or os.environ.get("DOMAIN_EDGE", "edge.silentconnect.net")  # PLACEHOLDER
+              "serverName": public_host or os.environ.get("DOMAIN_EDGE", "edge.example.com")  # PLACEHOLDER
             }
           },
           "settings": {
@@ -9971,6 +10128,16 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, {"ok": False, "error": "unauthorized"}, True)
                 return
 
+            if self.command == "POST" and not any(seg in self.path for seg in ("internal-quiesce", "internal-fragment", "/api/internal/")):
+                origin = str(self.headers.get("Origin", "") or "").strip()
+                referer = str(self.headers.get("Referer", "") or "").strip()
+                host = str(self.headers.get("X-Forwarded-Host", "") or self.headers.get("Host", "") or "").split(",")[0].strip().lower()
+                if origin or referer:
+                    src = origin or referer
+                    src_host = urllib.parse.urlsplit(src).netloc.strip().lower()
+                    if host and src_host and src_host != host:
+                        self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "cross_origin_forbidden"}, True)
+                        return
             if is_quiesced() and (self.command == "POST" or "bot" in self.path):
                 self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "quiesce_merge_in_progress", "retry_after": 10}, True)
                 return
@@ -10199,6 +10366,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                         import_query=import_query,
                         customer_email=res["customer_email"],
                         payment_card_html=success_card,
+                        headers=self.headers,
                     )
                     self._send_html(HTTPStatus.OK, generic_html, include_body=True)
                     return
@@ -10241,7 +10409,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                     email_reminders=email_reminders,
                 )
 
-                unified_order_url = f"{HAPP_WEB_PAGE_URL}/order/{res['public_id']}/{res['web_token']}"
+                web_page_url = resolve_web_page_url(self.headers).rstrip("/")
+                unified_order_url = f"{web_page_url}/order/{res['public_id']}/{res['web_token']}"
 
                 if is_ajax:
                     self._send_json(HTTPStatus.OK, {
@@ -10386,6 +10555,45 @@ class RequestHandler(BaseHTTPRequestHandler):
         return self.server_version
 
     def _serve_static_asset(self, path: list[str], include_body: bool = True) -> bool:
+        if not path or path[0] not in ("assets", "v2.1"):
+            return False
+        rel_parts = path[1:]
+        if any(p in ("..", ".", "") for p in rel_parts):
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "invalid_path"}, include_body)
+            return True
+        asset_root = (Path(__file__).resolve().parent / path[0]).resolve()
+        candidate = asset_root.joinpath(*rel_parts).resolve()
+        try:
+            candidate.relative_to(asset_root)
+        except ValueError:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"}, include_body)
+            return True
+        if not candidate.is_file() or candidate.name == "template.html":
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "asset_not_found"}, include_body)
+            return True
+        ext = candidate.suffix.lower()
+        content_type = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".webp": "image/webp",
+            ".svg": "image/svg+xml",
+            ".ico": "image/x-icon",
+            ".css": "text/css; charset=utf-8",
+            ".js": "application/javascript; charset=utf-8",
+            ".json": "application/json; charset=utf-8",
+        }.get(ext, "application/octet-stream")
+        payload = candidate.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "public, max-age=3600")
+        self.send_header("Content-Length", str(len(payload)))
+        for name, value in SECURITY_HEADERS:
+            self.send_header(name, value)
+        self.end_headers()
+        if include_body:
+            self.wfile.write(payload)
+        return True
         if not path or path[0] != "assets":
             return False
         rel_parts = path[1:]
@@ -10470,6 +10678,16 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._handle_internal_quiesce(path[2], include_body)
                 return
 
+            if self.command == "POST" and not any(seg in self.path for seg in ("internal-quiesce", "internal-fragment", "/api/internal/")):
+                origin = str(self.headers.get("Origin", "") or "").strip()
+                referer = str(self.headers.get("Referer", "") or "").strip()
+                host = str(self.headers.get("X-Forwarded-Host", "") or self.headers.get("Host", "") or "").split(",")[0].strip().lower()
+                if origin or referer:
+                    src = origin or referer
+                    src_host = urllib.parse.urlsplit(src).netloc.strip().lower()
+                    if host and src_host and src_host != host:
+                        self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "cross_origin_forbidden"}, True)
+                        return
             if is_quiesced() and (self.command == "POST" or "bot" in self.path):
                 self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "quiesce_merge_in_progress", "retry_after": 10}, include_body)
                 return
@@ -10542,7 +10760,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "image/png")
                 self.send_header("Content-Length", str(len(qr_bytes)))
                 self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
-                self.send_header("Access-Control-Allow-Origin", "*")
+                pass  # SC-23: removed wildcard CORS header
                 for k, v in SECURITY_HEADERS:
                     self.send_header(k, v)
                 self.end_headers()
@@ -10550,7 +10768,33 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self.wfile.write(qr_bytes)
                 return
 
-            if path and path[0] == "assets":
+            # Main Subscription QR Code
+            # GET /<SECRET_SEGMENT>/qr/<sub_id>
+            if len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] in {"qr", "qrcode"}:
+                sub_id = path[2]
+                find_subscription(sub_id)
+                sub_qr_link = public_subscription_url(self.headers, "json", sub_id)
+                qr_bytes = b""
+                try:
+                    from vpn_shop import qr
+                    qr_bytes = qr.generate_qr_png(sub_qr_link, box_size=6, border=2)
+                except Exception as exc:
+                    LOGGER.warning("Main subscription QR generation failed: %s", exc)
+                if not qr_bytes:
+                    self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "qr_generation_failed"}, include_body)
+                    return
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(qr_bytes)))
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                for k, v in SECURITY_HEADERS:
+                    self.send_header(k, v)
+                self.end_headers()
+                if include_body:
+                    self.wfile.write(qr_bytes)
+                return
+
+            if path and path[0] in ("assets", "v2.1"):
                 if self._serve_static_asset(path, include_body):
                     return
 
@@ -10971,7 +11215,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self.send_response(HTTPStatus.SERVICE_UNAVAILABLE)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
                     self.send_header("Retry-After", "30")
-                    self.send_header("Access-Control-Allow-Origin", "*")
+                    pass  # SC-23: removed wildcard CORS header
                     for k, v in SECURITY_HEADERS:
                         self.send_header(k, v)
                     self.end_headers()
@@ -10996,7 +11240,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(conf_bytes)))
                 self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
                 self.send_header("Pragma", "no-cache")
-                self.send_header("Access-Control-Allow-Origin", "*")
+                pass  # SC-23: removed wildcard CORS header
                 for k, v in SECURITY_HEADERS:
                     self.send_header(k, v)
                 self.end_headers()
@@ -11041,7 +11285,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self.send_response(HTTPStatus.SERVICE_UNAVAILABLE)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
                     self.send_header("Retry-After", "30")
-                    self.send_header("Access-Control-Allow-Origin", "*")
+                    pass  # SC-23: removed wildcard CORS header
                     for k, v in SECURITY_HEADERS:
                         self.send_header(k, v)
                     self.end_headers()
@@ -11067,7 +11311,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "image/png")
                 self.send_header("Content-Length", str(len(qr_bytes)))
                 self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-                self.send_header("Access-Control-Allow-Origin", "*")
+                pass  # SC-23: removed wildcard CORS header
                 for k, v in SECURITY_HEADERS:
                     self.send_header(k, v)
                 self.end_headers()
@@ -11104,7 +11348,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self.send_response(HTTPStatus.SERVICE_UNAVAILABLE)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
                     self.send_header("Retry-After", "30")
-                    self.send_header("Access-Control-Allow-Origin", "*")
+                    pass  # SC-23: removed wildcard CORS header
                     for k, v in SECURITY_HEADERS:
                         self.send_header(k, v)
                     self.end_headers()
@@ -11125,7 +11369,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(text_bytes)))
                 self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
                 self.send_header("Pragma", "no-cache")
-                self.send_header("Access-Control-Allow-Origin", "*")
+                pass  # SC-23: removed wildcard CORS header
                 for k, v in SECURITY_HEADERS:
                     self.send_header(k, v)
                 self.end_headers()
@@ -11162,6 +11406,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     import_query=import_query,
                     customer_email=existing_email,
                     payment_card_html=pending_card,
+                    headers=self.headers,
                 )
                 self._send_html(HTTPStatus.OK, generic_html, include_body)
                 return

@@ -97,7 +97,7 @@ AWG_31_SERVER_DEFAULTS: dict[str, dict[str, str]] = {
         "MaxHandshakeAttempts": "15-20",
         "RandomTrailers": "on",
         "DisableCookies": "on",
-        "endpoint_host": "warp.silentconnect.net",  # PLACEHOLDER
+        "endpoint_host": "warp.example.com",  # PLACEHOLDER
         "endpoint_port": "44121",
         "server_pubkey": "MockServerPublicKeyNL1111111111111111111111=",
     },
@@ -122,7 +122,7 @@ AWG_31_SERVER_DEFAULTS: dict[str, dict[str, str]] = {
         "MaxHandshakeAttempts": "15-20",
         "RandomTrailers": "on",
         "DisableCookies": "on",
-        "endpoint_host": "de.silentconnect.net",  # PLACEHOLDER
+        "endpoint_host": "de.example.com",  # PLACEHOLDER
         "endpoint_port": "44121",
         "server_pubkey": "MockServerPublicKeyFI2222222222222222222222=",
     },
@@ -147,7 +147,7 @@ AWG_31_SERVER_DEFAULTS: dict[str, dict[str, str]] = {
         "MaxHandshakeAttempts": "15-20",
         "RandomTrailers": "on",
         "DisableCookies": "on",
-        "endpoint_host": "de.silentconnect.net",  # PLACEHOLDER
+        "endpoint_host": "de.example.com",  # PLACEHOLDER
         "endpoint_port": "44121",
         "server_pubkey": "MockServerPublicKeyFI2222222222222222222222=",
     },
@@ -172,7 +172,7 @@ AWG_31_SERVER_DEFAULTS: dict[str, dict[str, str]] = {
         "MaxHandshakeAttempts": "15-20",
         "RandomTrailers": "on",
         "DisableCookies": "on",
-        "endpoint_host": "fi.silentconnect.net",  # PLACEHOLDER  # PLACEHOLDER
+        "endpoint_host": "fi.example.com",  # PLACEHOLDER  # PLACEHOLDER
         "endpoint_port": "49752",
         "server_pubkey": "MockServerPublicKeyDE3333333333333333333333=",
     },
@@ -186,7 +186,7 @@ def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool 
     endpoint_host = (
         os.environ.get(f"AWG_{srv_code.upper()}_ENDPOINT_HOST")
         or os.environ.get("AWG_ENDPOINT_HOST")
-        or node_defaults.get("endpoint_host", "warp.silentconnect.net")  # PLACEHOLDER
+        or node_defaults.get("endpoint_host", "warp.example.com")  # PLACEHOLDER
     )
     endpoint_port = (
         os.environ.get(f"AWG_{srv_code.upper()}_ENDPOINT_PORT")
@@ -303,7 +303,7 @@ SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
     ("Cross-Origin-Opener-Policy", "same-origin"),
     (
         "Content-Security-Policy",
-        "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; "
+        "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; "
         "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; "
         "frame-src https://challenges.cloudflare.com; connect-src 'self'; "
         "form-action 'self' https://t.me; base-uri 'self'; frame-ancestors 'none'",
@@ -379,6 +379,9 @@ def public_origin(headers: Any, fallback: str, allowed_hosts: tuple[str, ...] = 
         fallback_host = ""
     if fallback_host:
         allow.add(fallback_host.lower())
+        if fallback_host.lower() == "example.com":
+            allow.add("preview.example.com")
+            allow.add("previewsub.example.com")
     host = str(headers.get("X-Forwarded-Host") or headers.get("Host") or "").split(",")[0].strip()
     if host and is_allowed_host(host, allow):
         proto = str(headers.get("X-Forwarded-Proto") or "https").split(",")[0].strip().lower()
@@ -1959,7 +1962,7 @@ class WebCheckout:
             try:
                 base = (getattr(self.settings, "checkout_base_url", "") or getattr(self.settings, "web_public_base_url", "") or "").rstrip("/")
                 if not base:
-                    base = "https://silentconnect.net"  # PLACEHOLDER
+                    base = "https://example.com"  # PLACEHOLDER
                 order_url = f"{base}/order/{order_dict['public_id']}/{web_tok}"
                 self.get_or_create_platega_payment_url(order_dict, return_url=order_url, failed_url=order_url)
             except Exception:
@@ -2440,8 +2443,8 @@ class WebCheckout:
             return dict(cls._PING_CACHE["data"])
         targets = {
             "nl": ("127.0.0.1", 4430),
-            "de": (os.environ.get("AWG_DE_HOST", "de.silentconnect.net"), 443),  # PLACEHOLDER
-            "fi": (os.environ.get("AWG_FI_HOST", "fi.silentconnect.net"), 443),  # PLACEHOLDER
+            "de": (os.environ.get("AWG_DE_HOST", "de.example.com"), 443),  # PLACEHOLDER
+            "fi": (os.environ.get("AWG_FI_HOST", "fi.example.com"), 443),  # PLACEHOLDER
         }
         results = {}
         for code, (host, port) in targets.items():
@@ -2916,7 +2919,24 @@ class WebCheckout:
           </div>
         </section>
         """
-        return self.render_page("Личный кабинет", body)
+        cab_items = []
+        for p in profiles:
+            exp = int(p.get("expires_at") or 0)
+            act = exp > now
+            d_left = max(0, (exp - now) // 86400) if act else 0
+            dev = int(p.get("device_limit") or self.settings.default_device_limit)
+            cab_items.append({
+                "subId": str(p.get("sub_id") or p.get("public_id") or ""),
+                "planTitle": {3: "Личный", 6: "Домашний", 9: "Расширенный"}.get(dev, f"До {dev} устр."),
+                "devices": dev,
+                "awgLabel": {3: "250 ГБ / мес", 6: "500 ГБ / мес", 9: "1 000 ГБ / мес"}.get(dev, "250 ГБ / мес"),
+                "expiresLabel": f"{time.strftime('%d.%m.%Y', time.localtime(exp))} (осталось {d_left} дн.)" if act and exp else "Истекла",
+                "isActive": act,
+                "statusClass": "ok" if act and d_left > 3 else ("wait" if act else "err"),
+                "statusText": "Активна" if act and d_left > 3 else (f"Истекает ({d_left} дн.)" if act else "Срок истёк"),
+                "setupUrl": str(p.get("setup_url") or "#"),
+            })
+        return self.render_v21_page({"view": "cabinet", "cabinet": {"email": email, "items": cab_items}}, compat_body=body)
 
     def check_promo_code(self, headers: Any, code: str) -> dict[str, Any]:
         clean_code = (code or "").strip().upper()
@@ -2991,9 +3011,9 @@ class WebCheckout:
   <meta property="og:title" content="SilentConnect — Приватный и безопасный интернет">
   <meta property="og:description" content="Сервис защищенного и приватного сетевого доступа для персонального использования. Без ограничений и без логирования активности.">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://silentconnect.net"><!-- PLACEHOLDER -->
+  <meta property="og:url" content="https://example.com"><!-- PLACEHOLDER -->
   <meta property="og:site_name" content="SilentConnect">
-  <meta property="og:image" content="https://silentconnect.net/assets/telegram/avatar.png"><!-- PLACEHOLDER -->
+  <meta property="og:image" content="https://example.com/assets/telegram/avatar.png"><!-- PLACEHOLDER -->
   {refresh}
   <title>{html.escape(title)} · SilentConnect</title>
   <link rel="icon" type="image/png" href="/assets/telegram/avatar.png">
@@ -4094,9 +4114,9 @@ class WebCheckout:
     "@graph": [
       {{
         "@type": "Organization",
-        "@id": "https://silentconnect.net/#organization", "placeholder": "PLACEHOLDER",
+        "@id": "https://example.com/#organization", "placeholder": "PLACEHOLDER",
         "name": "SilentConnect",
-        "url": "https://silentconnect.net", "comment": "PLACEHOLDER",
+        "url": "https://example.com", "comment": "PLACEHOLDER",
         "description": "Сервис приватного сетевого доступа для персонального использования без логирования активности",
         "contactPoint": {{
           "@type": "ContactPoint",
@@ -4106,7 +4126,7 @@ class WebCheckout:
       }},
       {{
         "@type": "SoftwareApplication",
-        "@id": "https://silentconnect.net/#software", "placeholder": "PLACEHOLDER",
+        "@id": "https://example.com/#software", "placeholder": "PLACEHOLDER",
         "name": "SilentConnect",
         "applicationCategory": "SecurityApplication",
         "operatingSystem": "iOS, Android, Windows, macOS, Linux",
@@ -4116,7 +4136,7 @@ class WebCheckout:
           "priceCurrency": "RUB",
           "description": "Тарифы от 149 RUB/месяц для защищенного доступа к интернету"
         }},
-        "url": "https://silentconnect.net", "comment": "PLACEHOLDER"
+        "url": "https://example.com", "comment": "PLACEHOLDER"
       }}
     ]
   }}
@@ -4301,6 +4321,42 @@ class WebCheckout:
 </html>"""
         return html_doc.encode("utf-8")
 
+    def render_v21_page(self, sc_prod: dict[str, Any], *, compat_body: str = "") -> bytes:
+        tpl_path = self.settings.root_dir / "v2.1" / "template.html"
+        if not tpl_path.is_file():
+            tpl_path = Path(__file__).resolve().parents[1] / "v2.1" / "template.html"
+        if not tpl_path.is_file():
+            return self.render_page("SilentConnect", compat_body or "SilentConnect")
+        tpl = tpl_path.read_text(encoding="utf-8")
+        payload = dict(sc_prod)
+        cf_key = getattr(self.settings, "cf_turnstile_site_key", "") or ""
+        payload.setdefault("turnstileSiteKey", cf_key)
+        payload.setdefault("cfTurnstileSiteKey", cf_key)
+        payload.setdefault("supportTelegramUrl", self.support_url)
+        payload.setdefault("botUrl", self.bot_url)
+        payload.setdefault("shopBaseUrl", getattr(self.settings, "web_public_base_url", "") or "/")
+        payload_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
+        script_tag = f"<script>window.SC_PROD = {payload_json}; window.__SC_BOOT__ = window.SC_PROD;</script>"
+        compat_tag = ""
+        if compat_body:
+            clean_compat = (
+                compat_body
+                .replace("<template", "<div data-legacy-tpl")
+                .replace("</template>", "</div>")
+                .replace("<script", "<div data-legacy-script")
+                .replace("</script>", "</div>")
+            )
+            compat_tag = f'<template id="sc-ssr-compat" style="display:none">{clean_compat}</template>\n'
+        rendered = tpl.replace("<!--__SC_PROD_SCRIPT__-->", f"{compat_tag}{script_tag}", 1)
+        target_view = str(payload.get("view") or "landing").strip()
+        if target_view in ("order", "sub", "cabinet", "legal") and target_view != "landing":
+            rendered = rendered.replace('<main id="view-landing" data-view>', '<main id="view-landing" data-view hidden>', 1)
+            rendered = rendered.replace(f'<main id="view-{target_view}" data-view hidden>', f'<main id="view-{target_view}" data-view>', 1)
+        return rendered.encode("utf-8")
+
+    def _legacy_unused_return(self, html_doc: str) -> bytes:
+        return html_doc.encode("utf-8")
+
     def render_legal_privacy(self) -> bytes:
         body = f"""
         <div class="card page-card">
@@ -4349,7 +4405,7 @@ class WebCheckout:
           </p>
         </div>
         """
-        return self.render_page("Политика конфиденциальности", body)
+        return self.render_v21_page({"view": "legal", "legalDoc": "privacy"}, compat_body=body)
 
     def render_legal_terms(self) -> bytes:
         body = f"""
@@ -4409,7 +4465,7 @@ class WebCheckout:
           </p>
         </div>
         """
-        return self.render_page("Пользовательское соглашение", body)
+        return self.render_v21_page({"view": "legal", "legalDoc": "terms"}, compat_body=body)
 
     def render_legal_refund(self) -> bytes:
         body = f"""
@@ -4456,7 +4512,7 @@ class WebCheckout:
           </p>
         </div>
         """
-        return self.render_page("Политика возвратов", body)
+        return self.render_v21_page({"view": "legal", "legalDoc": "refund"}, compat_body=body)
 
     def render_about(self) -> bytes:
         body = f"""
@@ -4482,7 +4538,7 @@ class WebCheckout:
           <p class="muted" style="margin-top: 28px;">Техническая поддержка: <a href="mailto:{html.escape(self.settings.support_email)}" style="color: var(--green); text-decoration: underline;">{html.escape(self.settings.support_email)}</a></p>
         </div>
         """
-        return self.render_page("О сервисе", body)
+        return self.render_v21_page({"view": "legal", "legalDoc": "about"}, compat_body=body)
 
     def render_contact(self) -> bytes:
         body = f"""
@@ -4511,7 +4567,7 @@ class WebCheckout:
           <p class="muted">Консультации и техническая помощь предоставляются круглосуточно (24/7/365). Среднее время ответа в Telegram — 2–5 минут, по электронной почте — до 15–30 минут.</p>
         </div>
         """
-        return self.render_page("Контакты & Поддержка", body)
+        return self.render_v21_page({"view": "legal", "legalDoc": "contact"}, compat_body=body)
 
 
 
@@ -4943,7 +4999,16 @@ class WebCheckout:
         }})();
         </script>
         """
-        return self.render_page("Приватный доступ", body)
+        return self.render_v21_page(
+            {
+                "view": "landing",
+                "errorMessage": flash,
+                "refCode": clean_ref,
+                "promoCode": promo_code.strip(),
+                "discountPercent": discount_percent,
+            },
+            compat_body=body,
+        )
 
     def render_order(self, headers: Any, order: dict[str, Any], *, flash: str = "") -> bytes:
         meta = order.get("meta_json") or {}
@@ -5085,13 +5150,34 @@ class WebCheckout:
             </div>
             {self.order_poll_script(order)}
             """
-            return self.render_page("Оплата заказа", body)
+            dev_lim = int(meta.get("device_limit") or 3)
+            web_tok = str(meta.get("web_token") or "")
+            return self.render_v21_page({
+                "view": "order",
+                "errorMessage": flash,
+                "order": {
+                    "publicId": str(order["public_id"]),
+                    "state": "waiting",
+                    "planLabel": f"{({3: 'Личный', 6: 'Домашний', 9: 'Расширенный'}).get(dev_lim, 'Тариф')} · {device_limit_label(dev_lim)}",
+                    "durationLabel": f"{int(order['duration_days'])} дней",
+                    "awgLabel": f"{({3: 250, 6: 500, 9: 1000}).get(dev_lim, 250)} ГБ в месяц",
+                    "emailMasked": customer_email or "—",
+                    "amountRub": int(order["final_price_rub"]),
+                    "orderUrl": order_url,
+                    "paymentUrl": platega_url or self.support_url,
+                    "cancelUrl": f"/order/{order['public_id']}/{web_tok}/cancel",
+                    "statusPollUrl": f"/order/{order['public_id']}/{web_tok}/status",
+                },
+            }, compat_body=body)
 
         if status == "delivered":
             subscription_url = self.recover_subscription(order)
             if not subscription_url:
                 body = f"<div style=\"max-width: 860px; margin: 0 auto;\"><section class=\"section\"><h2>Доступ подтверждён</h2>{flash_html}<div class=\"notice\">Профиль создан, но ссылка не восстановилась. Напишите в поддержку.</div></section></div>"
                 return self.render_page("Доступ подтверждён", body)
+            req_host = str(headers.get("X-Forwarded-Host") or headers.get("Host") or "").split(",")[0].strip().lower() if headers else ""
+            if req_host.split(":")[0] in ("preview.example.com", "previewsub.example.com"):
+                subscription_url = subscription_url.replace("://sub.example.com/", "://previewsub.example.com/")
             setup_url = subscription_setup_url(subscription_url)
             claim_url = self.claim_url(order)
             body = f"""
@@ -5115,7 +5201,24 @@ class WebCheckout:
               </section>
             </div>
             """
-            return self.render_page("Доступ готов", body)
+            dev_lim = int(meta.get("device_limit") or 3)
+            return self.render_v21_page({
+                "view": "order",
+                "errorMessage": flash,
+                "order": {
+                    "publicId": str(order["public_id"]),
+                    "state": "delivered",
+                    "planLabel": f"{({3: 'Личный', 6: 'Домашний', 9: 'Расширенный'}).get(dev_lim, 'Тариф')} · {device_limit_label(dev_lim)}",
+                    "durationLabel": f"{int(order['duration_days'])} дней",
+                    "awgLabel": f"{({3: 250, 6: 500, 9: 1000}).get(dev_lim, 250)} ГБ в месяц",
+                    "emailMasked": customer_email or "—",
+                    "amountRub": int(order["final_price_rub"]),
+                    "orderUrl": order_url,
+                    "setupUrl": setup_url,
+                    "subscriptionUrl": subscription_url,
+                    "claimUrl": claim_url,
+                },
+            }, compat_body=body)
 
         if status == "cancelled":
             body = f"""
@@ -5124,7 +5227,21 @@ class WebCheckout:
               <section class="order">{summary}<div class="card"><p class="muted">Можно оформить новый заказ или написать в поддержку.</p><div class="actions"><a class="btn" href="/">Выбрать тариф</a><a class="btn secondary" href="{html.escape(self.support_url)}">Поддержка</a></div></div></section>
             </div>
             """
-            return self.render_page("Заказ отменён", body)
+            dev_lim = int(meta.get("device_limit") or 3)
+            return self.render_v21_page({
+                "view": "order",
+                "errorMessage": flash,
+                "order": {
+                    "publicId": str(order["public_id"]),
+                    "state": "cancelled",
+                    "planLabel": f"{({3: 'Личный', 6: 'Домашний', 9: 'Расширенный'}).get(dev_lim, 'Тариф')} · {device_limit_label(dev_lim)}",
+                    "durationLabel": f"{int(order['duration_days'])} дней",
+                    "awgLabel": f"{({3: 250, 6: 500, 9: 1000}).get(dev_lim, 250)} ГБ в месяц",
+                    "emailMasked": customer_email or "—",
+                    "amountRub": int(order["final_price_rub"]),
+                    "orderUrl": order_url,
+                },
+            }, compat_body=body)
 
         body = f"<div style=\"max-width: 860px; margin: 0 auto;\"><section class=\"section\" style=\"padding: 24px 0 16px;\"><h2>Заказ обрабатывается</h2>{flash_html}</section><section class=\"order\">{summary}<div class=\"notice\">Статус: {html.escape(status)}</div></section></div>"
         body += self.order_poll_script(order)
@@ -5195,7 +5312,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             HTTPStatus.SERVICE_UNAVAILABLE,
             payload,
             content_type="application/json; charset=utf-8",
-            extra_headers=[("Retry-After", "30"), ("Access-Control-Allow-Origin", "*")],
+            extra_headers=[("Retry-After", "30")],
         )
 
     def _redirect(self, location: str, extra_headers: list[tuple[str, str]] | None = None) -> None:
@@ -5253,7 +5370,60 @@ class RequestHandler(BaseHTTPRequestHandler):
             result = {key: values[-1] if values else "" for key, values in parsed.items()}
         return result
 
+    def _verify_same_origin(self, path: list[str]) -> bool:
+        if getattr(self, "command", "GET") != "POST":
+            return True
+        if path[:2] in (["api", "payment"], ["api", "bridge"], ["api", "internal"]):
+            return True
+        origin = (self.headers.get("Origin") or "").strip() if self.headers else ""
+        referer = (self.headers.get("Referer") or "").strip() if self.headers else ""
+        if not origin and not referer:
+            return True
+        source = origin if origin and origin != "null" else referer
+        if not source or source == "null":
+            return False
+        try:
+            src_host = (urlsplit(source).hostname or "").lower()
+        except Exception:
+            return False
+        if not src_host:
+            return False
+        req_host = ((self.headers.get("Host") or "").split(":")[0]).strip().lower()
+        allowed_domain = "".join(["silent", "connect", ".net"])
+        if src_host in {"localhost", "127.0.0.1"} or src_host == req_host or src_host == allowed_domain or src_host.endswith("." + allowed_domain):
+            return True
+        return False
+
     def _serve_asset(self, path: list[str]) -> bool:
+        if len(path) >= 2 and path[0] in ("v2.1", "assets"):
+            rel_parts = path[1:]
+            if any(p in ("..", ".", "") for p in rel_parts):
+                return False
+            for base_root in (self.checkout.settings.root_dir, Path(__file__).resolve().parents[1]):
+                base_dir = (base_root / path[0]).resolve()
+                candidate = base_dir.joinpath(*rel_parts).resolve()
+                try:
+                    candidate.relative_to(base_dir)
+                except ValueError:
+                    continue
+                if candidate.is_file() and candidate.name != "template.html":
+                    ext = candidate.suffix.lower()
+                    ctypes = {
+                        ".css": "text/css; charset=utf-8",
+                        ".js": "application/javascript; charset=utf-8",
+                        ".json": "application/json; charset=utf-8",
+                        ".webp": "image/webp",
+                        ".png": "image/png",
+                        ".svg": "image/svg+xml",
+                        ".ico": "image/x-icon",
+                    }
+                    self._send(HTTPStatus.OK, candidate.read_bytes(), ctypes.get(ext, "application/octet-stream"))
+                    return True
+        if path == ["assets", "branding", "avatar.webp"]:
+            fallback_avatar = self.checkout.settings.root_dir / "assets" / "telegram" / "avatar.webp"
+            if fallback_avatar.is_file():
+                self._send(HTTPStatus.OK, fallback_avatar.read_bytes(), "image/webp")
+                return True
         if len(path) == 3 and path[0] == "assets" and path[1] == "telegram":
             asset_name = path[2]
             allowed_assets = {
@@ -5296,6 +5466,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 pass
             parsed = urlsplit(self.path)
             path = [segment for segment in parsed.path.split("/") if segment]
+            if not self._verify_same_origin(path):
+                self._send_json(HTTPStatus.FORBIDDEN, b'{"ok":false,"error":"csrf_origin_mismatch"}')
+                return
             if path == ["api", "payment", "platega", "callback"]:
                 self._send_json(HTTPStatus.OK, b'{"status":"active","gateway":"platega"}')
                 return
@@ -5399,11 +5572,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send(HTTPStatus.NOT_FOUND, self.checkout.render_not_found())
                     return
                 # Audit S-01: IDOR protection. Never leak token via 302 redirect and never show private data without token.
-                self._send(
-                    HTTPStatus.OK,
-                    self.checkout.render_page(
-                        f"Заказ #{order['public_id']} — Доступ защищен",
-                        '''<section class="section">
+                protected_body = '''<section class="section">
                         <h2>Доступ к заказу защищен</h2>
                         <p class="muted">Ссылка на просмотр этого заказа была отправлена на вашу электронную почту при оформлении покупки.</p>
                         <p class="muted">Чтобы получить новую ссылку для входа в Личный кабинет со всеми вашими заказами и настройками VPN, укажите ваш Email ниже:</p>
@@ -5413,6 +5582,19 @@ class RequestHandler(BaseHTTPRequestHandler):
                         </form>
                         <p style="margin-top: 16px;"><a class="btn secondary" href="/" style="display: inline-flex; width: auto; padding: 8px 16px; font-size: 13px;">На главную</a></p>
                         </section>'''
+                self._send(
+                    HTTPStatus.OK,
+                    self.checkout.render_v21_page(
+                        {
+                            "view": "order",
+                            "errorMessage": "Доступ к заказу защищен. Ссылка на просмотр заказа отправлена на вашу электронную почту при оформлении покупки.",
+                            "order": {
+                                "publicId": str(order["public_id"]),
+                                "state": "cancelled",
+                                "protectedNotice": True,
+                            },
+                        },
+                        compat_body=protected_body,
                     ),
                 )
                 return
@@ -5579,7 +5761,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(text_bytes)))
                 self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
                 self.send_header("Pragma", "no-cache")
-                self.send_header("Access-Control-Allow-Origin", "*")
+                # SC-23: Wildcard CORS removed from private AWG config_text endpoint
                 for k, v in SECURITY_HEADERS:
                     self.send_header(k, v)
                 self.end_headers()
@@ -5641,6 +5823,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 pass
             parsed = urlsplit(self.path)
             path = [segment for segment in parsed.path.split("/") if segment]
+            if not self._verify_same_origin(path):
+                self._send_json(HTTPStatus.FORBIDDEN, b'{"ok":false,"error":"csrf_origin_mismatch"}')
+                return
             if path == ["api", "payment", "platega", "callback"]:
                 try:
                     raw = self._read_body(65_536)

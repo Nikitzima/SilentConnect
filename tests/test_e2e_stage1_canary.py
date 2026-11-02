@@ -28,9 +28,22 @@ import unittest
 import uuid
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+_here = Path(__file__).resolve()
+_candidates = [
+    _here.parent,
+    _here.parents[1] if len(_here.parents) > 1 else _here.parent,
+    Path("/root"),
+]
+REPO_ROOT = _here.parent
+for c in _candidates:
+    if (c / "vpn-shop").exists() and (c / "subjson-service").exists():
+        REPO_ROOT = c
+        break
+
 sys.path.insert(0, str(REPO_ROOT / "vpn-shop"))
 sys.path.insert(0, str(REPO_ROOT / "subjson-service"))
+sys.path.insert(0, "/root/vpn-shop")
+sys.path.insert(0, "/root/subjson-service")
 
 os.environ.setdefault("HYSTERIA_SALAMANDER_PASSWORD", "test_gecko_pwd_123456")
 os.environ.setdefault("HYSTERIA_AUTH_PASSWORD", "test_auth_pwd_123456")

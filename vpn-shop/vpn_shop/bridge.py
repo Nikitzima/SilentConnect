@@ -20,7 +20,7 @@ ALLOWED_BRIDGE_ACTIONS = {
 
 
 def _is_approved_email_url(url_str: str, approved_hosts: set[str] | None = None) -> bool:
-    """Validate that redirect/email URL only points to approved domains (*.silentconnect.net, public host) or https://t.me/ (SC-24).  # PLACEHOLDER"""
+    """Validate that redirect/email URL only points to approved domains (*.example.com, public host) or https://t.me/ (SC-24).  # PLACEHOLDER"""
     if not url_str or not url_str.strip():
         return True
     try:
@@ -40,8 +40,8 @@ def _is_approved_email_url(url_str: str, approved_hosts: set[str] | None = None)
     if hostname == "t.me" or hostname.endswith(".t.me"):
         return scheme == "https"
 
-    # Approved domains: *.silentconnect.net or silentconnect.net  # PLACEHOLDER
-    if hostname == "silentconnect.net" or hostname.endswith(".silentconnect.net"):  # PLACEHOLDER
+    # Approved domains: *.example.com or example.com  # PLACEHOLDER
+    if hostname == "example.com" or hostname.endswith(".example.com"):  # PLACEHOLDER
         return True
 
     # Host from public settings (e.g. custom domain or node host)
