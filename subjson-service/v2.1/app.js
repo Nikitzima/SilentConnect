@@ -1026,10 +1026,10 @@ function renderPlatformTrack(track, list, activeId, onPick, suffix) {
     b.setAttribute('aria-selected', String(on));
   });
 
-  requestAnimationFrame(() => {
-    updatePlatformSlider(track);
+  updatePlatformSlider(track);
+  if (track.scrollWidth > track.clientWidth) {
     centerActiveTab(track);
-  });
+  }
 }
 
 function dlButtonsHtml(items) {
