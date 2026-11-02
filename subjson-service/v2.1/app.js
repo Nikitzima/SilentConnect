@@ -171,7 +171,10 @@ function centerActiveTab(track) {
   if (!track) return;
   const act = track.querySelector('.active') || track.querySelector('.on');
   if (act && track.scrollWidth > track.clientWidth) {
-    track.scrollTo({ left: act.offsetLeft - (track.clientWidth - act.offsetWidth) / 2, behavior: 'smooth' });
+    const targetLeft = Math.max(0, Math.min(track.scrollWidth - track.clientWidth, act.offsetLeft - (track.clientWidth - act.offsetWidth) / 2));
+    if (Math.abs(track.scrollLeft - targetLeft) > 3) {
+      track.scrollTo({ left: targetLeft, behavior: 'smooth' });
+    }
   }
 }
 
@@ -1157,6 +1160,7 @@ function renderMainSetup() {
         <input class="field mono-field" name="sub_manual_url" readonly value="${SUB_URL || SUB_IMPORT_URL}" aria-label="Ссылка подписки" onclick="this.select()">
       </div>`;
   }
+  syncSubViewport({ instant: true });
 }
 renderMainSetup();
 
@@ -1194,7 +1198,7 @@ function setSubMode(mode) {
 window.setSubMode = setSubMode;
 
 /* Высота окна карусели = высота активной панели (плавно, следит за изменением контента) */
-function syncSubViewport() {
+function syncSubViewport(options) {
   const viewport = $('#subViewport');
   const pane = $(`#pane-${S.subMode}`);
   if (!viewport || !pane) return;
@@ -1205,13 +1209,25 @@ function syncSubViewport() {
       if (viewport.scrollLeft !== 0) viewport.scrollLeft = 0;
     }, { passive: true });
   }
+  const instant = !!(options && options.instant);
+  if (instant) {
+    viewport.classList.add('no-transition');
+  }
   const h = pane.offsetHeight;
   if (h > 0) viewport.style.height = h + 'px';
+  if (instant) {
+    requestAnimationFrame(() => {
+      viewport.classList.remove('no-transition');
+    });
+  }
   MODES.forEach(m => {
     const p = $(`#pane-${m}`);
     if (!p) return;
-    p.inert = m !== S.subMode;
-    p.setAttribute('aria-hidden', String(m !== S.subMode));
+    const isHidden = m !== S.subMode;
+    if (p.inert !== isHidden) p.inert = isHidden;
+    if (p.getAttribute('aria-hidden') !== String(isHidden)) {
+      p.setAttribute('aria-hidden', String(isHidden));
+    }
   });
 }
 if (window.ResizeObserver) {
@@ -1494,6 +1510,7 @@ function renderAwgSetup() {
       if (switchBtn) switchBtn.addEventListener('click', () => openAwgSwitchModal(targetSlot.id));
     }
   }
+  syncSubViewport({ instant: true });
 }
 
 window.downloadSlotConf = function(slotId) {
@@ -1778,6 +1795,7 @@ function renderOfSetup() {
         </div>
       </div>`;
   }
+  syncSubViewport({ instant: true });
 }
 
 $$('[data-of-state]').forEach(b => b.addEventListener('click', () => setOfState(b.dataset.ofState)));
