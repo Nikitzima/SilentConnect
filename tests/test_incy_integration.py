@@ -79,6 +79,15 @@ class TestIncyIntegration(unittest.TestCase):
         self.assertIn("https://apps.apple.com/app/incy/id6756943388", content)
         self.assertIn("https://play.google.com/store/apps/details?id=llc.itdev.incy", content)
         self.assertIn("badge-xray", content)
+        # Check badges configuration
+        self.assertIn("{ id: 'happ', name: 'Happ', badge: ''", content)
+        self.assertIn("{ id: 'incy', name: 'INCY', badge: 'рекомендуем'", content)
+        self.assertIn("appMain: 'incy'", content)
+        self.assertIn("{ id: 'amneziavpn', name: 'AmneziaVPN', badge: 'рекомендуем'", content)
+        self.assertIn("{ id: 'amneziawg', name: 'AmneziaWG', badge: ''", content)
+        self.assertIn("1. TestFlight в App Store", content)
+        self.assertIn("2. Присоединиться в TestFlight", content)
+        self.assertIn("id=\"ofImportBtn\"", content)
 
 
 if __name__ == "__main__":

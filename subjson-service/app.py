@@ -5721,7 +5721,7 @@ def setup_page_html(
         {
             "id": "happ",
             "name": "Happ",
-            "badge": "рекомендуем",
+            "badge": "",
             "iconUrl": OFFICIAL_HAPP_ICON,
             "platforms": ["ios", "android", "windows", "macos", "linux", "androidtv", "appletv"],
             "importUrl": happ_link,
@@ -5745,7 +5745,7 @@ def setup_page_html(
         {
             "id": "incy",
             "name": "INCY",
-            "badge": "xray-core",
+            "badge": "рекомендуем",
             "iconUrl": OFFICIAL_INCY_ICON,
             "platforms": ["ios", "android", "windows", "macos", "linux", "androidtv", "appletv"],
             "importUrl": incy_link,
@@ -5778,7 +5778,7 @@ def setup_page_html(
         {
             "id": "clash",
             "name": "Clash Mi / Mihomo",
-            "badge": "авто-выбор",
+            "badge": "",
             "iconUrl": OFFICIAL_CLASH_ICON,
             "iosIconUrl": OFFICIAL_CLASH_MI_ICON,
             "platforms": ["windows", "macos", "android", "linux", "ios"],
@@ -5795,7 +5795,7 @@ def setup_page_html(
         {
             "id": "v2rayn",
             "name": "v2rayN",
-            "badge": "windows xray",
+            "badge": "",
             "iconUrl": OFFICIAL_V2RAYN_ICON,
             "platforms": ["windows"],
             "importUrl": fallback_links["v2rayn"],
@@ -5807,7 +5807,7 @@ def setup_page_html(
         {
             "id": "nekobox",
             "name": "NekoBox",
-            "badge": "android json",
+            "badge": "",
             "iconUrl": OFFICIAL_NEKOBOX_ICON,
             "platforms": ["android"],
             "importUrl": fallback_links["nekobox"],
@@ -5819,7 +5819,7 @@ def setup_page_html(
         {
             "id": "v2rayng",
             "name": "v2rayNG",
-            "badge": "android vless",
+            "badge": "",
             "iconUrl": OFFICIAL_V2RAYNG_ICON,
             "platforms": ["android"],
             "importUrl": fallback_links["v2rayng"],
@@ -5831,7 +5831,7 @@ def setup_page_html(
         {
             "id": "streisand",
             "name": "Streisand",
-            "badge": "ios / macos",
+            "badge": "",
             "iconUrl": OFFICIAL_STREISAND_ICON,
             "platforms": ["ios", "macos"],
             "importUrl": fallback_links["streisand"],
@@ -5844,7 +5844,7 @@ def setup_page_html(
         {
             "id": "singbox",
             "name": "Sing-box",
-            "badge": "sing-box",
+            "badge": "",
             "iconUrl": OFFICIAL_SINGBOX_ICON,
             "platforms": ["ios", "android", "windows", "macos", "linux"],
             "importUrl": fallback_links["singbox"],
@@ -9020,8 +9020,8 @@ def setup_page_html(
             <h3>1. Установка OpenFlux через TestFlight</h3>
             <p>Нажмите кнопку ниже, чтобы присоединиться к официальному бета-тестированию OpenFlux для iOS в Apple TestFlight:</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <a class="button success" href="https://testflight.apple.com/join/BwnAcdus" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/testflight.webp" alt=""> 1. Присоединиться в TestFlight</a>
-              <a class="button secondary" href="https://apps.apple.com/app/testflight/id899247664" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/appstore.webp" alt=""> TestFlight в App Store</a>
+              <a class="button success" href="https://apps.apple.com/app/testflight/id899247664" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/appstore.webp" alt=""> 1. TestFlight в App Store</a>
+              <a class="button secondary" href="https://testflight.apple.com/join/BwnAcdus" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/testflight.webp" alt=""> 2. Присоединиться в TestFlight</a>
             </div>
           </div>
           ${notReadyHtml ? notReadyHtml : `
@@ -9122,8 +9122,8 @@ def setup_page_html(
             <h3>1. Установка OpenFlux для macOS</h3>
             <p>Установите OpenFlux через TestFlight или скачайте сборку для macOS (Apple Silicon / Intel):</p>
             <div class="buttons" style="margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-              <a class="button success" href="https://testflight.apple.com/join/BwnAcdus" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/testflight.webp" alt=""> 1. Присоединиться в TestFlight</a>
-              <a class="button secondary" href="https://apps.apple.com/app/testflight/id899247664" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/appstore.webp" alt=""> TestFlight в Mac App Store</a>
+              <a class="button success" href="https://apps.apple.com/app/testflight/id899247664" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/appstore.webp" alt=""> TestFlight в Mac App Store</a>
+              <a class="button secondary" href="https://testflight.apple.com/join/BwnAcdus" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/testflight.webp" alt=""> Присоединиться в TestFlight</a>
               <a class="button secondary" href="https://github.com/p1neappleXpress/OpenFluxDesktop/releases/latest" target="_blank" rel="noopener"><img class="btn-store-icon" src="/assets/stores/github.webp" alt=""> GitHub Релизы (.dmg)</a>
             </div>
           </div>
@@ -9210,7 +9210,7 @@ def setup_page_html(
         id: "amneziawg",
         name: "AmneziaWG",
         subtitle: "Облегчённый быстрый WireGuard-клиент",
-        badge: "Легковесный",
+        badge: "",
         iconSvg: '<img src="/assets/apps/amneziawg.webp" width="34" height="34" style="border-radius: 8px; display: block;" alt="AmneziaWG">',
       }
     ];
@@ -9264,7 +9264,7 @@ def setup_page_html(
           '<div class="app-info">' +
             '<div class="app-name-row">' +
               '<span class="app-name">' + app.name + '</span>' +
-              '<span class="app-badge badge-recommended">' + app.badge + '</span>' +
+              (app.badge ? '<span class="app-badge badge-recommended">' + app.badge + '</span>' : '') +
             '</div>' +
             '<div style="font-size: 11.5px; color: var(--muted); line-height: 1.25; margin-top: 2px;">' + app.subtitle + '</div>' +
           '</div>' +

@@ -226,7 +226,7 @@ const S = {
   refPct: refParam.startsWith('ref_') ? 10 : 0,
   renDev: 6, renMonths: 6, emailBound: true, bindOnly: false,
   subMode: 'main',
-  osMain: detectedOs, appMain: 'happ',
+  osMain: detectedOs, appMain: 'incy',
   osAwg: (detectedOs === 'appletv' || detectedOs === 'androidtv') ? 'windows' : detectedOs, appAwg: 'amneziavpn',
   osOf: (detectedOs === 'androidtv' || detectedOs === 'appletv') ? 'ios' : detectedOs,
   ofState: 'active', ofCountry: 'nl', ofTargetCountry: 'pl',
@@ -869,7 +869,7 @@ const U = {
 const dl = (label, url, icon) => ({ label, url, icon }); const ASSET_ROOT = window.SC_PROD ? '/assets/' : 'assets/';
 
 const MAIN_APPS = [
-  { id: 'happ', name: 'Happ', badge: 'рекомендуем', icon: `${ASSET_ROOT}apps/happ.webp`,
+  { id: 'happ', name: 'Happ', badge: '', icon: `${ASSET_ROOT}apps/happ.webp`,
     platforms: ['ios', 'android', 'windows', 'macos', 'linux', 'androidtv', 'appletv'],
     description: 'Флагманский клиент с поддержкой протоколов REALITY и XHTTP. Обеспечивает максимальную скорость и незаметность подключения на любых устройствах.',
     downloads: {
@@ -881,7 +881,7 @@ const MAIN_APPS = [
       androidtv: [dl('Google Play', U.HAPP_ANDROID, 'googleplay'), dl('Скачать APK (GitHub)', U.HAPP_APK, 'github')],
       appletv: [dl('App Store', U.HAPP_IOS, 'appstore')]
     } },
-  { id: 'incy', name: 'INCY', badge: 'xray-core', icon: `${ASSET_ROOT}apps/incy.webp`,
+  { id: 'incy', name: 'INCY', badge: 'рекомендуем', icon: `${ASSET_ROOT}apps/incy.webp`,
     platforms: ['ios', 'android', 'windows', 'macos', 'linux', 'androidtv', 'appletv'],
     description: 'Современный клиент на базе Xray-core с нативной поддержкой REALITY, фрагментации TLS и умной маршрутизации трафика.',
     downloads: {
@@ -893,7 +893,7 @@ const MAIN_APPS = [
       androidtv: [dl('Google Play', U.INCY_ANDROID, 'googleplay'), dl('Скачать APK (GitHub)', U.INCY_APK, 'github')],
       appletv: [dl('App Store', U.INCY_IOS, 'appstore')]
     } },
-  { id: 'clash', name: 'Clash Mi / Mihomo', badge: 'авто-выбор', icon: `${ASSET_ROOT}apps/clash.webp`, iosIcon: `${ASSET_ROOT}apps/clash_mi.webp`,
+  { id: 'clash', name: 'Clash Mi / Mihomo', badge: '', icon: `${ASSET_ROOT}apps/clash.webp`, iosIcon: `${ASSET_ROOT}apps/clash_mi.webp`,
     platforms: ['windows', 'macos', 'android', 'linux', 'ios'],
     description: 'Мощный клиент с поддержкой умного авто-тестирования узлов и мгновенным переключением при сбоях.',
     downloads: {
@@ -903,26 +903,26 @@ const MAIN_APPS = [
       linux: [dl('GitHub Релизы (.deb / AppImage)', U.CLASH_DL, 'github')],
       ios: [dl('App Store', U.CLASH_MI_IOS, 'appstore')]
     } },
-  { id: 'v2rayn', name: 'v2rayN', badge: 'windows xray', icon: `${ASSET_ROOT}apps/v2rayn.webp`,
+  { id: 'v2rayn', name: 'v2rayN', badge: '', icon: `${ASSET_ROOT}apps/v2rayn.webp`,
     platforms: ['windows'],
     description: 'Популярный клиент для Windows с поддержкой Xray-ядра, автоматическим обновлением подписок и гибкой маршрутизацией.',
     downloads: { windows: [dl('GitHub Релизы (.zip)', U.V2RAYN_DL, 'github')] } },
-  { id: 'nekobox', name: 'NekoBox', badge: 'android json', icon: `${ASSET_ROOT}apps/nekobox.webp`,
+  { id: 'nekobox', name: 'NekoBox', badge: '', icon: `${ASSET_ROOT}apps/nekobox.webp`,
     platforms: ['android'],
     description: 'Мощный и функциональный клиент для Android с поддержкой прямых JSON и Sing-box конфигураций.',
     downloads: { android: [dl('GitHub Релизы (.apk)', U.NEKOBOX_DL, 'github')] } },
-  { id: 'v2rayng', name: 'v2rayNG', badge: 'android vless', icon: `${ASSET_ROOT}apps/v2rayng.webp`,
+  { id: 'v2rayng', name: 'v2rayNG', badge: '', icon: `${ASSET_ROOT}apps/v2rayng.webp`,
     platforms: ['android'],
     description: 'Классический проверенный клиент для Android для прямого импорта VLESS-конфигураций.',
     downloads: { android: [dl('GitHub Релизы (.apk)', U.V2RAYNG_DL, 'github')] } },
-  { id: 'streisand', name: 'Streisand', badge: 'ios / macos', icon: `${ASSET_ROOT}apps/streisand.webp`,
+  { id: 'streisand', name: 'Streisand', badge: '', icon: `${ASSET_ROOT}apps/streisand.webp`,
     platforms: ['ios', 'macos'],
     description: 'Лёгкий и быстрый клиент, идеально оптимизированный под экосистемы iOS и macOS без расхода аккумулятора.',
     downloads: {
       ios: [dl('App Store', U.STREISAND_IOS, 'appstore')],
       macos: [dl('Mac App Store', U.STREISAND_MACOS, 'appstore')]
     } },
-  { id: 'singbox', name: 'Sing-box', badge: 'sing-box', icon: `${ASSET_ROOT}apps/singbox.webp`,
+  { id: 'singbox', name: 'Sing-box', badge: '', icon: `${ASSET_ROOT}apps/singbox.webp`,
     platforms: ['ios', 'android', 'windows', 'macos', 'linux'],
     description: 'Универсальный сетевой клиент нового поколения с максимальной производительностью и нативной поддержкой Sing-box JSON.',
     downloads: {
@@ -995,10 +995,12 @@ function dlButtonsHtml(items) {
 function preferredMainApp(os) {
   const cur = MAIN_APPS.find(a => a.id === S.appMain);
   if (cur && cur.platforms.includes(os)) return cur.id;
+  const incy = MAIN_APPS.find(a => a.id === 'incy' && a.platforms.includes(os));
+  if (incy) return 'incy';
   const happ = MAIN_APPS.find(a => a.id === 'happ' && a.platforms.includes(os));
   if (happ) return 'happ';
   const first = MAIN_APPS.find(a => a.platforms.includes(os));
-  return first ? first.id : 'happ';
+  return first ? first.id : 'incy';
 }
 
 function renderMainSetup() {
@@ -1033,7 +1035,7 @@ function renderMainSetup() {
         <img src="${icon}" alt="${name}" class="app-icon-img" onerror="this.style.display='none'">
         <div class="app-info"><div class="app-name-row">
           <span class="app-name">${name}</span>
-          <span class="app-badge ${badgeClassOf(a.badge)}">${a.badge}</span>
+          ${a.badge ? `<span class="app-badge ${badgeClassOf(a.badge)}">${a.badge}</span>` : ''}
         </div></div>
         <span class="app-check" aria-hidden="true">${on ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}</span>`;
       card.addEventListener('click', () => {
@@ -1190,7 +1192,7 @@ syncSubViewport();
    ========================================================================= */
 const AWG_OS_LIST = OS_META.filter(o => ['ios', 'android', 'windows', 'macos', 'linux'].includes(o.id));
 const AWG_APPS = [
-  { id: 'amneziavpn', name: 'AmneziaVPN', badge: 'официальный', icon: `${ASSET_ROOT}apps/amneziavpn.webp`,
+  { id: 'amneziavpn', name: 'AmneziaVPN', badge: 'рекомендуем', icon: `${ASSET_ROOT}apps/amneziavpn.webp`,
     platforms: ['ios', 'android', 'windows', 'macos', 'linux'],
     description: 'Официальный полнофункциональный клиент с автоматической поддержкой профилей AmneziaWG и встроенной защитой от DPI.',
     downloads: {
@@ -1200,7 +1202,7 @@ const AWG_APPS = [
       macos: [dl('GitHub Релизы (.dmg)', 'https://github.com/amnezia-vpn/amnezia-client/releases', 'github')],
       linux: [dl('GitHub Релизы (.deb / AppImage)', 'https://github.com/amnezia-vpn/amnezia-client/releases', 'github')]
     } },
-  { id: 'amneziawg', name: 'AmneziaWG Client', badge: 'легкий wireguard', icon: `${ASSET_ROOT}apps/amneziawg.webp`,
+  { id: 'amneziawg', name: 'AmneziaWG', badge: '', icon: `${ASSET_ROOT}apps/amneziawg.webp`,
     platforms: ['windows', 'android', 'macos', 'ios'],
     description: 'Специализированная облегчённая сборка на базе нативного клиента WireGuard с поддержкой заголовков обфускации Jc/Jmin/Jmax.',
     downloads: {
@@ -1299,7 +1301,7 @@ function renderAwgSetup() {
         <img src="${a.icon}" alt="${a.name}" class="app-icon-img" onerror="this.style.display='none'">
         <div class="app-info"><div class="app-name-row">
           <span class="app-name">${a.name}</span>
-          <span class="app-badge ${badgeClassOf(a.badge)}">${a.badge}</span>
+          ${a.badge ? `<span class="app-badge ${badgeClassOf(a.badge)}">${a.badge}</span>` : ''}
         </div></div>
         <span class="app-check" aria-hidden="true">${on ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}</span>`;
       card.addEventListener('click', () => { S.appAwg = a.id; renderAwgSetup(); });
@@ -1481,6 +1483,9 @@ function setOfState(state) {
   const newKeyInput = $('#ofNewKeyInput');
   if (newKeyInput) newKeyInput.value = S.ofNewKeyUri || `openflux://v1/mig_${SUB_ID}-${targetSrv.code}?doc=mailru_shared_doc_88f29&srv=${targetSrv.code}.edge.silentconnect.net:443#SilentConnect-OpenFlux-${targetSrv.code.toUpperCase()}`; /* PLACEHOLDER */
 
+  const ofImportBtn = $('#ofImportBtn');
+  if (ofImportBtn && keyInput) ofImportBtn.href = keyInput.value;
+
   if (state === 'migrating') startOfHandoverTimer();
   else clearInterval(ofTimerInterval);
 }
@@ -1510,11 +1515,11 @@ const OF_CLIENT_DATA = {
   ios: {
     name: 'OpenFlux для iOS',
     downloads: [
-      dl('1. Присоединиться в TestFlight', 'https://testflight.apple.com/join/BwnAcdus', 'testflight'),
-      dl('TestFlight в App Store', 'https://apps.apple.com/app/testflight/id899247664', 'appstore')
+      dl('1. TestFlight в App Store', 'https://apps.apple.com/app/testflight/id899247664', 'appstore'),
+      dl('2. Присоединиться в TestFlight', 'https://testflight.apple.com/join/BwnAcdus', 'testflight')
     ],
-    step1: 'Присоединитесь к официальному бета-тестированию OpenFlux для iOS через Apple TestFlight по кнопкам ниже.',
-    step2: 'Нажмите «Скопировать ключ» выше, откройте OpenFlux на iPhone и нажмите «Вставить из буфера» (или отсканируйте «🔲 QR-код»).',
+    step1: 'Установите официальный TestFlight из App Store, затем присоединитесь к бета-тестированию OpenFlux по кнопкам ниже.',
+    step2: 'Нажмите кнопку прямого подключения «⚡ Подключить в OpenFlux» или скопируйте ключ / используйте QR-код.',
     step3: 'В приложении OpenFlux нажмите синюю кнопку «Start VPN» ⚡. При первом запуске подтвердите добавление VPN-конфигурации в диалоговом окне iOS.'
   },
   android: {
@@ -1523,7 +1528,7 @@ const OF_CLIENT_DATA = {
       dl('GitHub Релизы (.apk)', 'https://github.com/p1neappleXpress/OpenFluxAndroid/releases/latest', 'github')
     ],
     step1: 'Скачайте официальный APK-файл OpenFlux с GitHub Releases и установите его (разрешите установку из браузера при запросе).',
-    step2: 'Нажмите кнопку «1-Click импорт» или отсканируйте QR-код активного слота выше — браузер передаст профиль в OpenFlux.',
+    step2: 'Нажмите «⚡ Подключить в OpenFlux» — приложение откроется автоматически и импортирует профиль (или используйте QR-код / буфер обмена).',
     step3: 'Нажмите большую центральную кнопку «Tap to connect» и разрешите системный запрос Android на подключение VPN.'
   },
   windows: {
@@ -1538,11 +1543,12 @@ const OF_CLIENT_DATA = {
   macos: {
     name: 'OpenFlux для macOS',
     downloads: [
+      dl('TestFlight в Mac App Store', 'https://apps.apple.com/app/testflight/id899247664', 'appstore'),
       dl('Присоединиться в TestFlight', 'https://testflight.apple.com/join/BwnAcdus', 'testflight'),
       dl('GitHub Релизы (.dmg)', 'https://github.com/p1neappleXpress/OpenFluxDesktop/releases/latest', 'github')
     ],
     step1: 'Установите OpenFlux через TestFlight или скачайте готовый бинарный пакет (.dmg) с GitHub Releases для Apple Silicon / Intel.',
-    step2: 'Скопируйте ключ слота выше и добавьте его в настройки OpenFlux.',
+    step2: 'Нажмите «⚡ Подключить в OpenFlux» или скопируйте ключ для добавления в меню импорта OpenFlux.',
     step3: 'Включите туннель в OpenFlux для защищённой работы в условиях ограничений сети.'
   },
   linux: {
@@ -1566,6 +1572,7 @@ function renderOfSetup() {
   if (curOsEl) curOsEl.textContent = OS_LABEL[S.osOf] || S.osOf;
 
   const data = OF_CLIENT_DATA[S.osOf] || OF_CLIENT_DATA.ios;
+  const curOfKey = ($('#ofKeyInput') ? $('#ofKeyInput').value : '') || S.ofKeyUri || '';
   const stepsGrid = $('#stepsGridOf');
   if (stepsGrid) {
     stepsGrid.innerHTML = `
@@ -1594,7 +1601,8 @@ function renderOfSetup() {
           </details>
         </div>
         <div class="step-btns">
-          <button type="button" class="btn btn-primary btn-sm" onclick="copyToClipboard($('#ofKeyInput')?.value || '', 'Ключ OpenFlux скопирован!')"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Скопировать ключ OpenFlux</button>
+          <a class="btn btn-primary btn-sm" id="ofImportBtn" href="${curOfKey || 'javascript:void(0)'}" onclick="if(!this.getAttribute('href')||this.getAttribute('href').startsWith('javascript')){event.preventDefault();copyToClipboard($('#ofKeyInput')?.value || '', 'Ключ OpenFlux скопирован!');}"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> ⚡ Подключить в OpenFlux</a>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="copyToClipboard($('#ofKeyInput')?.value || '', 'Ключ OpenFlux скопирован!')"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Скопировать ключ</button>
           <button type="button" class="btn btn-ghost btn-sm" onclick="openQrModal('OpenFlux QR-код', $('#ofKeyInput')?.value || '', window.SC_PROD ? ('/sub/openflux/' + encodeURIComponent(SUB_ID) + '/qr?target=active&t=' + Date.now()) : '')"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> QR-код</button>
         </div>
       </div>
