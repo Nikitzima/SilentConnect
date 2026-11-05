@@ -413,6 +413,8 @@ def subscription_setup_url(subscription_url: str) -> str:
         sub_id = parts[-1]
         base_parts = parts[:-2]
         import_path = "/" + "/".join([*base_parts, "import", quote(sub_id, safe="~")])
+    elif len(parts) == 2:
+        import_path = f"/{parts[0]}/import/{quote(parts[1], safe='~')}"
     else:
         sub_id = parts[-1] if parts else ""
         import_path = f"/import/{quote(sub_id, safe='~')}"
@@ -1652,6 +1654,9 @@ class WebCheckout:
         profile = self.store.get_profile(profile_public_id)
         if not profile:
             return None
+        sub_id = str(profile.get("xui_sub_id") or profile.get("sub_id") or "")
+        if sub_id:
+            return sub_id
         found = self.provisioner.xui_db.find_client_by_email(str(profile["xui_email"]))
         if not found:
             return None
@@ -1673,10 +1678,11 @@ class WebCheckout:
         profile = self.store.get_profile_for_order(str(order["public_id"]))
         if not profile:
             return None
-        found = self.provisioner.xui_db.find_client_by_email(str(profile["xui_email"]))
-        if not found:
-            return None
-        sub_id = str((found.get("client") or {}).get("subId") or "")
+        sub_id = str(profile.get("xui_sub_id") or profile.get("sub_id") or "")
+        if not sub_id:
+            found = self.provisioner.xui_db.find_client_by_email(str(profile["xui_email"]))
+            if found:
+                sub_id = str((found.get("client") or {}).get("subId") or "")
         if not sub_id:
             return None
         return f"{self.settings.subscription_base_url}/{quote(sub_id, safe='')}"
@@ -5355,8 +5361,23 @@ class WebCheckout:
         if status == "delivered":
             subscription_url = self.recover_subscription(order)
             if not subscription_url:
-                body = f"<div style=\"max-width: 860px; margin: 0 auto;\"><section class=\"section\"><h2>Доступ подтверждён</h2>{flash_html}<div class=\"notice\">Профиль создан, но ссылка не восстановилась. Напишите в поддержку.</div></section></div>"
-                return self.render_page("Доступ подтверждён", body)
+                dev_lim = int(meta.get("device_limit") or 3)
+                return self.render_v21_page({
+                    "view": "order",
+                    "errorMessage": flash or "Профиль создан, ссылка синхронизируется. Пожалуйста, обновите страницу через несколько секунд.",
+                    "order": {
+                        "publicId": str(order["public_id"]),
+                        "kind": str(order.get("kind") or meta.get("kind") or "new"),
+                        "isRenewal": bool(str(order.get("kind") or meta.get("kind") or "") == "renewal"),
+                        "state": "pending",
+                        "planLabel": f"{({3: 'Личный', 6: 'Домашний', 9: 'Расширенный'}).get(dev_lim, 'Тариф')} · {device_limit_label(dev_lim)}",
+                        "durationLabel": f"{int(order['duration_days'])} дней",
+                        "awgLabel": f"{({3: 250, 6: 500, 9: 1000}).get(dev_lim, 250)} ГБ в месяц",
+                        "emailMasked": customer_email or "—",
+                        "amountRub": int(order["final_price_rub"]),
+                        "orderUrl": order_url,
+                    },
+                }, compat_body=body)
             req_host = str(headers.get("X-Forwarded-Host") or headers.get("Host") or "").split(",")[0].strip().lower() if headers else ""
             if req_host.split(":")[0] in ("preview.example.com", "previewsub.example.com"):
                 subscription_url = subscription_url.replace("://sub.example.com/", "://previewsub.example.com/")

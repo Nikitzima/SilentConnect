@@ -614,6 +614,95 @@ class TestStage2WebSecurityAndRedesign(unittest.TestCase):
             self.assertEqual(sc_prod["sub"].get("bindEmailActionUrl"), f"/{subjson_app.SECRET_SEGMENT}/bind-email/{sub_id}")
             self.assertEqual(sc_prod["sub"].get("qrUrl"), f"/{subjson_app.SECRET_SEGMENT}/qr/{sub_id}")
 
+    def test_subscription_setup_url_preserves_secret_segment(self) -> None:
+        from vpn_shop.web import subscription_setup_url
+        # 3 parts (with /json/)
+        url3 = "https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl"
+        self.assertEqual(subscription_setup_url(url3), "https://sub.example.com/my-secret-sub/import/cvgh0qqws79dbpcl")
+        # 2 parts (secret segment + sub_id)
+        url2 = "https://sub.example.com/my-secret-sub/cvgh0qqws79dbpcl"
+        self.assertEqual(subscription_setup_url(url2), "https://sub.example.com/my-secret-sub/import/cvgh0qqws79dbpcl")
+
+    def test_recover_subscription_race_condition_fallback(self) -> None:
+        """When 3X-UI has not yet synced client into x-ui.db, recover_subscription uses profile xui_sub_id."""
+        with tempfile.TemporaryDirectory() as td:
+            shop_db = pathlib.Path(td) / "shop.db"
+            settings = replace(
+                load_settings(),
+                database_path=str(shop_db),
+                subscription_base_url="https://sub.example.com/my-secret-sub",
+            )
+            store = Store(shop_db)
+            checkout = WebCheckout(settings, store)
+
+            prof = store.create_profile(
+                xui_inbound_id=1,
+                transport="vless",
+                profile_mode="standard",
+                family_label=None,
+                xui_email="anon-race-test",
+                xui_client_id="uuid-1234",
+                expires_at=int(time.time()) + 86400 * 30,
+                xui_sub_id="test_sub_id_fast_123",
+            )
+            order = store.create_order(
+                kind="new",
+                status="delivered",
+                transport="vless",
+                duration_days=30,
+                profile_mode="standard",
+                family_label=None,
+                base_price_rub=149,
+                final_price_rub=149,
+                promo_id=None,
+                invite_id=None,
+                customer_chat_id="web:anon-race-test",
+                privacy_ack=True,
+                loss_policy_ack=True,
+                terms_version="1.0",
+                customer_email="race@example.com",
+            )
+            store.link_order_profile(order["public_id"], prof["public_id"])
+            delivered_order = store.get_order(order["public_id"])
+            self.assertIsNotNone(delivered_order)
+
+            # 3X-UI has NOT synced yet: find_client_by_email returns None
+            with patch.object(checkout.provisioner.xui_db, "find_client_by_email", return_value=None):
+                sub_url = checkout.recover_subscription(delivered_order)
+                self.assertEqual(sub_url, "https://sub.example.com/my-secret-sub/test_sub_id_fast_123")
+
+    def test_mailer_email_links_sanitize_json_to_import(self) -> None:
+        from vpn_shop.mailer import render_subscription_email_html, render_subscription_email_text
+        html = render_subscription_email_html(
+            customer_email="test@example.com",
+            order_public_id="ord_test123",
+            plan_name="Личный",
+            duration_days=30,
+            setup_url="https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl",
+            json_url="https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl",
+            cabinet_url="https://example.com/order/ord_test123/token123",
+        )
+        # Button MUST link to /import/, NOT /json/
+        self.assertIn('href="https://sub.example.com/my-secret-sub/import/cvgh0qqws79dbpcl" class="btn"', html)
+        self.assertNotIn('href="https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl" class="btn"', html)
+        # Web setup link in box
+        self.assertIn('>https://sub.example.com/my-secret-sub/import/cvgh0qqws79dbpcl<', html)
+        # Raw JSON link in box
+        self.assertIn('>https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl<', html)
+
+        text = render_subscription_email_text(
+            customer_email="test@example.com",
+            order_public_id="ord_test123",
+            plan_name="Личный",
+            duration_days=30,
+            setup_url="https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl",
+            json_url="https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl",
+            cabinet_url="https://example.com/order/ord_test123/token123",
+        )
+        self.assertIn("https://sub.example.com/my-secret-sub/import/cvgh0qqws79dbpcl", text)
+        self.assertIn("https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl", text)
+
+
 
 if __name__ == "__main__":
     unittest.main()

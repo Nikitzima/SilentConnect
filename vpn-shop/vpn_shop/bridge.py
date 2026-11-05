@@ -344,6 +344,8 @@ def verify_and_dispatch_bridge(
             return 400, {"ok": False, "error": "missing_email_params"}
 
         setup_url = str(params.get("setup_url") or "").strip()
+        if setup_url and "/json/" in setup_url:
+            setup_url = setup_url.replace("/json/", "/import/")
         json_url = str(params.get("json_url") or "").strip()
         cabinet_url = str(params.get("cabinet_url") or "").strip()
         bind_tg_url = str(params.get("bind_tg_url") or "").strip()

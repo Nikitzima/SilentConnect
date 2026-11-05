@@ -119,6 +119,11 @@ def render_subscription_email_html(
     """
 
     clean_setup_url = setup_url.split("?")[0]
+    if "/json/" in clean_setup_url:
+        clean_setup_url = clean_setup_url.replace("/json/", "/import/")
+    clean_json_url = json_url.split("?")[0]
+    if "/import/" in clean_json_url:
+        clean_json_url = clean_json_url.replace("/import/", "/json/")
     return f"""<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -285,11 +290,11 @@ def render_subscription_email_html(
 
       <div class="box">
         <h3>🔗 Прямые ссылки на подписку:</h3>
-        <p style="margin-bottom: 6px;">Прямая ссылка для импорта в приложение:</p>
+        <p style="margin-bottom: 6px;">Веб-страница настройки и подключения:</p>
         <div class="code-box"><a href="{clean_setup_url}">{clean_setup_url}</a></div>
         
-        <p style="margin-top: 14px; margin-bottom: 6px; color:#ffffff; font-weight: bold; font-size: 13px;">Прямой формат JSON (для кастомных клиентов):</p>
-        <div class="code-box"><a href="{json_url}">{json_url}</a></div>
+        <p style="margin-top: 14px; margin-bottom: 6px; color:#ffffff; font-weight: bold; font-size: 13px;">Прямой формат JSON (для импорта в приложения):</p>
+        <div class="code-box"><a href="{clean_json_url}">{clean_json_url}</a></div>
       </div>
 
       <div class="footer">
@@ -317,16 +322,18 @@ def render_subscription_email_text(
     support_tg: str = "https://t.me/your_support",
 ) -> str:
     bind_line = f"\nПривязать подписку к Telegram-боту: {bind_tg_url}\n" if bind_tg_url else ""
+    clean_text_setup = setup_url.split("?")[0].replace("/json/", "/import/") if "/json/" in setup_url else setup_url
+    clean_text_json = json_url.split("?")[0].replace("/import/", "/json/") if "/import/" in json_url else json_url
     return f"""Благодарим за покупку в SilentConnect!
 
 Оплата заказа #{order_public_id} успешно подтверждена.
 Ваша подписка: {plan_name} ({duration_days} дней).
 
-1. Ссылка для импорта в приложение (Happ / Streisand / V2RayTun):
-{setup_url}
+1. Веб-мастер подключения и Личный Кабинет:
+{clean_text_setup}
 {bind_line}
-2. Прямой формат JSON:
-{json_url}
+2. Прямой формат JSON для приложений:
+{clean_text_json}
 
 3. Личный кабинет подписки и продление:
 {cabinet_url}
