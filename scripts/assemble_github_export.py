@@ -32,6 +32,7 @@ ROOT_FILES = [
 
 # Directories to copy and their include/exclude rules
 SUBDIRECTORIES = [
+    ".github",
     "vpn-shop",
     "subjson-service",
     "scripts",
