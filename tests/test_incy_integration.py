@@ -3,7 +3,10 @@ import os
 import pathlib
 import sys
 import unittest
-from PIL import Image
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
 
 ROOT_DIR = pathlib.Path(__file__).resolve().parent.parent
 VPN_SHOP_DIR = ROOT_DIR / "vpn-shop"
@@ -30,6 +33,7 @@ os.environ.setdefault("STATIC_JSON_CONFIG_DIR", "/tmp")
 import app as subjson_app
 
 
+@unittest.skipIf(Image is None, "Pillow is not installed")
 class TestIncyIntegration(unittest.TestCase):
     def test_incy_icon_asset(self):
         icon_path = SUBJSON_DIR / "assets" / "apps" / "incy.webp"

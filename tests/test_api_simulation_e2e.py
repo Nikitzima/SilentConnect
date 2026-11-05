@@ -9,7 +9,11 @@ import time
 from unittest.mock import MagicMock
 import urllib.request
 import urllib.error
-import pytest
+import unittest
+try:
+    import pytest
+except ImportError:
+    raise unittest.SkipTest("pytest is not installed")
 
 ROOT_DIR = pathlib.Path(__file__).resolve().parent.parent
 VPN_SHOP_DIR = ROOT_DIR / "vpn-shop"
