@@ -295,7 +295,7 @@ TEMP_NETWORK_NOTICE = ""
 WEB_RATE_LIMIT_MAX_ENTRIES = 10000
 MAX_JSON_BODY_BYTES = 16 * 1024
 SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
-    ("Referrer-Policy", "no-referrer"),
+    ("Referrer-Policy", "strict-origin-when-cross-origin"),
     ("X-Content-Type-Options", "nosniff"),
     ("X-Frame-Options", "DENY"),
     ("Strict-Transport-Security", "max-age=31536000; includeSubDomains"),
@@ -5561,23 +5561,57 @@ class RequestHandler(BaseHTTPRequestHandler):
             return True
         if path[:2] in (["api", "payment"], ["api", "bridge"], ["api", "internal"]):
             return True
+
+        sec_fetch_site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower() if self.headers else ""
+        if sec_fetch_site in ("same-origin", "same-site", "none"):
+            return True
+        if sec_fetch_site == "cross-site":
+            return False
+
         origin = (self.headers.get("Origin") or "").strip() if self.headers else ""
         referer = (self.headers.get("Referer") or "").strip() if self.headers else ""
+
         if not origin and not referer:
             return True
+
+        # Android WebViews (VK, Telegram in-app browser) send "null" or "android-app://..."
+        if origin == "null" or (origin.startswith("android-app://") and not referer):
+            return True
+
         source = origin if origin and origin != "null" else referer
         if not source or source == "null":
-            return False
+            return True
+
+        if source.startswith("android-app://"):
+            return True
+
         try:
-            src_host = (urlsplit(source).hostname or "").lower()
+            src_parsed = urlsplit(source)
+            src_host = (src_parsed.hostname or "").lower()
         except Exception:
             return False
+
         if not src_host:
-            return False
+            return True
+
         req_host = ((self.headers.get("Host") or "").split(":")[0]).strip().lower()
         allowed_domain = "".join(["silent", "connect", ".net"])
-        if src_host in {"localhost", "127.0.0.1"} or src_host == req_host or src_host == allowed_domain or src_host.endswith("." + allowed_domain):
+        if (
+            src_host in {"localhost", "127.0.0.1"}
+            or src_host == req_host
+            or src_host == allowed_domain
+            or src_host.endswith("." + allowed_domain)
+            or src_host.endswith(".nip.io")
+            or src_host.endswith(".sslip.io")
+        ):
             return True
+
+        sec_fetch_mode = (self.headers.get("Sec-Fetch-Mode") or "").strip().lower() if self.headers else ""
+        if sec_fetch_mode == "navigate":
+            trusted_app_referrers = {"vk.com", "m.vk.com", "t.me", "telegram.org"}
+            if src_host in trusted_app_referrers or any(src_host.endswith("." + ref) for ref in trusted_app_referrers):
+                return True
+
         return False
 
     def _serve_asset(self, path: list[str]) -> bool:

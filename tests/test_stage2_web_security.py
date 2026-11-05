@@ -441,6 +441,51 @@ class TestStage2WebSecurityAndRedesign(unittest.TestCase):
                     r_same = conn.getresponse()
                     r_same.read()
                     self.assertEqual(r_same.status, 200)
+
+                    # Android WebView / in-app browser (VK / Telegram) with Origin: null passes
+                    conn.request(
+                        "POST",
+                        "/api/check-promo",
+                        body=b'{"code":"TEST"}',
+                        headers={
+                            "Host": "example.com",
+                            "Origin": "null",
+                            "Content-Type": "application/json",
+                        },
+                    )
+                    r_null = conn.getresponse()
+                    r_null.read()
+                    self.assertEqual(r_null.status, 200)
+
+                    # Android app package origin (android-app://com.vkontakte.android) passes
+                    conn.request(
+                        "POST",
+                        "/api/check-promo",
+                        body=b'{"code":"TEST"}',
+                        headers={
+                            "Host": "example.com",
+                            "Origin": "android-app://com.vkontakte.android",
+                            "Content-Type": "application/json",
+                        },
+                    )
+                    r_vk = conn.getresponse()
+                    r_vk.read()
+                    self.assertEqual(r_vk.status, 200)
+
+                    # Explicit Sec-Fetch-Site: cross-site is blocked
+                    conn.request(
+                        "POST",
+                        "/api/check-promo",
+                        body=b'{"code":"TEST"}',
+                        headers={
+                            "Host": "example.com",
+                            "Sec-Fetch-Site": "cross-site",
+                            "Content-Type": "application/json",
+                        },
+                    )
+                    r_cross = conn.getresponse()
+                    r_cross.read()
+                    self.assertEqual(r_cross.status, 403)
                     conn.close()
 
                     # 3. Check subjson-service GET setup page, static assets, and SC-23 POST guard
