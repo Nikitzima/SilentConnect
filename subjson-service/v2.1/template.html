@@ -11,7 +11,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/v2.1/v2.css?v=2.3.1">
+<link rel="stylesheet" href="/v2.1/v2.css?v=2.3.9">
 <script type="importmap">
 { "imports": {
   "three": "/v2.1/vendor/three.module.min.js",
@@ -193,6 +193,7 @@
               <div class="cf-left"><span class="cf-check">✓</span><span>Проверка пройдена</span></div>
               <div class="cf-right"><span class="cf-brand">CLOUDFLARE</span><span class="cf-sub">Turnstile · Конфиденциальность</span></div>
             </div>
+            <div id="checkoutTurnstileError" class="renew-turnstile-error" style="display:none"></div>
 
             <button type="submit" class="btn btn-primary btn-lg btn-block" id="submitBtn"><span id="submitText">Перейти к оплате</span></button>
             <p class="pay-note">СБП, карты РФ, криптовалюта</p>
@@ -316,7 +317,7 @@
         <div style="margin-top:24px;padding-top:18px;border-top:1px solid var(--line)">
           <label class="lbl" for="orderSelfLink">Личная ссылка на эту страницу заказа</label>
           <div class="copy-row">
-            <input class="field" id="orderSelfLink" readonly value="https://example.com/order/ord_9f42a8c1"> <!-- PLACEHOLDER -->
+            <input class="field" id="orderSelfLink" readonly value="">
             <button type="button" class="btn btn-ghost btn-sm" style="min-height:44px" data-toast="Ссылка на заказ скопирована">Скопировать</button>
           </div>
         </div>
@@ -358,17 +359,17 @@
       <!-- Состояние 2: Оплачен и доставлен -->
       <section class="card glass spot border-beam" id="ordDone" hidden>
         <div>
-          <h2 style="font-size:23px;font-weight:600;letter-spacing:-.03em">Подписка активирована</h2>
-          <p style="margin-top:8px;color:var(--mut);font-size:14.5px;line-height:1.55">Доступ готов к работе. Перейдите в мастер настройки, чтобы подключить ваши устройства в один клик.</p>
+          <h2 id="ordDoneTitle" style="font-size:23px;font-weight:600;letter-spacing:-.03em">Подписка активирована</h2>
+          <p id="ordDoneDesc" style="margin-top:8px;color:var(--mut);font-size:14.5px;line-height:1.55">Доступ готов к работе. Перейдите в мастер настройки, чтобы подключить ваши устройства в один клик.</p>
 
           <div style="margin-top:20px">
-            <button type="button" class="btn btn-primary btn-lg btn-block" id="ordGoSubBtn" data-go="sub">Открыть мастер настройки и подключения <svg class="btn-arrow" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></button>
+            <button type="button" class="btn btn-primary btn-lg btn-block" id="ordGoSubBtn" data-go="sub"><span id="ordGoSubText">Открыть мастер настройки и подключения</span> <svg class="btn-arrow" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></button>
           </div>
 
           <div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--line)">
             <label class="lbl" for="subKeyLink">Постоянная ссылка для импорта подписки</label>
             <div class="copy-row">
-              <input class="field" id="subKeyLink" readonly value="https://sub.example.com/my-secret-sub/import/sc_live_88f29a1d"> <!-- PLACEHOLDER -->
+              <input class="field" id="subKeyLink" readonly value="">
               <button type="button" class="btn btn-ghost btn-sm" style="min-height:44px" data-toast="Ссылка подписки скопирована">Скопировать</button>
             </div>
           </div>
@@ -430,7 +431,7 @@
         </div>
         <div class="sub-hero-actions">
           <button type="button" class="btn btn-ghost btn-sm" id="subMainQrBtn" data-qr="QR-код для импорта подписки">QR-код подписки</button>
-          <button type="button" class="btn btn-primary btn-sm" id="copyMainImportBtn" data-copy-url="https://sub.example.com/my-secret-sub/import/sc_live_88f29a1d">Скопировать подписку</button> <!-- PLACEHOLDER -->
+          <button type="button" class="btn btn-primary btn-sm" id="copyMainImportBtn" data-copy-url="">Скопировать подписку</button>
           <a class="btn btn-telegram btn-sm" id="subBotLink" href="https://t.me/SilentConnectVPNBot" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true" style="flex-shrink:0"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2.5C7.8 2.5 6 5.5 6 9.5V17c0 2.5 1.8 4.5 4.5 4.5h3c2.7 0 4.5-2 4.5-4.5V9.5C18 5.5 16.2 2.5 12 2.5zM8.4 10.8V9.5C8.4 7.2 9.8 5.2 12 5.2s3.6 2 3.6 4.3v1.3H8.4zM3.5 8.5C4.33 8.5 5 9.17 5 10v6c0 .83-.67 1.5-1.5 1.5S2 16.83 2 16v-6c0-.83.67-1.5 1.5-1.5zm17 0c.83 0 1.5.67 1.5 1.5v6c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5v-6c0-.83.67-1.5 1.5-1.5z"/></svg><span>Telegram-бот</span></a>
         </div>
       </div>
@@ -438,7 +439,7 @@
       <div class="sub-metrics tab">
         <div class="s-metric"><small>Тариф и лимит</small><b id="subMetricPlan">Домашний · до 6 устр.</b></div>
         <div class="s-metric"><small>Срок действия</small><b id="subMetricExpires">до 23.04.2027 (180 дн.)</b></div>
-        <div class="s-metric"><small>Основной профиль</small><b id="subMetricMainTraffic" style="color:var(--em-t)">Безлимит</b></div>
+        <div class="s-metric" title="Трафик основного профиля за текущий месяц"><small>Основной профиль</small><b id="subMetricMainTraffic" style="color:var(--em-t)">0 Б / ∞</b></div>
         <div class="s-metric"><small>Пакет AmneziaWG</small><b id="subMetricAwgQuota">499.9 / 500 ГБ</b></div>
       </div>
 
@@ -447,7 +448,7 @@
         <button type="button" class="renew-head" id="renewToggle" aria-expanded="false">
           <div class="renew-head-left">
             <span class="renew-head-ico" aria-hidden="true">
-              <svg class="ico" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              <svg class="ico" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             </span>
             <div class="renew-head-text">
               <span class="renew-head-title"><span id="renewAccTitle">Продлить или изменить тариф / Почта</span></span>
@@ -596,6 +597,7 @@
                       <div class="cf-left"><span class="cf-check">✓</span><span>Проверка безопасности пройдена</span></div>
                       <div class="cf-right"><span class="cf-brand">CLOUDFLARE</span><span class="cf-sub">Turnstile</span></div>
                     </div>
+                    <div id="renewTurnstileError" class="renew-turnstile-error" style="display:none"></div>
                   </div>
                 </form>
 
@@ -605,6 +607,9 @@
         </div>
       </div>
     </section>
+
+    <!-- Слот для системных уведомлений об оплате/заказах -->
+    <div id="subNoticeSlot" class="sub-notice-slot"></div>
 
     <!-- Переключатель 3 режимов Мастера подключения (Liquid Glass Segmented Control) -->
     <div class="mode-bar" id="modeBar">
@@ -639,7 +644,7 @@
       </div>
 
       <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px;flex-wrap:wrap">
-        <span class="field-label app-step-label">2. Выберите клиентское приложение для <b id="curOsNameMain">iOS</b></span>
+        <span class="field-label app-step-label">2. Выберите приложение для <b id="curOsNameMain">iOS</b></span>
       </div>
       <div class="apps-grid" id="appsGridMain"></div>
       <div class="setup-steps" id="stepsGridMain"></div>
@@ -650,7 +655,7 @@
           <section class="card glass spot" id="subMode-awg">
       <div class="grid-12" style="align-items:center;margin-bottom:18px">
         <div style="grid-column:span 7">
-          <h3 style="font-size:20px;font-weight:600;letter-spacing:-.03em">Выделенные слоты AmneziaWG (Игровой контур)</h3>
+          <h3 style="font-size:20px;font-weight:600;letter-spacing:-.03em">Выделенные слоты AmneziaWG</h3>
           <p style="margin-top:6px;color:var(--mut);font-size:14px;line-height:1.55">Прямое UDP-соединение с минимальной задержкой для онлайн-игр, голосовых чатов и домашних роутеров.</p>
         </div>
         <div class="app-details-box">
@@ -677,16 +682,16 @@
       </div>
 
       <div class="awg-slots-header" id="awgSlotsHeader">
-        <span class="field-label" style="margin:0;display:flex;align-items:center;gap:8px">
-          Устройства и конфигурации AmneziaWG
-          <span class="badge" id="awgSlotsCountBadge" style="background:rgba(255,255,255,.08);color:var(--hi)">...</span>
+        <span class="field-label awg-slots-title">
+          <span>Устройства и конфигурации AmneziaWG</span>
+          <span class="count-pill" id="awgSlotsCountBadge">...</span>
         </span>
-        <button type="button" class="btn btn-ghost btn-sm" id="awgSlotsToggleBtn" style="font-size:12px;padding:4px 10px;height:auto">
+        <button type="button" class="btn btn-ghost btn-sm awg-slots-toggle" id="awgSlotsToggleBtn" aria-controls="awgSlotsWrap" aria-expanded="true">
           <span id="awgSlotsToggleText">Свернуть список</span>
-          <svg class="ico" id="awgSlotsToggleIco" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .2s"><polyline points="6 9 12 15 18 9"/></svg>
+          <svg class="ico" id="awgSlotsToggleIco" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .28s cubic-bezier(.16,1,.3,1)"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       </div>
-      <div class="slots" id="awgSlotsGrid"></div>
+      <div class="slots-wrap" id="awgSlotsWrap"><div class="slots" id="awgSlotsGrid"></div></div>
 
       <div class="platform-selector-panel">
         <div class="platform-bar-header">
@@ -712,7 +717,7 @@
           <span style="font-size:18px;line-height:1"><svg class="ico ico-warn" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
           <div>
             <h3 class="of-banner-head">Специальный режим «Белых Списков» (OpenFlux Stream)</h3>
-            <p class="of-banner-desc">Используйте этот режим, <b>только если оператор связи отключил мобильный интернет</b> и оставил доступ лишь к ограниченному перечню российских сайтов (белые списки). Трафик маскируется под облачную сессию работы с документами Mail.ru Cloud. Скорость канала до ~3 Мбит/с (для мессенджеров, почты, банков и карт).</p>
+            <p class="of-banner-desc">Используйте этот режим, <b>только если оператор связи отключил мобильный интернет</b> и оставил доступ лишь к ограниченному перечню российских сайтов (белые списки). Скорость канала до ~3 Мбит/с (для мессенджеров, почты, банков и карт).</p>
           </div>
         </div>
       </div>
@@ -720,7 +725,6 @@
       <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px">
         <div>
           <h3 style="font-size:19px;font-weight:600;letter-spacing:-.025em">Ваш персональный слот OpenFlux (1 устройство)</h3>
-          <p style="margin-top:3px;color:var(--mut);font-size:13.5px">Вы можете в любой момент переключать выходную локацию между Нидерландами, Германией и Финляндией.</p>
         </div>
         <div class="lab-group">
           <span class="lab-label">Состояние слота</span>
@@ -737,7 +741,7 @@
             <h4 style="font-size:17px;font-weight:600;margin-top:8px">Персональный слот Белых списков свободен</h4>
             <p style="margin-top:5px;color:var(--mut);font-size:13.5px;max-width:44em">Нажмите кнопку, чтобы выбрать страну (<span class="flag-badge" aria-label="Нидерланды" title="Нидерланды"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#fff"/><rect width="16" height="3.67" rx="2" fill="#AE1C28"/><rect y="7.33" width="16" height="3.67" rx="2" fill="#21468B"/><rect y="2" width="16" height="7" fill="#fff"/></svg></span>Нидерланды, <span class="flag-badge" aria-label="Германия" title="Германия"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#FFCE00"/><rect width="16" height="7.33" rx="2" fill="#DD0000"/><rect width="16" height="3.67" rx="2" fill="#000"/></svg></span>Германия или <span class="flag-badge" aria-label="Финляндия" title="Финляндия"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#fff"/><rect x="4.5" width="3" height="11" fill="#002F6C"/><rect y="4" width="16" height="3" fill="#002F6C"/></svg></span>Финляндия) и сгенерировать индивидуальный ключ OpenFlux.</p>
           </div>
-          <button type="button" class="btn btn-primary btn-sm" data-open-wl-picker="activate"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Активировать подключение <svg class="btn-arrow" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></button>
+          <button type="button" class="btn btn-primary btn-sm" data-open-wl-picker="activate"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> Активировать подключение <svg class="btn-arrow" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></button>
         </div>
       </div>
 
@@ -753,8 +757,8 @@
           </div>
         </div>
         <div class="copy-row" style="margin-top:12px">
-          <input class="field" id="ofKeyInput" readonly value="openflux://v1/sc_live_88f29a1d-nl?srv=nl.edge.example.com:443#SilentConnect-OpenFlux-NL"> <!-- PLACEHOLDER -->
-          <a class="btn btn-primary btn-sm" id="ofTopDeeplinkBtn" href="openflux://v1/sc_live_88f29a1d-nl?srv=nl.edge.example.com:443#SilentConnect-OpenFlux-NL" style="min-height:42px"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> ⚡ Подключить в OpenFlux</a>
+          <input class="field" id="ofKeyInput" readonly value="openflux://v1/sc_live_88f29a1d-nl?srv=nl.edge.example.com:443#SilentConnect-OpenFlux-NL">
+          <a class="btn btn-primary btn-sm" id="ofTopDeeplinkBtn" href="openflux://v1/sc_live_88f29a1d-nl?srv=nl.edge.example.com:443#SilentConnect-OpenFlux-NL" style="min-height:42px"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> Подключить в OpenFlux</a>
           <button type="button" class="btn btn-ghost btn-sm" id="ofTopCopyBtn" style="min-height:42px" data-toast="Ключ OpenFlux скопирован в буфер обмена"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Скопировать</button>
         </div>
       </div>
@@ -769,8 +773,8 @@
         </div>
         <p style="margin-top:6px;color:var(--mut);font-size:13.5px;line-height:1.55">Чтобы вы не потеряли доступ в условиях блокировки, старый сервер продолжает работать ещё 5 минут. Скопируйте новый ключ ниже, импортируйте его в приложение и только после этого нажмите «Подтвердить переход».</p>
         <div class="copy-row" style="margin-top:12px">
-          <input class="field" id="ofNewKeyInput" readonly value="openflux://v1/mig_sc_live_88f29a1d-de?srv=de.edge.example.com:443#SilentConnect-OpenFlux-DE"> <!-- PLACEHOLDER -->
-          <a class="btn btn-primary btn-sm" id="ofNewTopDeeplinkBtn" href="openflux://v1/mig_sc_live_88f29a1d-de?srv=de.edge.example.com:443#SilentConnect-OpenFlux-DE" style="min-height:42px"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> ⚡ Подключить новый ключ</a>
+          <input class="field" id="ofNewKeyInput" readonly value="openflux://v1/mig_sc_live_88f29a1d-de?srv=de.edge.example.com:443#SilentConnect-OpenFlux-DE">
+          <a class="btn btn-primary btn-sm" id="ofNewTopDeeplinkBtn" href="openflux://v1/mig_sc_live_88f29a1d-de?srv=de.edge.example.com:443#SilentConnect-OpenFlux-DE" style="min-height:42px"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> Подключить новый ключ</a>
           <button type="button" class="btn btn-ghost btn-sm" id="ofNewTopCopyBtn" style="min-height:42px" data-toast="Новый ключ OpenFlux скопирован"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Скопировать</button>
         </div>
         <div style="margin-top:14px;display:flex;flex-wrap:wrap;gap:8px">
@@ -917,11 +921,11 @@
   <div class="container">
     <a href="#top" class="brand" data-go="landing"><img src="/assets/branding/avatar.webp" alt="" class="brand-logo" width="30" height="30">SilentConnect</a>
     <nav aria-label="Информация">
-      <a href="#" data-go="legal" data-doc-link="about">О сервисе</a>
-      <a href="#" data-go="legal" data-doc-link="terms">Соглашение</a>
-      <a href="#" data-go="legal" data-doc-link="privacy">Конфиденциальность</a>
-      <a href="#" data-go="legal" data-doc-link="refund">Возвраты</a>
-      <a href="#" data-go="legal" data-doc-link="contact">Контакты</a>
+      <a href="/about" data-go="legal" data-doc-link="about">О сервисе</a>
+      <a href="/legal/terms" data-go="legal" data-doc-link="terms">Соглашение</a>
+      <a href="/legal/privacy" data-go="legal" data-doc-link="privacy">Конфиденциальность</a>
+      <a href="/legal/refund" data-go="legal" data-doc-link="refund">Возвраты</a>
+      <a href="/contact" data-go="legal" data-doc-link="contact">Контакты</a>
     </nav>
     <span>© 2026 SilentConnect</span>
   </div>
@@ -945,6 +949,7 @@
         <div class="cf-left"><span class="cf-check">✓</span><span>Проверка пройдена</span></div>
         <div class="cf-right"><span class="cf-brand">CLOUDFLARE</span><span class="cf-sub">Turnstile</span></div>
       </div>
+      <div id="cabinetTurnstileError" class="renew-turnstile-error" style="display:none"></div>
       <button type="submit" class="btn btn-primary btn-lg btn-block">Отправить ссылку для входа</button>
     </form>
     <p id="cabinetProtoDemo" class="lab-group" style="margin-top:16px;font-size:12.5px;color:var(--dim)">Для демонстрации прототипа: <button type="button" class="link" data-go="cabinet">Открыть экран кабинета с подписками <svg class="btn-arrow" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></button></p>
@@ -1022,11 +1027,11 @@
 
 <!-- Модалка QR -->
 <div class="modal" id="qrModal" role="dialog" aria-modal="true" hidden>
-  <div class="modal-box glass" style="max-width:340px;text-align:center">
+  <div class="modal-box glass modal-qr-box" style="max-width:350px;text-align:center">
     <button type="button" class="modal-x" data-close aria-label="Закрыть"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-    <h3 id="qrTitle" style="font-size:18px;font-weight:600;letter-spacing:-.02em">QR-код</h3>
+    <h3 id="qrTitle" class="qr-modal-title">QR-код для импорта подписки</h3>
     <div class="qr" id="qrBox"><svg viewBox="0 0 100 100" width="100%" height="100%" fill="currentColor" aria-hidden="true"><path d="M10 10h25v25H10zM15 15v15h15V15zM20 20h5v5h-5zM65 10h25v25H65zM70 15v15h15V15zM75 20h5v5h-5zM10 65h25v25H10zM15 70v15h15V70zM20 75h5v5h-5zM45 15h10v10H45zM45 35h15v10H45zM15 45h20v10H15zM45 55h10v20H45zM65 45h20v10H65zM65 65h10v10H65zM80 75h10v15H80zM60 80h15v10H60z"/></svg></div>
-    <p id="qrSub" style="font-size:12px;color:var(--mut);word-break:break-all">https://sub.example.com/my-secret-sub/import/sc_live_88f29a1d</p> <!-- PLACEHOLDER -->
+    <p id="qrSub" style="font-size:12px;color:var(--mut);word-break:break-all;line-height:1.45;margin-top:12px"></p>
   </div>
 </div>
 
@@ -1043,7 +1048,7 @@
 <!--__SC_PROD_SCRIPT__-->
 <script src="/v2.1/bg.js"></script>
 <script src="/v2.1/os-icons.js"></script>
-<script src="/v2.1/app.js?v=2.3.1"></script>
+<script src="/v2.1/app.js?v=2.3.9"></script>
 <script type="module" src="/v2.1/globe.js"></script>
 </body>
 </html>

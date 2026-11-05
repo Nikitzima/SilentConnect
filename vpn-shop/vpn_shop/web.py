@@ -97,7 +97,7 @@ AWG_31_SERVER_DEFAULTS: dict[str, dict[str, str]] = {
         "MaxHandshakeAttempts": "15-20",
         "RandomTrailers": "on",
         "DisableCookies": "on",
-        "endpoint_host": "warp.example.com",  # PLACEHOLDER
+        "endpoint_host": "warp.example.com",
         "endpoint_port": "44121",
         "server_pubkey": "MockServerPublicKeyNL1111111111111111111111=",
     },
@@ -122,7 +122,7 @@ AWG_31_SERVER_DEFAULTS: dict[str, dict[str, str]] = {
         "MaxHandshakeAttempts": "15-20",
         "RandomTrailers": "on",
         "DisableCookies": "on",
-        "endpoint_host": "de.example.com",  # PLACEHOLDER
+        "endpoint_host": "de.example.com",
         "endpoint_port": "44121",
         "server_pubkey": "MockServerPublicKeyFI2222222222222222222222=",
     },
@@ -147,7 +147,7 @@ AWG_31_SERVER_DEFAULTS: dict[str, dict[str, str]] = {
         "MaxHandshakeAttempts": "15-20",
         "RandomTrailers": "on",
         "DisableCookies": "on",
-        "endpoint_host": "de.example.com",  # PLACEHOLDER
+        "endpoint_host": "de.example.com",
         "endpoint_port": "44121",
         "server_pubkey": "MockServerPublicKeyFI2222222222222222222222=",
     },
@@ -172,7 +172,7 @@ AWG_31_SERVER_DEFAULTS: dict[str, dict[str, str]] = {
         "MaxHandshakeAttempts": "15-20",
         "RandomTrailers": "on",
         "DisableCookies": "on",
-        "endpoint_host": "fi.example.com",  # PLACEHOLDER  # PLACEHOLDER
+        "endpoint_host": "fi.example.com",
         "endpoint_port": "49752",
         "server_pubkey": "MockServerPublicKeyDE3333333333333333333333=",
     },
@@ -186,7 +186,7 @@ def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool 
     endpoint_host = (
         os.environ.get(f"AWG_{srv_code.upper()}_ENDPOINT_HOST")
         or os.environ.get("AWG_ENDPOINT_HOST")
-        or node_defaults.get("endpoint_host", "warp.example.com")  # PLACEHOLDER
+        or node_defaults.get("endpoint_host", "warp.example.com")
     )
     endpoint_port = (
         os.environ.get(f"AWG_{srv_code.upper()}_ENDPOINT_PORT")
@@ -1072,9 +1072,85 @@ class WebCheckout:
                 return {"status": "ok", "message": "refund_revoked"}, 200
 
             if order.get("status") == "delivered":
-                LOGGER.info("Order %s already delivered, acknowledging callback", order_public_id)
-                self.store.finish_webhook_event("platega", event_id, ok=True)
-                return {"status": "ok", "message": "already_delivered"}, 200
+                if status == "CONFIRMED":
+                    meta = dict(order.get("meta_json") or {})
+                    # Check idempotent duplicate retry of the already confirmed Platega transaction or already resolved collision
+                    is_already_confirmed = bool(meta.get("platega_confirmed_at")) and (
+                        not tx_id
+                        or str(meta.get("platega_transaction_id") or "") == tx_id
+                        or str(meta.get("platega_collision_tx_id") or "") == tx_id
+                        or str(meta.get("platega_collision_resolved_tx_id") or "") == tx_id
+                    )
+                    is_already_resolved = bool(meta.get("platega_collision_resolution")) and (
+                        not tx_id
+                        or str(meta.get("platega_collision_tx_id") or "") == tx_id
+                        or str(meta.get("platega_transaction_id") or "") == tx_id
+                        or str(meta.get("platega_collision_resolved_tx_id") or "") == tx_id
+                    )
+                    if is_already_confirmed or is_already_resolved:
+                        LOGGER.info("Order %s already delivered and confirmed/resolved via Platega (retry tx=%s), acknowledging callback", order_public_id, tx_id)
+                        self.store.finish_webhook_event("platega", event_id, ok=True)
+                        return {"status": "ok", "message": "already_delivered"}, 200
+
+                    # Collision: order already delivered (e.g. manually or via another method), but Platega payment arrived!
+                    LOGGER.warning(
+                        "Platega payment collision for ALREADY DELIVERED order %s: tx_id=%s amount=%s",
+                        order_public_id,
+                        tx_id,
+                        amount,
+                    )
+                    meta["platega_collision_type"] = "already_delivered"
+                    meta["platega_collision_at"] = now_ts()
+                    meta["platega_collision_tx_id"] = tx_id
+                    meta["platega_collision_amount"] = amount
+                    order["meta_json"] = meta
+                    self.store.update_order_meta(order_public_id, meta)
+                    self._notify_admin_platega_anomaly(order, tx_id, amount, anomaly_type="already_delivered")
+                    self.store.finish_webhook_event("platega", event_id, ok=True)
+                    return {"status": "ok", "message": "collision_reported", "order_id": order_public_id}, 200
+                else:
+                    LOGGER.info("Order %s already delivered, acknowledging non-confirmed status %s", order_public_id, status)
+                    self.store.finish_webhook_event("platega", event_id, ok=True)
+                    return {"status": "ok", "message": f"delivered_order_{status.lower()}_ignored", "order_id": order_public_id}, 200
+
+            if order.get("status") in ("cancelled", "canceled"):
+                if status == "CONFIRMED":
+                    meta = dict(order.get("meta_json") or {})
+                    is_already_resolved = bool(meta.get("platega_collision_resolution")) and (
+                        not tx_id
+                        or str(meta.get("platega_collision_tx_id") or "") == tx_id
+                        or str(meta.get("platega_transaction_id") or "") == tx_id
+                        or str(meta.get("platega_collision_resolved_tx_id") or "") == tx_id
+                    )
+                    if is_already_resolved:
+                        LOGGER.info(
+                            "Order %s is cancelled but collision already resolved (%s) for tx=%s, acknowledging callback",
+                            order_public_id,
+                            meta.get("platega_collision_resolution"),
+                            tx_id,
+                        )
+                        self.store.finish_webhook_event("platega", event_id, ok=True)
+                        return {"status": "ok", "message": "already_resolved", "order_id": order_public_id}, 200
+
+                    LOGGER.warning(
+                        "Platega payment collision for CANCELLED order %s: tx_id=%s amount=%s",
+                        order_public_id,
+                        tx_id,
+                        amount,
+                    )
+                    meta["platega_collision_type"] = "cancelled"
+                    meta["platega_collision_at"] = now_ts()
+                    meta["platega_collision_tx_id"] = tx_id
+                    meta["platega_collision_amount"] = amount
+                    order["meta_json"] = meta
+                    self.store.update_order_meta(order_public_id, meta)
+                    self._notify_admin_platega_anomaly(order, tx_id, amount, anomaly_type="cancelled")
+                    self.store.finish_webhook_event("platega", event_id, ok=True)
+                    return {"status": "ok", "message": "collision_cancelled_reported", "order_id": order_public_id}, 200
+                else:
+                    LOGGER.info("Order %s is cancelled, acknowledging status %s", order_public_id, status)
+                    self.store.finish_webhook_event("platega", event_id, ok=True)
+                    return {"status": "ok", "message": "cancelled_order_ignored", "order_id": order_public_id}, 200
 
             if status == "CONFIRMED":
                 # Verify payload match if passed in callback
@@ -1194,6 +1270,80 @@ class WebCheckout:
         except Exception as exc:
             LOGGER.warning("Could not auto-deliver unique code %s: %s", unique_code, exc)
             return False
+
+    def _notify_admin_platega_anomaly(
+        self,
+        order: dict[str, Any],
+        tx_id: str,
+        amount: float,
+        anomaly_type: str,
+    ) -> None:
+        """Send emergency Telegram alert to admins about a Platega payment collision with actionable inline buttons."""
+        order_public_id = str(order.get("public_id") or "")
+        customer_email = str(
+            order.get("customer_email")
+            or (order.get("meta_json") or {}).get("customer_email")
+            or "Не указан"
+        ).strip()
+        customer_chat = str(order.get("customer_chat_id") or "").strip()
+        customer_info = customer_email
+        if customer_chat:
+            customer_info += f" (TG: {customer_chat})"
+
+        amt_str = f"{amount:.2f} RUB" if amount else f"{order.get('final_price_rub', 0)} RUB"
+
+        if anomaly_type == "already_delivered":
+            title = "⚠️ Двойная оплата в Platega!"
+            desc = (
+                "Заказ уже был исполнен и выдан, но по нему поступила оплата в Platega. "
+                "Деньги списаны у клиента на Platega."
+            )
+            buttons = [
+                [{"text": "🔗 Открыть Platega", "url": "https://app.platega.io"}],
+                [{"text": "➕ Продлить на 30 дн.", "callback_data": f"admin:platega_ext:{order_public_id}:{tx_id}"}],
+                [{"text": "↩️ Возврат оформлен", "callback_data": f"admin:platega_ack_refund:{order_public_id}:{tx_id}"}],
+            ]
+        else:
+            title = "🚨 Оплата в Platega по ОТМЁНЕННОМУ заказу!"
+            desc = (
+                "Заказ был отменён в системе, но клиент оплатил его через шлюз Platega. "
+                "Деньги списаны у клиента на Platega."
+            )
+            buttons = [
+                [{"text": "🔗 Открыть Platega", "url": "https://app.platega.io"}],
+                [{"text": "✅ Активировать доступ", "callback_data": f"admin:platega_act:{order_public_id}:{tx_id}"}],
+                [{"text": "↩️ Возврат оформлен", "callback_data": f"admin:platega_ack_refund:{order_public_id}:{tx_id}"}],
+            ]
+
+        msg = (
+            f"{title}\n\n"
+            f"• Заказ: #{order_public_id}\n"
+            f"• Клиент: {customer_info}\n"
+            f"• Сумма: {amt_str}\n"
+            f"• ID транзакции Platega: {tx_id}\n\n"
+            f"ℹ️ {desc}\n\n"
+            f"Выберите действие ниже:"
+        )
+        reply_markup = {"inline_keyboard": buttons}
+
+        alert_messages: list[dict[str, Any]] = []
+        admin_ids = getattr(self.settings, "admin_user_ids", None) or (123456789,)
+        telegram_client = getattr(self.bot, "telegram", None) or self.telegram
+        if telegram_client:
+            for admin_id in admin_ids:
+                try:
+                    sent = telegram_client.send_message(admin_id, msg, reply_markup=reply_markup)
+                    if isinstance(sent, dict) and sent.get("message_id"):
+                        alert_messages.append({"chat_id": admin_id, "message_id": sent["message_id"]})
+                except Exception as exc:
+                    LOGGER.warning("Failed to send Platega anomaly alert to admin %s: %s", admin_id, exc)
+
+        if alert_messages:
+            fresh = self.store.get_order(order_public_id)
+            meta = dict((fresh.get("meta_json") if fresh else None) or order.get("meta_json") or {})
+            meta["platega_collision_alert_messages"] = alert_messages
+            self.store.update_order_meta(order_public_id, meta)
+            order["meta_json"] = meta
 
     def _notify_admin_digiseller_alert(self, subject: str, details: dict[str, Any]) -> None:
         """Send emergency Telegram alert to admins about a payment anomaly."""
@@ -1963,7 +2113,7 @@ class WebCheckout:
             try:
                 base = (getattr(self.settings, "checkout_base_url", "") or getattr(self.settings, "web_public_base_url", "") or "").rstrip("/")
                 if not base:
-                    base = "https://example.com"  # PLACEHOLDER
+                    base = "https://example.com"
                 order_url = f"{base}/order/{order_dict['public_id']}/{web_tok}"
                 self.get_or_create_platega_payment_url(order_dict, return_url=order_url, failed_url=order_url)
             except Exception:
@@ -2444,8 +2594,8 @@ class WebCheckout:
             return dict(cls._PING_CACHE["data"])
         targets = {
             "nl": ("127.0.0.1", 4430),
-            "de": (os.environ.get("AWG_DE_HOST", "de.example.com"), 443),  # PLACEHOLDER
-            "fi": (os.environ.get("AWG_FI_HOST", "fi.example.com"), 443),  # PLACEHOLDER
+            "de": (os.environ.get("AWG_DE_HOST", "de.example.com"), 443),
+            "fi": (os.environ.get("AWG_FI_HOST", "fi.example.com"), 443),
         }
         results = {}
         for code, (host, port) in targets.items():
@@ -3012,9 +3162,9 @@ class WebCheckout:
   <meta property="og:title" content="SilentConnect — Приватный и безопасный интернет">
   <meta property="og:description" content="Сервис защищенного и приватного сетевого доступа для персонального использования. Без ограничений и без логирования активности.">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://example.com"><!-- PLACEHOLDER -->
+  <meta property="og:url" content="https://example.com">
   <meta property="og:site_name" content="SilentConnect">
-  <meta property="og:image" content="https://example.com/assets/telegram/avatar.png"><!-- PLACEHOLDER -->
+  <meta property="og:image" content="https://example.com/assets/telegram/avatar.png">
   {refresh}
   <title>{html.escape(title)} · SilentConnect</title>
   <link rel="icon" type="image/png" href="/assets/telegram/avatar.png">
@@ -4115,9 +4265,9 @@ class WebCheckout:
     "@graph": [
       {{
         "@type": "Organization",
-        "@id": "https://example.com/#organization", "placeholder": "PLACEHOLDER",
+        "@id": "https://example.com/#organization",
         "name": "SilentConnect",
-        "url": "https://example.com", "comment": "PLACEHOLDER",
+        "url": "https://example.com",
         "description": "Сервис приватного сетевого доступа для персонального использования без логирования активности",
         "contactPoint": {{
           "@type": "ContactPoint",
@@ -4127,7 +4277,7 @@ class WebCheckout:
       }},
       {{
         "@type": "SoftwareApplication",
-        "@id": "https://example.com/#software", "placeholder": "PLACEHOLDER",
+        "@id": "https://example.com/#software",
         "name": "SilentConnect",
         "applicationCategory": "SecurityApplication",
         "operatingSystem": "iOS, Android, Windows, macOS, Linux",
@@ -4137,7 +4287,7 @@ class WebCheckout:
           "priceCurrency": "RUB",
           "description": "Тарифы от 149 RUB/месяц для защищенного доступа к интернету"
         }},
-        "url": "https://example.com", "comment": "PLACEHOLDER"
+        "url": "https://example.com"
       }}
     ]
   }}
@@ -4353,6 +4503,35 @@ class WebCheckout:
         if target_view in ("order", "sub", "cabinet", "legal") and target_view != "landing":
             rendered = rendered.replace('<main id="view-landing" data-view>', '<main id="view-landing" data-view hidden>', 1)
             rendered = rendered.replace(f'<main id="view-{target_view}" data-view hidden>', f'<main id="view-{target_view}" data-view>', 1)
+
+        if target_view == "legal":
+            legal_doc_id = str(payload.get("legalDoc") or "about").strip()
+            # Toggle active button in legal nav
+            rendered = re.sub(r'<button([^>]*data-doc="[^"]*")[^>]*class="on"([^>]*)>', r'<button\1\2>', rendered)
+            rendered = re.sub(
+                rf'(<button[^>]*data-doc="{re.escape(legal_doc_id)}"[^>]*)>',
+                r'\1 class="on">',
+                rendered,
+            )
+            # Inject document body for SSR / non-JS crawlers
+            if compat_body:
+                rendered = rendered.replace(
+                    '<article class="prose glass" id="legalDoc"></article>',
+                    f'<article class="prose glass" id="legalDoc">{compat_body}</article>',
+                    1
+                )
+            doc_titles = {
+                "privacy": "Политика конфиденциальности",
+                "terms": "Пользовательское соглашение",
+                "refund": "Политика возврата средств",
+                "contact": "Контакты и поддержка",
+                "about": "О сервисе SilentConnect",
+            }
+            if legal_doc_id in doc_titles:
+                doc_title = f"{doc_titles[legal_doc_id]} · SilentConnect"
+                rendered = re.sub(r'<title>.*?</title>', f'<title>{html.escape(doc_title)}</title>', rendered, count=1)
+                rendered = re.sub(r'<meta property="og:title" content="[^"]*">', f'<meta property="og:title" content="{html.escape(doc_title)}">', rendered, count=1)
+
         return rendered.encode("utf-8")
 
     def _legacy_unused_return(self, html_doc: str) -> bytes:
@@ -5158,6 +5337,8 @@ class WebCheckout:
                 "errorMessage": flash,
                 "order": {
                     "publicId": str(order["public_id"]),
+                    "kind": str(order.get("kind") or meta.get("kind") or "new"),
+                    "isRenewal": bool(str(order.get("kind") or meta.get("kind") or "") == "renewal"),
                     "state": "waiting",
                     "planLabel": f"{({3: 'Личный', 6: 'Домашний', 9: 'Расширенный'}).get(dev_lim, 'Тариф')} · {device_limit_label(dev_lim)}",
                     "durationLabel": f"{int(order['duration_days'])} дней",
@@ -5208,6 +5389,8 @@ class WebCheckout:
                 "errorMessage": flash,
                 "order": {
                     "publicId": str(order["public_id"]),
+                    "kind": str(order.get("kind") or meta.get("kind") or "new"),
+                    "isRenewal": bool(str(order.get("kind") or meta.get("kind") or "") == "renewal"),
                     "state": "delivered",
                     "planLabel": f"{({3: 'Личный', 6: 'Домашний', 9: 'Расширенный'}).get(dev_lim, 'Тариф')} · {device_limit_label(dev_lim)}",
                     "durationLabel": f"{int(order['duration_days'])} дней",
@@ -5234,6 +5417,8 @@ class WebCheckout:
                 "errorMessage": flash,
                 "order": {
                     "publicId": str(order["public_id"]),
+                    "kind": str(order.get("kind") or meta.get("kind") or "new"),
+                    "isRenewal": bool(str(order.get("kind") or meta.get("kind") or "") == "renewal"),
                     "state": "cancelled",
                     "planLabel": f"{({3: 'Личный', 6: 'Домашний', 9: 'Расширенный'}).get(dev_lim, 'Тариф')} · {device_limit_label(dev_lim)}",
                     "durationLabel": f"{int(order['duration_days'])} дней",
@@ -5543,19 +5728,19 @@ class RequestHandler(BaseHTTPRequestHandler):
                     extra_headers=extra_headers if extra_headers else None,
                 )
                 return
-            if path == ["legal", "privacy"]:
+            if path in (["legal", "privacy"], ["privacy"]):
                 self._send(HTTPStatus.OK, self.checkout.render_legal_privacy())
                 return
-            if path == ["legal", "terms"]:
+            if path in (["legal", "terms"], ["terms"]):
                 self._send(HTTPStatus.OK, self.checkout.render_legal_terms())
                 return
-            if path == ["legal", "refund"]:
+            if path in (["legal", "refund"], ["refund"]):
                 self._send(HTTPStatus.OK, self.checkout.render_legal_refund())
                 return
-            if path == ["about"]:
+            if path in (["about"], ["legal", "about"]):
                 self._send(HTTPStatus.OK, self.checkout.render_about())
                 return
-            if path == ["contact"]:
+            if path in (["contact"], ["contacts"], ["legal", "contact"], ["legal", "contacts"]):
                 self._send(HTTPStatus.OK, self.checkout.render_contact())
                 return
             if self._serve_asset(path):

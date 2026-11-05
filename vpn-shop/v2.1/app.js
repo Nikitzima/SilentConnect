@@ -14,12 +14,13 @@ const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const fmt = n => new Intl.NumberFormat('ru-RU').format(Math.round(n));
 
-let SUB_ID = 'sc_live_88f29a1d';
-let SUB_URL = `https://sub.silentconnect.net/my-secret-sub/${SUB_ID}`; /* PLACEHOLDER */
-let SUB_IMPORT_URL = `https://sub.silentconnect.net/my-secret-sub/import/${SUB_ID}`; /* PLACEHOLDER */
-let IMPORT_BASE = 'https://sub.silentconnect.net/my-secret-sub/import'; /* PLACEHOLDER */
-let APP_IMPORT_URLS = {};
-const importUrlFor = app => APP_IMPORT_URLS[app] || `${IMPORT_BASE}/${app}/${SUB_ID}`;
+const _initSub = (window.SC_PROD && window.SC_PROD.sub) || {};
+let SUB_ID = _initSub.subId || '';
+let SUB_URL = _initSub.subUrl || '';
+let SUB_IMPORT_URL = _initSub.subImportUrl || '';
+let IMPORT_BASE = _initSub.importBase || '/my-secret-sub/import';
+let APP_IMPORT_URLS = _initSub.importLinks || {};
+const importUrlFor = app => APP_IMPORT_URLS[app] || (SUB_ID ? `${IMPORT_BASE}/${app}/${SUB_ID}` : '#');
 
 /* ---------- Всплывающие уведомления (Toast) ---------- */
 let toastTimer = null;
@@ -32,6 +33,127 @@ function toast(msg, duration = 3000) {
   toastTimer = setTimeout(() => t.classList.remove('show'), duration);
 }
 window.toast = toast;
+
+/* ---------- Уведомления об оплате и логика закрытия (dismiss) ---------- */
+window.dismissPaymentNotice = function(orderId) {
+  const card = document.getElementById("paymentNoticeCard");
+  const effOrderId = orderId || (card ? card.getAttribute("data-order-id") : "");
+  if (!effOrderId) return;
+  const currentStatus = card ? (card.getAttribute("data-order-status") || "dismissed") : "dismissed";
+
+  if (card) {
+    card.style.opacity = "0";
+    card.style.transform = "translateY(-8px) scale(0.98)";
+    card.style.maxHeight = card.offsetHeight + "px";
+    card.style.transition = "opacity 0.25s ease, transform 0.25s ease, max-height 0.25s ease, margin 0.25s ease, padding 0.25s ease";
+    requestAnimationFrame(() => {
+      card.style.maxHeight = "0px";
+      card.style.paddingTop = "0px";
+      card.style.paddingBottom = "0px";
+      card.style.marginTop = "0px";
+      card.style.marginBottom = "0px";
+    });
+    setTimeout(() => {
+      card.remove();
+      const slot = document.getElementById("subNoticeSlot");
+      if (slot) slot.innerHTML = "";
+    }, 260);
+  }
+
+  try {
+    localStorage.setItem("sc_dismissed_notice_" + effOrderId, currentStatus);
+  } catch (e) {}
+
+  try {
+    const secretSeg = (window.SC_PROD && window.SC_PROD.sub && window.SC_PROD.sub.secretSegment) || "my-secret-sub";
+    const subId = (window.SC_PROD && window.SC_PROD.sub && window.SC_PROD.sub.subId) || "";
+    fetch("/" + encodeURIComponent(secretSeg) + "/dismiss-notice/" + encodeURIComponent(effOrderId), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Requested-With": "XMLHttpRequest"
+      },
+      keepalive: true,
+      body: JSON.stringify({
+        status: currentStatus,
+        sub_id: subId
+      })
+    }).catch(function() {});
+  } catch (e) {}
+};
+
+document.addEventListener("click", function(e) {
+  const btn = e.target.closest(".sub-flash-close, [data-dismiss-order]");
+  if (btn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const oid = btn.getAttribute("data-dismiss-order") || (btn.closest("#paymentNoticeCard") ? btn.closest("#paymentNoticeCard").getAttribute("data-order-id") : "");
+    window.dismissPaymentNotice(oid);
+  }
+});
+
+/* ---------- Универсальная валидация Cloudflare Turnstile ---------- */
+function checkTurnstileVerified(formEl, errorEl) {
+  if (!formEl) return true;
+  const P = window.SC_PROD || {};
+  const tsKey = P.turnstileSiteKey || P.cfTurnstileSiteKey || '';
+  if (!tsKey) return true;
+
+  let turnstileToken = '';
+  const tsInput = formEl.querySelector('[name="cf-turnstile-response"]');
+  if (tsInput && tsInput.value) {
+    turnstileToken = tsInput.value.trim();
+  } else if (window.turnstile && typeof window.turnstile.getResponse === 'function') {
+    try {
+      turnstileToken = (window.turnstile.getResponse() || '').trim();
+    } catch (_) {}
+  }
+
+  const cfWidget = formEl.querySelector('.cf-widget') || formEl.querySelector('.cf-turnstile');
+  if (!turnstileToken) {
+    if (errorEl) {
+      errorEl.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Подтвердите, что вы не робот</span>';
+      errorEl.style.display = 'inline-flex';
+    }
+    if (cfWidget) {
+      cfWidget.classList.add('cf-widget-error');
+      cfWidget.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      cfWidget.classList.remove('cf-widget-shake');
+      void cfWidget.offsetWidth;
+      cfWidget.classList.add('cf-widget-shake');
+    }
+    toast('Подтвердите, что вы не робот');
+    return false;
+  }
+
+  if (errorEl) {
+    errorEl.style.display = 'none';
+    errorEl.textContent = '';
+  }
+  if (cfWidget) {
+    cfWidget.classList.remove('cf-widget-error', 'cf-widget-shake');
+  }
+  return true;
+}
+window.checkTurnstileVerified = checkTurnstileVerified;
+
+window.onTurnstileSuccess = function(token) {
+  ['#renewTurnstileError', '#checkoutTurnstileError', '#cabinetTurnstileError'].forEach(sel => {
+    const errBox = $(sel);
+    if (errBox) {
+      errBox.style.display = 'none';
+      errBox.textContent = '';
+    }
+  });
+  $$('.cf-widget, .cf-turnstile').forEach(el => {
+    el.classList.remove('cf-widget-error', 'cf-widget-shake');
+  });
+};
+window.onTurnstileExpired = function() {
+  $$('.cf-widget, .cf-turnstile').forEach(el => {
+    el.classList.remove('cf-widget-error', 'cf-widget-shake');
+  });
+};
 
 /* ---------- Копирование в буфер обмена ---------- */
 function copyToClipboard(text, successMsg = 'Скопировано в буфер обмена') {
@@ -599,9 +721,9 @@ const FAQ_DATA = [
 
 const faqListEl = $('#faqList');
 if (faqListEl) {
-  faqListEl.innerHTML = FAQ_DATA.map((item, idx) => `
-    <div class="faq" data-open="${idx === 0 ? 'true' : 'false'}">
-      <button type="button" class="faq-q" aria-expanded="${idx === 0 ? 'true' : 'false'}">
+  faqListEl.innerHTML = FAQ_DATA.map(item => `
+    <div class="faq" data-open="false">
+      <button type="button" class="faq-q" aria-expanded="false">
         <span>${item.q}</span>
         <i aria-hidden="true">+</i>
       </button>
@@ -720,7 +842,7 @@ document.addEventListener('click', e => {
   e.preventDefault();
   closeAllModals();
   const doc = a.dataset.docLink;
-  if (doc) showLegalDoc(doc);
+  if (doc) showLegalDoc(doc, true);
   view(a.dataset.go, href.startsWith('#') ? href : '');
 });
 
@@ -1062,11 +1184,25 @@ function preferredMainApp(os) {
 }
 
 /* =========================================================================
-   6. РЕЖИМЫ ПОДКЛЮЧЕНИЯ И СИНХРОНИЗАЦИЯ КАРТОЧКИ (Main / Awg / OpenFlux)
+   6. РЕЖИМЫ ПОДКЛЮЧЕНИЯ, КАРУСЕЛЬ И ПЛАВНАЯ СМЕНА СОДЕРЖИМОГО (Main / Awg / OpenFlux)
    ========================================================================= */
 const MODES = ['main', 'awg', 'openflux'];
+const REDUCED_MOTION = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+const FX_OUT_MS = 110;      /* длительность fade-out старого содержимого (см. .fx-out в v2.css) */
+let subVpTimer = 0;         /* снимает .animating-mode после анимации высоты */
+let subParkTimer = 0;       /* паркует неактивные панели после перелистывания */
 
-/* Высота окна карусели = высота активной панели */
+/* «Парковка»: неактивная панель не участвует в layout/paint (content-visibility:hidden),
+   поэтому лента карусели = высота активной панели, а не самой высокой из трёх. */
+function parkInactivePanes() {
+  MODES.forEach(m => {
+    const p = $(`#pane-${m}`);
+    if (p) p.classList.toggle('is-parked', m !== S.subMode);
+  });
+}
+
+/* Высота окна карусели = высота активной панели. options.animate === true → плавная анимация высоты
+   (ResizeObserver передаёт массив записей, у него .animate нет, поэтому он всегда «мгновенный»). */
 function syncSubViewport(options) {
   const viewport = $('#subViewport');
   const pane = $(`#pane-${S.subMode}`);
@@ -1078,19 +1214,13 @@ function syncSubViewport(options) {
       if (viewport.scrollLeft !== 0) viewport.scrollLeft = 0;
     }, { passive: true });
   }
-  const shouldAnimate = Boolean(options && options.animate);
-  if (shouldAnimate) {
+  if (options && options.animate === true && !REDUCED_MOTION) {
     viewport.classList.add('animating-mode');
-  } else {
-    viewport.classList.remove('animating-mode');
+    clearTimeout(subVpTimer);
+    subVpTimer = setTimeout(() => viewport.classList.remove('animating-mode'), 420);
   }
   const h = pane.offsetHeight;
   if (h > 0) viewport.style.height = h + 'px';
-  if (shouldAnimate) {
-    setTimeout(() => {
-      viewport.classList.remove('animating-mode');
-    }, 400);
-  }
   MODES.forEach(m => {
     const p = $(`#pane-${m}`);
     if (!p) return;
@@ -1104,6 +1234,79 @@ function syncSubViewport(options) {
 if (window.ResizeObserver) {
   const subRO = new ResizeObserver(syncSubViewport);
   MODES.forEach(m => { const p = $(`#pane-${m}`); if (p) subRO.observe(p); });
+}
+
+/* ---------- Плавная подмена содержимого области: fade-out → подмена → fade-in (только opacity) ----------
+   key  — «логический вид» (ОС+приложение и т.п.): при смене key подмена идёт с fade,
+          при том же key (просто обновились данные) — мгновенно, без мерцания.
+   html — готовая разметка; если она совпадает с уже показанной, отложенная подмена отменяется.
+   after(el) вызывается после каждой реальной подмены (навешивание обработчиков). */
+const fxRegions = new WeakMap();
+function cancelRegionSwap(el) {
+  const st = el && fxRegions.get(el);
+  if (!st) return;
+  clearTimeout(st.timer);
+  el.classList.remove('fx-out');
+}
+function swapRegion(el, key, html, after) {
+  if (!el) return;
+  let st = fxRegions.get(el);
+  if (!st) { st = { html: undefined, key: undefined, timer: 0 }; fxRegions.set(el, st); }
+  clearTimeout(st.timer);
+  if (st.html === html) { el.classList.remove('fx-out'); return; }
+
+  const commit = fadeIn => {
+    el.innerHTML = html;
+    st.html = html;
+    st.key = key;
+    if (after) after(el);
+    el.classList.remove('fx-out');
+    el.classList.remove('fx-in');
+    if (fadeIn) {
+      void el.offsetWidth;             /* перезапуск CSS-анимации */
+      el.classList.add('fx-in');
+      setTimeout(() => el.classList.remove('fx-in'), 340);
+    }
+    syncSubViewport({ animate: fadeIn });
+  };
+
+  if (st.html === undefined || st.key === key || REDUCED_MOTION) { commit(false); return; }
+  el.classList.remove('fx-in');
+  el.classList.add('fx-out');
+  st.timer = setTimeout(() => commit(true), FX_OUT_MS);
+}
+
+/* ---------- Карточки приложений (общие для «Основной» и «Игровой») ---------- */
+const CHECK_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+function appCardsHtml(items, curId) {
+  return items.map(a => {
+    const on = a.id === curId;
+    return `<button type="button" class="app-card${on ? ' active' : ''}" data-app-id="${a.id}">
+          <img src="${a.icon}" alt="${a.name}" class="app-icon-img" onerror="this.style.display='none'">
+          <div class="app-info"><div class="app-name-row">
+            <span class="app-name">${a.name}</span>
+            ${a.badge ? `<span class="app-badge ${badgeClassOf(a.badge)}">${a.badge}</span>` : ''}
+          </div></div>
+          <span class="app-check" aria-hidden="true">${on ? CHECK_SVG : ''}</span></button>`;
+  }).join('');
+}
+function setActiveAppCard(grid, curId) {
+  grid.querySelectorAll('.app-card').forEach(card => {
+    const on = card.dataset.appId === curId;
+    card.classList.toggle('active', on);
+    const check = card.querySelector('.app-check');
+    if (check) check.innerHTML = on ? CHECK_SVG : '';
+  });
+}
+function bindAppCardClicks(grid, onPick) {
+  if (!grid) return;
+  grid._onAppPick = onPick;
+  if (grid._appClickBound) return;
+  grid._appClickBound = true;
+  grid.addEventListener('click', e => {
+    const card = e.target.closest && e.target.closest('.app-card');
+    if (card && grid.contains(card) && grid._onAppPick) grid._onAppPick(card.dataset.appId);
+  });
 }
 
 function renderMainSetup() {
@@ -1123,40 +1326,22 @@ function renderMainSetup() {
 
   const grid = $('#appsGridMain');
   if (grid) {
-    const isSameOs = grid.dataset.renderedOs === os;
-    if (!isSameOs) {
-      grid.innerHTML = '';
-      grid.dataset.renderedOs = os;
-      avail.forEach(a => {
+    if (grid.dataset.renderedOs === os) {
+      /* та же ОС — только переключаем «активную» карточку на месте (без пересоздания иконок) */
+      cancelRegionSwap(grid);
+      setActiveAppCard(grid, cur.id);
+    } else {
+      const items = avail.map(a => {
         let name = a.name, icon = a.icon;
         if (os === 'ios') {
           if (a.id === 'singbox') name = 'sing-box MT';
           else if (a.id === 'clash') { name = 'Clash Mi'; if (a.iosIcon) icon = a.iosIcon; }
         }
-        const on = a.id === cur.id;
-        const card = document.createElement('button');
-        card.type = 'button';
-        card.className = 'app-card' + (on ? ' active' : '');
-        card.dataset.appId = a.id;
-        card.innerHTML = `
-          <img src="${icon}" alt="${name}" class="app-icon-img" onerror="this.style.display='none'">
-          <div class="app-info"><div class="app-name-row">
-            <span class="app-name">${name}</span>
-            ${a.badge ? `<span class="app-badge ${badgeClassOf(a.badge)}">${a.badge}</span>` : ''}
-          </div></div>
-          <span class="app-check" aria-hidden="true">${on ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}</span>`;
-        card.addEventListener('click', () => {
-          S.appMain = a.id;
-          renderMainSetup();
-        });
-        grid.appendChild(card);
+        return { id: a.id, name, icon, badge: a.badge };
       });
-    } else {
-      grid.querySelectorAll('.app-card').forEach(card => {
-        const on = card.dataset.appId === cur.id;
-        card.classList.toggle('active', on);
-        const check = card.querySelector('.app-check');
-        if (check) check.innerHTML = on ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '';
+      swapRegion(grid, os, appCardsHtml(items, cur.id), g => {
+        g.dataset.renderedOs = os;
+        bindAppCardClicks(g, id => { S.appMain = id; renderMainSetup(); });
       });
     }
   }
@@ -1164,7 +1349,7 @@ function renderMainSetup() {
   const title = cur.id === 'singbox' && os === 'ios' ? 'sing-box MT' : (cur.id === 'clash' && os === 'ios' ? 'Clash Mi' : cur.name);
   const stepsGrid = $('#stepsGridMain');
   if (stepsGrid) {
-    stepsGrid.innerHTML = `
+    const stepsHtml = `
       <div class="s-step">
         <div>
           <div class="s-step-head"><span class="s-step-num">1</span><h4>Установка клиента</h4></div>
@@ -1173,7 +1358,9 @@ function renderMainSetup() {
               <span>Подробнее</span>
               <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
             </summary>
-            <p class="step-details-text">${cur.description} Операционная система: ${OS_LABEL[os]}.</p>
+            <div class="step-details-content"><div class="step-details-inner">
+              <p class="step-details-text">${cur.description} Операционная система: ${OS_LABEL[os]}.</p>
+            </div></div>
           </details>
         </div>
         <div class="step-btns">${dlButtonsHtml(cur.downloads[os] || [])}</div>
@@ -1186,10 +1373,12 @@ function renderMainSetup() {
               <span>Подробнее</span>
               <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
             </summary>
-            <p class="step-details-text">Нажмите «Добавить подписку». Приложение откроется автоматически и применит зашифрованный профиль SilentConnect.</p>
+            <div class="step-details-content"><div class="step-details-inner">
+              <p class="step-details-text">Нажмите «Добавить подписку». Приложение откроется автоматически и применит зашифрованный профиль SilentConnect.</p>
+            </div></div>
           </details>
         </div>
-        <div class="step-btns"><a href="${importUrlFor(cur.id)}" class="btn btn-primary btn-sm" onclick="${window.SC_PROD ? '' : 'event.preventDefault();'}toast('Открываем ${title} и передаём профиль…')">Добавить подписку <svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></a></div>
+        <div class="step-btns"><a href="${importUrlFor(cur.id)}" class="btn btn-primary btn-sm" onclick="${window.SC_PROD ? '' : 'event.preventDefault();'}toast('Открываем ${title} и передаём профиль…')"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> Добавить подписку</a></div>
       </div>
       <div class="s-step done">
         <div>
@@ -1205,12 +1394,15 @@ function renderMainSetup() {
               <span>Подробнее</span>
               <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
             </summary>
-            <p class="step-details-text">Если бесшовный переход не сработал: скопируйте ссылку ниже в буфер обмена и выберите «Импорт из буфера обмена» в настройках приложения.</p>
+            <div class="step-details-content"><div class="step-details-inner">
+              <p class="step-details-text">Если бесшовный переход не сработал: скопируйте ссылку ниже в буфер обмена и выберите «Импорт из буфера обмена» в настройках приложения.</p>
+            </div></div>
           </details>
         </div>
         <div class="step-btns"><button type="button" class="btn btn-ghost btn-sm" onclick="copyToClipboard('${SUB_URL || SUB_IMPORT_URL}', 'Ссылка подписки скопирована!')">Скопировать ссылку <svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button></div>
         <input class="field mono-field" name="sub_manual_url" readonly value="${SUB_URL || SUB_IMPORT_URL}" aria-label="Ссылка подписки" onclick="this.select()">
       </div>`;
+    swapRegion(stepsGrid, `${os}|${cur.id}`, stepsHtml);
   }
   syncSubViewport();
 }
@@ -1231,9 +1423,24 @@ const setModeSegVisual = bindLiquidSegmented(
 function setSubMode(mode) {
   if (!MODES.includes(mode)) mode = 'main';
   const newIdx = MODES.indexOf(mode);
+  const prevIdx = MODES.indexOf(S.subMode);
   const changed = mode !== S.subMode;
   S.subMode = mode;
   setModeSegVisual(newIdx, changed);
+
+  const viewport = $('#subViewport');
+  if (changed) {
+    /* на время перелистывания «распаркуем» все панели между старой и новой (чтобы средняя не была пустой),
+       слой ленты промотируем только пока идёт анимация, потом снова паркуем лишнее */
+    const lo = Math.min(prevIdx, newIdx), hi = Math.max(prevIdx, newIdx);
+    for (let i = lo; i <= hi; i++) { const p = $(`#pane-${MODES[i]}`); if (p) p.classList.remove('is-parked'); }
+    if (viewport) viewport.classList.add('sliding');
+    clearTimeout(subParkTimer);
+    subParkTimer = setTimeout(() => {
+      parkInactivePanes();
+      if (viewport) viewport.classList.remove('sliding');
+    }, 720);
+  }
 
   // Horizontal slide translation (0%, -33.3333%, -66.6666%)
   const slider = $('#subModeSlider');
@@ -1244,10 +1451,11 @@ function setSubMode(mode) {
   if (mode === 'main') renderMainSetup();
   else if (mode === 'awg') renderAwgSetup();
   else if (mode === 'openflux') renderOfSetup();
-  syncSubViewport({ animate: true });
+  syncSubViewport({ animate: changed });
 }
 window.setSubMode = setSubMode;
 syncSubViewport();
+parkInactivePanes();
 
 /* =========================================================================
    Bento «Что вы получаете»: на узких экранах ПК-раскладка целиком уменьшается
@@ -1331,7 +1539,7 @@ H4 = 4
 
 [Peer]
 PublicKey = xT9q...SERVER_PUB_KEY...=
-Endpoint = ${slot.server}.edge.silentconnect.net:38421 /* PLACEHOLDER */
+Endpoint = ${slot.server}.edge.example.com:38421
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25`;
 }
@@ -1352,14 +1560,17 @@ function renderAwgSetup() {
   if (countBadge) countBadge.textContent = pluralSlots(AWG_SLOTS.length);
 
   const slotsCont = $('#awgSlotsGrid');
+  const slotsWrap = $('#awgSlotsWrap');
   const toggleBtn = $('#awgSlotsToggleBtn');
   const toggleText = $('#awgSlotsToggleText');
   const toggleIco = $('#awgSlotsToggleIco');
 
   function updateSlotsVisibility() {
-    if (!slotsCont) return;
+    if (!slotsWrap) return;
     const isCollapsed = Boolean(S.awgSlotsCollapsed);
-    slotsCont.classList.toggle('collapsed', isCollapsed);
+    slotsWrap.classList.toggle('collapsed', isCollapsed);
+    if (slotsCont) slotsCont.inert = isCollapsed;
+    if (toggleBtn) toggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
     if (toggleText) toggleText.textContent = isCollapsed ? `Показать все слоты (${AWG_SLOTS.length})` : 'Свернуть список';
     if (toggleIco) toggleIco.style.transform = isCollapsed ? 'rotate(180deg)' : 'rotate(0deg)';
   }
@@ -1374,14 +1585,11 @@ function renderAwgSetup() {
   updateSlotsVisibility();
 
   if (slotsCont) {
-    slotsCont.innerHTML = '';
-    AWG_SLOTS.forEach(slot => {
+    /* разметка списка не зависит от выбранного слота — «целевой» подсвечивается классом на месте,
+       поэтому карточки не пересоздаются при выборе устройства */
+    const slotsHtml = AWG_SLOTS.map(slot => {
       const srv = AWG_SERVERS[slot.server] || AWG_SERVERS.nl;
-      const isTarget = slot.id === S.awgTargetSlot;
-      const card = document.createElement('div');
-      card.className = 'slot' + (isTarget ? ' active-target' : '');
-      card.dataset.slotId = slot.id;
-      card.innerHTML = `
+      return `<div class="slot" data-slot-id="${slot.id}">
         <div>
           <div class="slot-top">
             <span style="font-weight:700;color:#fff;font-size:14.5px;display:inline-flex;align-items:center;gap:6px">
@@ -1400,46 +1608,36 @@ function renderAwgSetup() {
           <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openSlotQrModal(${slot.id})"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> QR-код</button>
           <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();copySlotConf(${slot.id})"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Ключ</button>
           <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openAwgSwitchModal(${slot.id})"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-1.19"/></svg> Сервер</button>
-        </div>`;
-      card.addEventListener('click', () => {
-        S.awgTargetSlot = slot.id;
+        </div></div>`;
+    }).join('');
+    swapRegion(slotsCont, 'slots', slotsHtml, el => {
+      if (el._slotClickBound) return;
+      el._slotClickBound = true;
+      el.addEventListener('click', e => {
+        const card = e.target.closest && e.target.closest('.slot');
+        if (!card || !el.contains(card)) return;
+        S.awgTargetSlot = Number(card.dataset.slotId);
         renderAwgSetup();
       });
-      slotsCont.appendChild(card);
+    });
+    slotsCont.querySelectorAll('.slot').forEach(card => {
+      card.classList.toggle('active-target', Number(card.dataset.slotId) === S.awgTargetSlot);
     });
   }
 
   const grid = $('#appsGridAwg');
   if (grid) {
-    const isSameOs = grid.dataset.renderedOs === S.osAwg;
     const avail = AWG_APPS.filter(a => a.platforms.includes(S.osAwg));
     const cur = avail.find(a => a.id === S.appAwg) || avail[0];
 
-    if (!isSameOs) {
-      grid.innerHTML = '';
-      grid.dataset.renderedOs = S.osAwg;
-      avail.forEach(a => {
-        const on = a.id === cur.id;
-        const card = document.createElement('button');
-        card.type = 'button';
-        card.className = 'app-card' + (on ? ' active' : '');
-        card.dataset.appId = a.id;
-        card.innerHTML = `
-          <img src="${a.icon}" alt="${a.name}" class="app-icon-img" onerror="this.style.display='none'">
-          <div class="app-info"><div class="app-name-row">
-            <span class="app-name">${a.name}</span>
-            ${a.badge ? `<span class="app-badge ${badgeClassOf(a.badge)}">${a.badge}</span>` : ''}
-          </div></div>
-          <span class="app-check" aria-hidden="true">${on ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}</span>`;
-        card.addEventListener('click', () => { S.appAwg = a.id; renderAwgSetup(); });
-        grid.appendChild(card);
-      });
+    if (grid.dataset.renderedOs === S.osAwg) {
+      cancelRegionSwap(grid);
+      setActiveAppCard(grid, cur.id);
     } else {
-      grid.querySelectorAll('.app-card').forEach(card => {
-        const on = card.dataset.appId === cur.id;
-        card.classList.toggle('active', on);
-        const check = card.querySelector('.app-check');
-        if (check) check.innerHTML = on ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '';
+      const osNow = S.osAwg;
+      swapRegion(grid, osNow, appCardsHtml(avail, cur.id), g => {
+        g.dataset.renderedOs = osNow;
+        bindAppCardClicks(g, id => { S.appAwg = id; renderAwgSetup(); });
       });
     }
 
@@ -1448,7 +1646,7 @@ function renderAwgSetup() {
 
     const stepsGrid = $('#stepsGridAwg');
     if (stepsGrid) {
-      stepsGrid.innerHTML = `
+      const stepsHtml = `
         <div class="s-step">
           <div>
             <div class="s-step-head"><span class="s-step-num">1</span><h4>Установка клиента ${cur.name}</h4></div>
@@ -1457,7 +1655,9 @@ function renderAwgSetup() {
                 <span>Подробнее</span>
                 <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
               </summary>
-              <p class="step-details-text">Скачайте официальное бесплатное приложение с открытым исходным кодом для вашей операционной системы (${OS_LABEL[S.osAwg]}):</p>
+              <div class="step-details-content"><div class="step-details-inner">
+                <p class="step-details-text">Скачайте официальное бесплатное приложение с открытым исходным кодом для вашей операционной системы (${OS_LABEL[S.osAwg]}):</p>
+              </div></div>
             </details>
           </div>
           <div class="step-btns">${dlButtonsHtml(cur.downloads[S.osAwg] || [])}</div>
@@ -1470,13 +1670,15 @@ function renderAwgSetup() {
                 <span>Подробнее</span>
                 <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
               </summary>
-              <div class="step-details-text">
-                <p>Выберите нужное устройство из списка ниже или в блоке слотов выше:</p>
-                <ul>
-                  <li><b>На смартфоне:</b> Нажмите «🔲 QR-код», в приложении нажмите <b>«+»</b> → <b>«Сканировать QR-код»</b>.</li>
-                  <li><b>На компьютере:</b> Нажмите «📥 Скачать .conf», в приложении выберите <b>«Файл с настройками»</b> и укажите скачанный файл.</li>
-                </ul>
-              </div>
+              <div class="step-details-content"><div class="step-details-inner">
+                <div class="step-details-text">
+                  <p>Выберите нужное устройство из списка ниже или в блоке слотов выше:</p>
+                  <ul>
+                    <li><b>На смартфоне:</b> Нажмите «🔲 QR-код», в приложении нажмите <b>«+»</b> → <b>«Сканировать QR-код»</b>.</li>
+                    <li><b>На компьютере:</b> Нажмите «📥 Скачать .conf», в приложении выберите <b>«Файл с настройками»</b> и укажите скачанный файл.</li>
+                  </ul>
+                </div>
+              </div></div>
             </details>
           </div>
           <div class="awg-step-slot-picker">
@@ -1506,21 +1708,23 @@ function renderAwgSetup() {
           </div>
         </div>`;
 
-      const selectEl = $('#awgStepSlotSelect');
-      if (selectEl) {
-        selectEl.addEventListener('change', e => {
-          S.awgTargetSlot = parseInt(e.target.value, 10);
-          renderAwgSetup();
-        });
-      }
-      const dlBtn = $('#awgStepDlBtn');
-      if (dlBtn) dlBtn.addEventListener('click', () => downloadSlotConf(targetSlot.id));
-      const qrBtn = $('#awgStepQrBtn');
-      if (qrBtn) qrBtn.addEventListener('click', () => openSlotQrModal(targetSlot.id));
-      const copyBtn = $('#awgStepCopyBtn');
-      if (copyBtn) copyBtn.addEventListener('click', () => copySlotConf(targetSlot.id));
-      const switchBtn = $('#awgStepSwitchBtn');
-      if (switchBtn) switchBtn.addEventListener('click', () => openAwgSwitchModal(targetSlot.id));
+      swapRegion(stepsGrid, `${S.osAwg}|${cur.id}`, stepsHtml, () => {
+        const selectEl = $('#awgStepSlotSelect');
+        if (selectEl) {
+          selectEl.addEventListener('change', e => {
+            S.awgTargetSlot = parseInt(e.target.value, 10);
+            renderAwgSetup();
+          });
+        }
+        const dlBtn = $('#awgStepDlBtn');
+        if (dlBtn) dlBtn.addEventListener('click', () => downloadSlotConf(targetSlot.id));
+        const qrBtn = $('#awgStepQrBtn');
+        if (qrBtn) qrBtn.addEventListener('click', () => openSlotQrModal(targetSlot.id));
+        const copyBtn = $('#awgStepCopyBtn');
+        if (copyBtn) copyBtn.addEventListener('click', () => copySlotConf(targetSlot.id));
+        const switchBtn = $('#awgStepSwitchBtn');
+        if (switchBtn) switchBtn.addEventListener('click', () => openAwgSwitchModal(targetSlot.id));
+      });
     }
   }
   syncSubViewport();
@@ -1651,10 +1855,10 @@ function setOfState(state) {
   if (targetCountryEl) targetCountryEl.innerHTML = `${targetSrv.flag} ${targetSrv.name} (${targetSrv.city})`;
 
   const keyInput = $('#ofKeyInput');
-  if (keyInput) keyInput.value = S.ofKeyUri || `openflux://v1/${SUB_ID}-${srv.code}?doc=mailru_shared_doc_88f29&srv=${srv.code}.edge.silentconnect.net:443#SilentConnect-OpenFlux-${srv.code.toUpperCase()}`; /* PLACEHOLDER */
+  if (keyInput) keyInput.value = S.ofKeyUri || (SUB_ID ? `openflux://v1/${SUB_ID}-${srv.code}?doc=mailru_shared_doc_88f29&srv=${srv.code}.edge.example.com:443#SilentConnect-OpenFlux-${srv.code.toUpperCase()}` : '');
 
   const newKeyInput = $('#ofNewKeyInput');
-  if (newKeyInput) newKeyInput.value = S.ofNewKeyUri || `openflux://v1/mig_${SUB_ID}-${targetSrv.code}?doc=mailru_shared_doc_88f29&srv=${targetSrv.code}.edge.silentconnect.net:443#SilentConnect-OpenFlux-${targetSrv.code.toUpperCase()}`; /* PLACEHOLDER */
+  if (newKeyInput) newKeyInput.value = S.ofNewKeyUri || (SUB_ID ? `openflux://v1/mig_${SUB_ID}-${targetSrv.code}?doc=mailru_shared_doc_88f29&srv=${targetSrv.code}.edge.example.com:443#SilentConnect-OpenFlux-${targetSrv.code.toUpperCase()}` : '');
 
   const ofImportBtn = $('#ofImportBtn');
   if (ofImportBtn && keyInput) ofImportBtn.href = keyInput.value;
@@ -1714,8 +1918,8 @@ const OF_CLIENT_DATA = {
       dl('2. Присоединиться в TestFlight', 'https://testflight.apple.com/join/BwnAcdus', 'testflight')
     ],
     step1: 'Установите официальный TestFlight из App Store, затем присоединитесь к бета-тестированию OpenFlux по кнопкам ниже.',
-    step2: 'Нажмите кнопку прямого подключения «⚡ Подключить в OpenFlux» или скопируйте ключ / используйте QR-код.',
-    step3: 'В приложении OpenFlux нажмите синюю кнопку «Start VPN» ⚡. При первом запуске подтвердите добавление VPN-конфигурации в диалоговом окне iOS.'
+    step2: 'Нажмите кнопку прямого подключения «Подключить в OpenFlux» или скопируйте ключ / используйте QR-код.',
+    step3: 'В приложении OpenFlux нажмите кнопку «Start VPN». При первом запуске подтвердите добавление VPN-конфигурации в диалоговом окне iOS.'
   },
   android: {
     name: 'OpenFlux для Android',
@@ -1723,7 +1927,7 @@ const OF_CLIENT_DATA = {
       dl('GitHub Релизы (.apk)', 'https://github.com/p1neappleXpress/OpenFluxAndroid/releases/latest', 'github')
     ],
     step1: 'Скачайте официальный APK-файл OpenFlux с GitHub Releases и установите его (разрешите установку из браузера при запросе).',
-    step2: 'Нажмите «⚡ Подключить в OpenFlux» — приложение откроется автоматически и импортирует профиль (или используйте QR-код / буфер обмена).',
+    step2: 'Нажмите «Подключить в OpenFlux» — приложение откроется автоматически и импортирует профиль (или используйте QR-код / буфер обмена).',
     step3: 'Нажмите большую центральную кнопку «Tap to connect» и разрешите системный запрос Android на подключение VPN.'
   },
   windows: {
@@ -1743,7 +1947,7 @@ const OF_CLIENT_DATA = {
       dl('GitHub Релизы (.dmg)', 'https://github.com/p1neappleXpress/OpenFluxDesktop/releases/latest', 'github')
     ],
     step1: 'Установите OpenFlux через TestFlight или скачайте готовый бинарный пакет (.dmg) с GitHub Releases для Apple Silicon / Intel.',
-    step2: 'Нажмите «⚡ Подключить в OpenFlux» или скопируйте ключ для добавления в меню импорта OpenFlux.',
+    step2: 'Нажмите «Подключить в OpenFlux» или скопируйте ключ для добавления в меню импорта OpenFlux.',
     step3: 'Включите туннель в OpenFlux для защищённой работы в условиях ограничений сети.'
   },
   linux: {
@@ -1770,7 +1974,7 @@ function renderOfSetup() {
   const curOfKey = ($('#ofKeyInput') ? $('#ofKeyInput').value : '') || S.ofKeyUri || '';
   const stepsGrid = $('#stepsGridOf');
   if (stepsGrid) {
-    stepsGrid.innerHTML = `
+    const stepsHtml = `
       <div class="s-step">
         <div>
           <div class="s-step-head"><span class="s-step-num">1</span><h4>Установка ${data.name}</h4></div>
@@ -1779,7 +1983,9 @@ function renderOfSetup() {
               <span>Подробнее</span>
               <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
             </summary>
-            <p class="step-details-text">${data.step1}</p>
+            <div class="step-details-content"><div class="step-details-inner">
+              <p class="step-details-text">${data.step1}</p>
+            </div></div>
           </details>
         </div>
         <div class="step-btns">${dlButtonsHtml(data.downloads)}</div>
@@ -1792,11 +1998,13 @@ function renderOfSetup() {
               <span>Подробнее</span>
               <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
             </summary>
-            <p class="step-details-text">${data.step2}</p>
+            <div class="step-details-content"><div class="step-details-inner">
+              <p class="step-details-text">${data.step2}</p>
+            </div></div>
           </details>
         </div>
         <div class="step-btns">
-          <a class="btn btn-primary btn-sm" id="ofImportBtn" href="${curOfKey || 'javascript:void(0)'}" onclick="if(!this.getAttribute('href')||this.getAttribute('href').startsWith('javascript')){event.preventDefault();copyToClipboard($('#ofKeyInput')?.value || '', 'Ключ OpenFlux скопирован!');}"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> ⚡ Подключить в OpenFlux</a>
+          <a class="btn btn-primary btn-sm" id="ofImportBtn" href="${curOfKey || 'javascript:void(0)'}" onclick="if(!this.getAttribute('href')||this.getAttribute('href').startsWith('javascript')){event.preventDefault();copyToClipboard($('#ofKeyInput')?.value || '', 'Ключ OpenFlux скопирован!');}"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> Подключить в OpenFlux</a>
           <button type="button" class="btn btn-ghost btn-sm" onclick="copyToClipboard($('#ofKeyInput')?.value || '', 'Ключ OpenFlux скопирован!')"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Скопировать ключ</button>
           <button type="button" class="btn btn-ghost btn-sm" onclick="openQrModal('OpenFlux QR-код', $('#ofKeyInput')?.value || '', window.SC_PROD ? ('/sub/openflux/' + encodeURIComponent(SUB_ID) + '/qr?target=active&t=' + Date.now()) : '')"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> QR-код</button>
         </div>
@@ -1807,6 +2015,7 @@ function renderOfSetup() {
           <p>${data.step3}</p>
         </div>
       </div>`;
+    swapRegion(stepsGrid, S.osOf, stepsHtml);
   }
   syncSubViewport();
 }
@@ -1870,6 +2079,7 @@ const renewToggle = $('#renewToggle');
 const bindEmailOnlyChk = $('#bindEmailOnly');
 
 let isRenewAnimating = false;
+let renewAnim = null;
 function setRenewOpen(open, immediate = false) {
   window.setRenewOpen = setRenewOpen;
   if (!renewAcc) return;
@@ -1878,62 +2088,81 @@ function setRenewOpen(open, immediate = false) {
   const wasOpen = renewAcc.getAttribute('data-open') === 'true';
   const shouldOpen = Boolean(open);
 
+  if (shouldOpen === wasOpen && !immediate) return;
+
   renewAcc.setAttribute('data-open', String(shouldOpen));
   if (renewToggle) renewToggle.setAttribute('aria-expanded', String(shouldOpen));
 
   if (!wrap || !inner) return;
 
-  if (immediate) {
-    wrap.style.display = shouldOpen ? 'block' : 'none';
-    wrap.style.height = shouldOpen ? 'auto' : '0px';
-    wrap.style.overflow = shouldOpen ? 'visible' : 'hidden';
-    return;
+  if (renewAnim) {
+    try { renewAnim.cancel(); } catch (_) {}
+    renewAnim = null;
   }
 
-  if (shouldOpen === wasOpen && ((shouldOpen && wrap.offsetHeight > 0) || (!shouldOpen && wrap.offsetHeight === 0))) {
+  if (immediate || REDUCED_MOTION) {
+    wrap.classList.remove('is-animating');
+    wrap.style.height = '';
+    wrap.style.opacity = '';
+    wrap.style.display = '';
+    isRenewAnimating = false;
     return;
   }
-  if (isRenewAnimating) return;
 
   isRenewAnimating = true;
-  wrap.style.overflow = 'hidden';
+  wrap.classList.add('is-animating');
 
   if (shouldOpen) {
-    wrap.style.display = 'block';
-    wrap.style.height = 'auto';
     const targetH = inner.scrollHeight;
-    wrap.style.height = '0px';
-
-    const anim = wrap.animate([
+    renewAnim = wrap.animate([
       { height: '0px', opacity: 0.35 },
       { height: targetH + 'px', opacity: 1 }
     ], {
       duration: 280,
-      easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
-      fill: 'forwards'
+      easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
     });
 
-    anim.onfinish = () => {
-      wrap.style.height = 'auto';
-      wrap.style.overflow = 'visible';
+    renewAnim.onfinish = () => {
+      wrap.classList.remove('is-animating');
+      wrap.style.height = '';
+      wrap.style.opacity = '';
+      wrap.style.display = '';
       isRenewAnimating = false;
+      renewAnim = null;
+    };
+    renewAnim.oncancel = () => {
+      wrap.classList.remove('is-animating');
+      wrap.style.height = '';
+      wrap.style.opacity = '';
+      wrap.style.display = '';
+      isRenewAnimating = false;
+      renewAnim = null;
     };
   } else {
     const startH = wrap.offsetHeight || inner.scrollHeight;
-    const anim = wrap.animate([
+    renewAnim = wrap.animate([
       { height: startH + 'px', opacity: 1 },
       { height: '0px', opacity: 0.35 }
     ], {
       duration: 220,
-      easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
-      fill: 'forwards'
+      easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
     });
 
-    anim.onfinish = () => {
-      wrap.style.display = 'none';
-      wrap.style.height = '0px';
-      wrap.style.overflow = 'hidden';
+    renewAnim.onfinish = () => {
+      wrap.classList.remove('is-animating');
+      wrap.style.height = '';
+      wrap.style.opacity = '';
+      wrap.style.display = '';
       isRenewAnimating = false;
+      renewAnim = null;
+    };
+    renewAnim.oncancel = () => {
+      wrap.classList.remove('is-animating');
+      wrap.style.height = '';
+      wrap.style.opacity = '';
+      wrap.style.display = '';
+      isRenewAnimating = false;
+      renewAnim = null;
     };
   }
 }
@@ -1951,6 +2180,7 @@ function syncRenewEmailState() {
     b.classList.toggle('on', (b.dataset.emailState === 'bound') === S.emailBound);
   });
   const subBoundEmail = $('#subBoundEmail');
+  const actualEmail = S.boundEmailMasked || (window.SC_PROD && window.SC_PROD.sub && window.SC_PROD.sub.boundEmailMasked) || 'привязана';
   if (!S.emailBound) {
     setRenewOpen(true);
     renewAcc.classList.add('warn-unbound');
@@ -1961,7 +2191,7 @@ function syncRenewEmailState() {
     if ($('#emailBoundPill')) $('#emailBoundPill').hidden = true;
   } else {
     renewAcc.classList.remove('warn-unbound');
-    if (subBoundEmail) { subBoundEmail.textContent = 'c***t@example.com'; subBoundEmail.style.color = 'var(--em-t)'; }
+    if (subBoundEmail) { subBoundEmail.textContent = actualEmail; subBoundEmail.style.color = 'var(--em-t)'; }
     const badge = $('#renewEmailBadge');
     if (badge) { badge.className = 'status ok'; badge.innerHTML = '<i></i>Почта привязана'; }
     if ($('#emailUnboundAlert')) $('#emailUnboundAlert').hidden = true;
@@ -2023,34 +2253,6 @@ if (bindEmailOnlyChk) {
 }
 
 const renForm = $('#renewForm');
-if (renForm) {
-  renForm.addEventListener('submit', e => {
-    e.preventDefault();
-    const mailInput = $('#renewEmailInput');
-    const mail = (mailInput ? mailInput.value : '').trim();
-    if (!mail || !mail.includes('@')) {
-      toast('Укажите корректный адрес электронной почты');
-      if (mailInput) mailInput.focus();
-      return;
-    }
-    if (S.bindOnly) {
-      S.emailBound = true;
-      S.bindOnly = false;
-      if (bindEmailOnlyChk) bindEmailOnlyChk.checked = false;
-      syncRenewEmailState();
-      renderRenewCalculations();
-      toast(`✓ Почта ${mail} успешно привязана к подписке!`);
-      const boundLbl = $('#boundEmailLabel');
-      if (boundLbl) boundLbl.textContent = mail;
-    } else {
-      toast('Создание счёта на продление…');
-      setTimeout(() => {
-        setOrderState('waiting');
-        view('order');
-      }, 300);
-    }
-  });
-}
 
 const changeBoundEmailBtn = $('#changeBoundEmailBtn');
 if (changeBoundEmailBtn) {
@@ -2101,9 +2303,14 @@ function openQrModal(title, text, qrImgUrl = '') {
   const qrBox = $('#qrModal .qr');
   if (qrBox) {
     if (qrImgUrl) {
-      qrBox.innerHTML = `<img src="${qrImgUrl}" alt="QR" style="width:164px;height:164px;object-fit:contain;display:block;margin:0 auto;border-radius:8px;background:#fff;padding:4px">`;
+      const urlWithTs = qrImgUrl.includes('?') ? `${qrImgUrl}&t=${Date.now()}` : `${qrImgUrl}?t=${Date.now()}`;
+      qrBox.innerHTML = `<img src="${urlWithTs}" alt="QR" width="210" height="210">`;
       const img = qrBox.querySelector('img');
-      if (img) img.onerror = () => renderSvgQr(text, qrBox, 164);
+      if (img) {
+        img.onerror = () => {
+          qrBox.innerHTML = `<div style="padding:16px;color:#0a0d10;font-size:13px;line-height:1.4">Не удалось загрузить QR-код.<br>Используйте ссылку ниже для импорта.</div>`;
+        };
+      }
     } else {
       renderSvgQr(text, qrBox, 164);
     }
@@ -2119,8 +2326,11 @@ $$('[data-qr]').forEach(b => {
     } else if (b.id === 'ofPendingQrBtn') {
       openQrModal(b.dataset.qr || 'Новый сервер OpenFlux', ($('#ofNewKeyInput') ? $('#ofNewKeyInput').value : ''), window.SC_PROD ? (`/sub/openflux/${encodeURIComponent(SUB_ID)}/qr?target=pending&t=${Date.now()}`) : '');
     } else {
-      const qrUrl = (window.SC_PROD && window.SC_PROD.sub && window.SC_PROD.sub.qrUrl) ? window.SC_PROD.sub.qrUrl : '';
-      openQrModal(b.dataset.qr || 'QR-код', SUB_URL || SUB_IMPORT_URL, qrUrl);
+      let qrUrl = (window.SC_PROD && window.SC_PROD.sub && window.SC_PROD.sub.qrUrl) ? window.SC_PROD.sub.qrUrl : '';
+      if (!qrUrl && typeof SUB_ID !== 'undefined' && SUB_ID) {
+        qrUrl = `/my-secret-sub/qr/${encodeURIComponent(SUB_ID)}`;
+      }
+      openQrModal(b.dataset.qr || 'QR-код для импорта подписки', SUB_URL || SUB_IMPORT_URL, qrUrl);
     }
   });
 });
@@ -2213,7 +2423,7 @@ const LEGAL_DOCS = {
         <li><strong style="color:#fff">Поддержка любых устройств:</strong> Готовые мастера установки под iOS (Happ, INCY, Streisand), Android (Happ, INCY, V2RayTun), Windows, macOS, Linux, Android TV и Apple TV.</li>
       </ul>
 
-      <p style="margin-top:24px;color:var(--mut)">Техническая поддержка: <a href="mailto:support@silentconnect.net" style="color:var(--em-t);text-decoration:underline">support@silentconnect.net</a></p>` /* PLACEHOLDER */
+      <p style="margin-top:24px;color:var(--mut)">Техническая поддержка: <a href="mailto:support@example.com" style="color:var(--em-t);text-decoration:underline">support@example.com</a></p>`
   },
   contact: {
     title: 'Контакты & Поддержка',
@@ -2225,7 +2435,7 @@ const LEGAL_DOCS = {
         <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:18px">
           <h3 style="color:var(--em-t);margin-top:0;font-size:17px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-3px;margin-right:6px;color:var(--em-t)"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>Электронная почта</h3>
           <p style="font-size:13.5px;color:var(--mut);margin-bottom:10px">Вопросы по заказам, чекам, возвратам и корпоративным подпискам:</p>
-          <a href="mailto:support@silentconnect.net" style="color:#fff;font-weight:600;font-size:15px;text-decoration:underline">support@silentconnect.net</a> /* PLACEHOLDER */
+          <a href="mailto:support@example.com" style="color:#fff;font-weight:600;font-size:15px;text-decoration:underline">support@example.com</a>
         </div>
 
         <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:18px">
@@ -2286,7 +2496,7 @@ const LEGAL_DOCS = {
       <h3 style="color:#fff;font-size:17px;margin-top:22px">7. Изменение условий и контакты</h3>
       <p style="color:var(--mut)">7.1. Исполнитель вправе в одностороннем порядке вносить изменения в настоящую Оферту. Новая редакция вступает в силу с момента ее публикации на данной странице.</p>
       <p style="color:var(--mut);margin-top:10px">
-        Электронная почта: <a href="mailto:support@silentconnect.net" style="color:var(--em-t);text-decoration:underline">support@silentconnect.net</a><br> /* PLACEHOLDER */
+        Электронная почта: <a href="mailto:support@example.com" style="color:var(--em-t);text-decoration:underline">support@example.com</a><br>
         Telegram-бот поддержки: <a href="https://t.me/SilentConnectSupport" style="color:var(--em-t);text-decoration:underline" target="_blank" rel="noopener">@SilentConnectSupport</a>
       </p>`
   },
@@ -2324,11 +2534,11 @@ const LEGAL_DOCS = {
       <p style="color:var(--mut)">Мы соблюдаем применимое законодательство. Однако, в силу технической архитектуры Платформы и строгого соблюдения Zero-Logs Policy, мы физически не ведем и не накапливаем журналы сетевой активности и сопоставления трафика с конкретными пользователями. Сервис не имеет технической возможности раскрыть то, чем он не владеет.</p>
 
       <h3 style="color:#fff;font-size:17px;margin-top:22px">5. Права субъекта персональных данных</h3>
-      <p style="color:var(--mut)">Пользователь вправе в любой момент отозвать свое согласие на обработку контактных данных и запросить полное удаление своей учетной записи и истории заказов, направив письменное заявление по официальному адресу <a href="mailto:support@silentconnect.net" style="color:var(--em-t);text-decoration:underline">support@silentconnect.net</a>. Данные удаляются в течение 72 часов с момента подтверждения запроса.</p> /* PLACEHOLDER */
+      <p style="color:var(--mut)">Пользователь вправе в любой момент отозвать свое согласие на обработку контактных данных и запросить полное удаление своей учетной записи и истории заказов, направив письменное заявление по официальному адресу <a href="mailto:support@example.com" style="color:var(--em-t);text-decoration:underline">support@example.com</a>. Данные удаляются в течение 72 часов с момента подтверждения запроса.</p>
 
       <h3 style="color:#fff;font-size:17px;margin-top:22px">6. Контакты службы поддержки</h3>
       <p style="color:var(--mut)">
-        Электронная почта: <a href="mailto:support@silentconnect.net" style="color:var(--em-t);text-decoration:underline">support@silentconnect.net</a><br> /* PLACEHOLDER */
+        Электронная почта: <a href="mailto:support@example.com" style="color:var(--em-t);text-decoration:underline">support@example.com</a><br>
         Telegram-бот поддержки: <a href="https://t.me/SilentConnectSupport" style="color:var(--em-t);text-decoration:underline" target="_blank" rel="noopener">@SilentConnectSupport</a>
       </p>`
   },
@@ -2354,7 +2564,7 @@ const LEGAL_DOCS = {
       </ul>
 
       <h3 style="color:#fff;font-size:17px;margin-top:22px">3. Регламент и процедура оформления возврата</h3>
-      <p style="color:var(--mut)">3.1. Для оформления возврата направьте запрос по официальному адресу <a href="mailto:support@silentconnect.net" style="color:var(--em-t);text-decoration:underline">support@silentconnect.net</a> либо через верифицированный <a href="https://t.me/SilentConnectSupport" style="color:var(--em-t);text-decoration:underline" target="_blank" rel="noopener">Telegram-бот поддержки</a>.</p> /* PLACEHOLDER */
+      <p style="color:var(--mut)">3.1. Для оформления возврата направьте запрос по официальному адресу <a href="mailto:support@example.com" style="color:var(--em-t);text-decoration:underline">support@example.com</a> либо через верифицированный <a href="https://t.me/SilentConnectSupport" style="color:var(--em-t);text-decoration:underline" target="_blank" rel="noopener">Telegram-бот поддержки</a>.</p>
       <p style="color:var(--mut)">3.2. В обращении необходимо указать:</p>
       <ul style="padding-left:20px;line-height:1.8;color:var(--mut)">
         <li>Номер заказа (#ord_...) и контактный Email или Telegram ID;</li>
@@ -2367,14 +2577,14 @@ const LEGAL_DOCS = {
 
       <h3 style="color:#fff;font-size:17px;margin-top:22px">4. Контакты службы поддержки</h3>
       <p style="color:var(--mut)">
-        Электронная почта: <a href="mailto:support@silentconnect.net" style="color:var(--em-t);text-decoration:underline">support@silentconnect.net</a><br> /* PLACEHOLDER */
+        Электронная почта: <a href="mailto:support@example.com" style="color:var(--em-t);text-decoration:underline">support@example.com</a><br>
         Telegram-бот поддержки: <a href="https://t.me/SilentConnectSupport" style="color:var(--em-t);text-decoration:underline" target="_blank" rel="noopener">@SilentConnectSupport</a>
       </p>`
   }
 };
 
-function showLegalDoc(docId) {
-  if (!LEGAL_DOCS[docId]) docId = 'refund';
+function showLegalDoc(docId, updateUrl = false) {
+  if (!LEGAL_DOCS[docId]) docId = 'about';
   const doc = LEGAL_DOCS[docId];
   $$('#legalNav button').forEach(b => b.classList.toggle('on', b.dataset.doc === docId));
   const container = $('#legalDoc');
@@ -2383,6 +2593,23 @@ function showLegalDoc(docId) {
   }
   const nav = $('#legalNav');
   if (nav) centerActiveTab(nav);
+  const legalView = $('#view-legal');
+  if (legalView && !legalView.hidden && doc.title) {
+    document.title = `${doc.title} · SilentConnect`;
+  }
+  if (updateUrl && window.history && window.history.pushState) {
+    const urlMap = {
+      about: '/about',
+      contact: '/contact',
+      terms: '/legal/terms',
+      privacy: '/legal/privacy',
+      refund: '/legal/refund'
+    };
+    const newPath = urlMap[docId];
+    if (newPath && window.location.pathname !== newPath) {
+      window.history.pushState({ legalDoc: docId }, '', newPath);
+    }
+  }
 }
 window.showLegalDoc = showLegalDoc;
 
@@ -2390,10 +2617,33 @@ const legalNav = $('#legalNav');
 if (legalNav) {
   setupDraggableTrack(legalNav);
   $$('#legalNav button').forEach(b => {
-    b.addEventListener('click', () => showLegalDoc(b.dataset.doc));
+    b.addEventListener('click', () => showLegalDoc(b.dataset.doc, true));
   });
 }
-showLegalDoc('refund');
+if (window.SC_PROD && window.SC_PROD.view === 'legal') {
+  showLegalDoc(window.SC_PROD.legalDoc || 'about', false);
+}
+
+window.addEventListener('popstate', e => {
+  if (e.state && e.state.legalDoc) {
+    showLegalDoc(e.state.legalDoc, false);
+    view('legal');
+  } else {
+    const path = window.location.pathname;
+    const urlDocMap = {
+      '/about': 'about',
+      '/contact': 'contact',
+      '/contacts': 'contact',
+      '/legal/terms': 'terms',
+      '/legal/privacy': 'privacy',
+      '/legal/refund': 'refund'
+    };
+    if (urlDocMap[path]) {
+      showLegalDoc(urlDocMap[path], false);
+      view('legal');
+    }
+  }
+});
 
 /* =========================================================================
    Cinematic Intro & Scroll Reveal (.rv)
@@ -2476,20 +2726,61 @@ if (window.SC_PROD) {
 
   // 3. Cloudflare Turnstile widget replacement
   const tsKey = P.turnstileSiteKey || P.cfTurnstileSiteKey || '';
+  window.onTurnstileSuccess = function(token) {
+    ['#renewTurnstileError', '#checkoutTurnstileError', '#cabinetTurnstileError'].forEach(sel => {
+      const errBox = $(sel);
+      if (errBox) {
+        errBox.style.display = 'none';
+        errBox.textContent = '';
+      }
+    });
+    $$('.cf-widget, .cf-turnstile').forEach(el => {
+      el.classList.remove('cf-widget-error', 'cf-widget-shake');
+    });
+  };
+  window.onTurnstileExpired = function() {
+    $$('.cf-widget, .cf-turnstile').forEach(el => {
+      el.classList.remove('cf-widget-error', 'cf-widget-shake');
+    });
+    if (window.turnstile && typeof window.turnstile.reset === 'function') {
+      try { window.turnstile.reset(); } catch(e) {}
+    }
+  };
   $$('.cf-widget').forEach(box => {
     if (tsKey) {
-      box.innerHTML = `<div class="cf-turnstile" data-sitekey="${tsKey}" data-theme="dark"></div>`;
+      box.innerHTML = `<div class="cf-turnstile" data-sitekey="${tsKey}" data-theme="dark" data-callback="onTurnstileSuccess" data-expired-callback="onTurnstileExpired"></div>`;
     } else {
       box.innerHTML = `<input type="hidden" name="cf-turnstile-response" value="">`;
       box.style.display = 'none';
     }
   });
-  if (tsKey && !document.querySelector('script[src*="challenges.cloudflare.com/turnstile"]')) {
-    const ts = document.createElement('script');
-    ts.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
-    ts.async = true;
-    ts.defer = true;
-    document.head.appendChild(ts);
+  if (tsKey) {
+    const renderTurnstiles = () => {
+      if (window.turnstile && typeof window.turnstile.render === 'function') {
+        $$('.cf-turnstile').forEach(el => {
+          if (!el.dataset.rendered && !el.querySelector('iframe')) {
+            try {
+              window.turnstile.render(el);
+              el.dataset.rendered = 'true';
+            } catch (e) {}
+          }
+        });
+      }
+    };
+    if (window.turnstile) {
+      renderTurnstiles();
+    }
+    if (!document.querySelector('script[src*="challenges.cloudflare.com/turnstile"]')) {
+      const ts = document.createElement('script');
+      ts.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+      ts.async = true;
+      ts.defer = true;
+      ts.onload = renderTurnstiles;
+      document.head.appendChild(ts);
+    } else {
+      setTimeout(renderTurnstiles, 100);
+      setTimeout(renderTurnstiles, 500);
+    }
   }
 
   // 4. Cross-page navigation when not on landing page (capture-phase delegation for [data-go] / [data-goto])
@@ -2583,6 +2874,11 @@ if (window.SC_PROD) {
         toast('Укажите корректный Email для получения ключа');
         return;
       }
+      if (!checkTurnstileVerified(orderForm, $('#checkoutTurnstileError'))) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
       if ($('#fDevices')) $('#fDevices').value = String(S.dev);
       if ($('#fMonths')) $('#fMonths').value = String(S.months);
       if ($('#fPromo')) $('#fPromo').value = S.promo || (promoInput ? promoInput.value.trim() : '');
@@ -2599,6 +2895,9 @@ if (window.SC_PROD) {
       const email = (emailEl ? emailEl.value : '').trim();
       if (!email || !email.includes('@')) {
         toast('Укажите корректный Email');
+        return;
+      }
+      if (!checkTurnstileVerified(cabinetForm, $('#cabinetTurnstileError'))) {
         return;
       }
       const tsInput = cabinetForm.querySelector('[name="cf-turnstile-response"]');
@@ -2624,6 +2923,121 @@ if (window.SC_PROD) {
   }
 
   // 8. View-specific hydration
+  // Payment notice handling on subscription page
+  window.dismissPaymentNotice = function(orderId) {
+    const card = document.getElementById("paymentNoticeCard");
+    if (card) {
+      card.style.opacity = "0";
+      card.style.transform = "translateY(-6px)";
+      setTimeout(() => {
+        card.style.display = "none";
+        const slot = document.getElementById("subNoticeSlot");
+        if (slot) slot.innerHTML = "";
+      }, 250);
+    }
+    const currentStatus = card ? (card.getAttribute("data-order-status") || "dismissed") : "dismissed";
+    try {
+      localStorage.setItem("sc_dismissed_notice_" + orderId, currentStatus);
+    } catch(e) {}
+    try {
+      const secretSeg = (window.SC_PROD && window.SC_PROD.sub && window.SC_PROD.sub.secretSegment) || "my-secret-sub";
+      const subId = (window.SC_PROD && window.SC_PROD.sub && window.SC_PROD.sub.subId) || "";
+      fetch("/" + encodeURIComponent(secretSeg) + "/dismiss-notice/" + encodeURIComponent(orderId), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest"
+        },
+        body: JSON.stringify({
+          status: currentStatus,
+          sub_id: subId
+        })
+      }).catch(function() {});
+    } catch(e) {}
+  };
+
+  function initNoticeState() {
+    const card = document.getElementById("paymentNoticeCard");
+    if (!card) return;
+    const orderId = card.getAttribute("data-order-id");
+    const currentStatus = card.getAttribute("data-order-status");
+    if (!orderId) return;
+    try {
+      const dismissedStatus = localStorage.getItem("sc_dismissed_notice_" + orderId);
+      const normCurrent = (currentStatus === "delivered" || currentStatus === "paid") ? "paid" : currentStatus;
+      const normDismissed = (dismissedStatus === "delivered" || dismissedStatus === "paid") ? "paid" : dismissedStatus;
+      if (normDismissed && normDismissed === normCurrent) {
+        card.style.display = "none";
+        const slot = document.getElementById("subNoticeSlot");
+        if (slot) slot.innerHTML = "";
+      }
+    } catch(e) {}
+  }
+
+  let statusPollInterval = null;
+  function startOrderStatusPolling() {
+    if (statusPollInterval) {
+      clearInterval(statusPollInterval);
+      statusPollInterval = null;
+    }
+    const card = document.getElementById("paymentNoticeCard");
+    if (!card) return;
+    const orderId = card.getAttribute("data-order-id");
+    const status = card.getAttribute("data-order-status");
+    if (!orderId || status === "paid" || status === "delivered" || status === "canceled") return;
+
+    const secretSeg = (window.SC_PROD && window.SC_PROD.sub && window.SC_PROD.sub.secretSegment) || "my-secret-sub";
+    let pollCount = 0;
+    statusPollInterval = setInterval(async () => {
+      pollCount++;
+      if (pollCount > 150) { clearInterval(statusPollInterval); return; }
+      try {
+        const res = await fetch("/" + encodeURIComponent(secretSeg) + "/order-status/" + encodeURIComponent(orderId));
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data || !data.ok) return;
+
+        const currentCard = document.getElementById("paymentNoticeCard");
+        if (!currentCard) return;
+
+        if (data.status === "paid" || data.status === "delivered") {
+          clearInterval(statusPollInterval);
+          currentCard.setAttribute("data-order-status", "paid");
+          currentCard.className = "sub-flash-card status-paid";
+          currentCard.style.display = "block";
+          currentCard.style.opacity = "1";
+          currentCard.style.transform = "none";
+
+          const title = document.getElementById("noticeTitle");
+          const body = document.getElementById("noticeBody");
+          if (title) {
+            title.textContent = "Оплата подтверждена!";
+          }
+          if (body) {
+            const emailInfo = data.customer_email ? " на почту <strong>" + data.customer_email + "</strong>" : "";
+            body.innerHTML = "Мы зачислили продление по заказу <strong>#" + data.public_id + "</strong>: <strong>+" + data.duration_days + " дн.</strong> (до " + data.device_limit + " устр.). Уведомление и чек отправлены" + emailInfo + ". Приятного пользования!";
+          }
+        } else if (data.status === "canceled") {
+          clearInterval(statusPollInterval);
+          currentCard.setAttribute("data-order-status", "canceled");
+          currentCard.className = "sub-flash-card status-canceled";
+          currentCard.style.display = "block";
+          currentCard.style.opacity = "1";
+          currentCard.style.transform = "none";
+
+          const title = document.getElementById("noticeTitle");
+          const body = document.getElementById("noticeBody");
+          if (title) {
+            title.textContent = "Заказ отменён";
+          }
+          if (body) {
+            body.innerHTML = "Заказ <strong>#" + data.public_id + "</strong> отменен администратором.";
+          }
+        }
+      } catch(e) {}
+    }, 4000);
+  }
+
   if (P.errorMessage) {
     setTimeout(() => toast(P.errorMessage), 150);
   }
@@ -2634,6 +3048,11 @@ if (window.SC_PROD) {
   } else if (P.view === 'order' && P.order) {
     const O = P.order;
     if ($('#ordIdTitle')) $('#ordIdTitle').textContent = O.publicId || '';
+    if (O.isRenewal || O.kind === 'renewal') {
+      if ($('#ordDoneTitle')) $('#ordDoneTitle').textContent = 'Подписка продлена';
+      if ($('#ordDoneDesc')) $('#ordDoneDesc').textContent = 'Мы успешно продлили срок действия вашей подписки. Все ваши устройства и ссылки продолжают работать без дополнительных настроек.';
+      if ($('#ordGoSubText')) $('#ordGoSubText').textContent = 'Перейти к подписке и устройствам';
+    }
     if ($('#ordPlanName')) $('#ordPlanName').textContent = O.planLabel || '';
     if ($('#ordDuration')) $('#ordDuration').textContent = O.durationLabel || '';
     if ($('#ordAwg')) $('#ordAwg').textContent = O.awgLabel || '';
@@ -2777,9 +3196,9 @@ if (window.SC_PROD) {
         $('#subMetricExpires').textContent = 'Активна';
       }
     }
-    const tRaw = Sub.trafficLabel || '∞';
+    const tRaw = Sub.trafficLabel || '0 Б / ∞';
     const tClean = tRaw.replace(/\s*·\s*безлимит/gi, '').trim();
-    if ($('#subMetricMainTraffic')) $('#subMetricMainTraffic').textContent = tClean || '∞';
+    if ($('#subMetricMainTraffic')) $('#subMetricMainTraffic').textContent = tClean || '0 Б / ∞';
     if ($('#renewRemainDaysNote')) {
       $('#renewRemainDaysNote').textContent = (!Sub.isExpired && Sub.daysLeftLabel) ? `суммируются с вашим остатком (${Sub.daysLeftLabel})` : 'активируются сразу после оплаты';
     }
@@ -2793,6 +3212,7 @@ if (window.SC_PROD) {
     if ($('#rawV2Link') && Sub.v2rayUrl) $('#rawV2Link').href = Sub.v2rayUrl;
 
     S.emailBound = Boolean(Sub.emailBound);
+    if (Sub.boundEmailMasked) S.boundEmailMasked = Sub.boundEmailMasked;
     syncRenewEmailState();
     if ($('#renewEmailInput')) {
       $('#renewEmailInput').value = Sub.customerEmail || '';
@@ -2803,14 +3223,25 @@ if (window.SC_PROD) {
     }
 
     if (Sub.flashHtml) {
-      const wrapEl = $('#view-sub .container') || $('#view-sub .wrap');
-      if (wrapEl) {
-        const flashDiv = document.createElement('div');
-        flashDiv.className = 'sc-prod-flash';
-        flashDiv.style.marginBottom = '18px';
-        flashDiv.innerHTML = Sub.flashHtml;
-        wrapEl.insertBefore(flashDiv, wrapEl.firstChild);
+      const slotEl = $('#subNoticeSlot');
+      if (slotEl) {
+        slotEl.innerHTML = Sub.flashHtml;
+      } else {
+        const wrapEl = $('#view-sub .container') || $('#view-sub .wrap');
+        if (wrapEl) {
+          const flashDiv = document.createElement('div');
+          flashDiv.className = 'sub-notice-slot';
+          flashDiv.innerHTML = Sub.flashHtml;
+          const modeBarEl = $('#modeBar');
+          if (modeBarEl && modeBarEl.parentNode === wrapEl) {
+            wrapEl.insertBefore(flashDiv, modeBarEl);
+          } else {
+            wrapEl.insertBefore(flashDiv, wrapEl.firstChild);
+          }
+        }
       }
+      initNoticeState();
+      startOrderStatusPolling();
     }
 
     // Hydrate AWG slots & quota
@@ -3030,44 +3461,121 @@ if (window.SC_PROD) {
     // Hydrate Renew / Bind Email Form
     if (renForm) {
       renForm.addEventListener('submit', e => {
-        const mailInput = $('#renewEmailInput');
-        const mail = (mailInput ? mailInput.value : '').trim();
-        if (!mail || !mail.includes('@')) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          toast('Укажите корректный адрес электронной почты');
-          if (mailInput) mailInput.focus();
-          return;
-        }
         e.preventDefault();
         e.stopImmediatePropagation();
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = S.bindOnly
+
+        const mailInput = $('#renewEmailInput');
+        let mail = (mailInput ? mailInput.value : '').trim();
+        if (!mail && S.emailBound && Sub.customerEmail) {
+          mail = Sub.customerEmail;
+        }
+
+        if (!mail || !mail.includes('@')) {
+          toast('Укажите корректный адрес электронной почты');
+          if (mailInput) {
+            mailInput.focus();
+            mailInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+          return;
+        }
+
+        if (!checkTurnstileVerified(renForm, $('#renewTurnstileError'))) {
+          return;
+        }
+
+        const submitBtn = $('#renSubmitBtn');
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.innerHTML = 'Оформление…';
+        }
+
+        const targetUrl = S.bindOnly
           ? (Sub.bindEmailActionUrl || window.location.pathname.replace(/\/(setup|import)\//, '/bind-email/'))
           : (Sub.renewActionUrl || window.location.pathname.replace(/\/(setup|import)\//, '/renew/'));
-        const addField = (k, v) => {
-          const inp = document.createElement('input');
-          inp.type = 'hidden';
-          inp.name = k;
-          inp.value = String(v);
-          form.appendChild(inp);
-        };
-        addField('customer_email', mail); addField('email', mail);
+
+        const params = new URLSearchParams();
+        params.append('customer_email', mail);
+        params.append('email', mail);
         const remChk = renForm.querySelector('input[type="checkbox"]:not(#bindEmailOnly)');
-        addField('email_reminders', (!remChk || remChk.checked) ? '1' : '0');
+        params.append('email_reminders', (!remChk || remChk.checked) ? '1' : '0');
+
         if (!S.bindOnly) {
-          addField('device_limit', S.renDev); addField('duration_days', CFG.days[S.renMonths] || 180); addField('devices', S.renDev);
-          addField('months', S.renMonths);
+          params.append('device_limit', String(S.renDev));
+          params.append('devices', String(S.renDev));
+          params.append('duration_days', String(CFG.days[S.renMonths] || 180));
+          params.append('months', String(S.renMonths));
           const rPromo = $('#renewPromoInput');
-          if (rPromo && rPromo.value.trim()) addField('promo_code', rPromo.value.trim());
+          if (rPromo && rPromo.value.trim()) params.append('promo_code', rPromo.value.trim());
         } else {
-          addField('bind_email_only', '1');
+          params.append('bind_email_only', '1');
         }
-        const ts = renForm.querySelector('[name="cf-turnstile-response"]');
-        if (ts && ts.value) addField('cf-turnstile-response', ts.value);
-        document.body.appendChild(form);
-        form.submit();
+
+        if (turnstileToken) {
+          params.append('cf-turnstile-response', turnstileToken);
+          params.append('turnstile_token', turnstileToken);
+        }
+
+        fetch(targetUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+          },
+          body: params.toString()
+        })
+        .then(async res => {
+          const isJson = (res.headers.get('content-type') || '').includes('application/json');
+          const data = isJson ? await res.json() : null;
+          if (!res.ok) {
+            const errMsg = (data && data.error) ? data.error : 'Не удалось выполнить запрос. Попробуйте позже.';
+            throw new Error(errMsg);
+          }
+          return data;
+        })
+        .then(data => {
+          if (data && data.redirect_url) {
+            window.location.href = data.redirect_url;
+            return;
+          }
+          if (data && data.bind_email_only) {
+            S.emailBound = true;
+            S.bindOnly = false;
+            if (data.masked_email) S.boundEmailMasked = data.masked_email;
+            if (data.customer_email) Sub.customerEmail = data.customer_email;
+            if (bindEmailOnlyChk) bindEmailOnlyChk.checked = false;
+            syncRenewEmailState();
+            renderRenewCalculations();
+            toast(data.message || `✓ Почта ${mail} успешно привязана к подписке!`);
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              renderRenewCalculations();
+            }
+            return;
+          }
+          if (data && data.order_public_id) {
+            window.location.reload();
+          }
+        })
+        .catch(err => {
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            renderRenewCalculations();
+          }
+          if (errBox) {
+            const msg = err.message || 'Ошибка обработки запроса';
+            errBox.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>' + msg + '</span>';
+            errBox.style.display = 'inline-flex';
+          }
+          if (cfWidget) {
+            cfWidget.classList.add('cf-widget-error');
+            cfWidget.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+          toast(err.message || 'Ошибка');
+          if (window.turnstile && typeof window.turnstile.reset === 'function') {
+            try { window.turnstile.reset(); } catch(e) {}
+          }
+        });
       }, true);
     }
 

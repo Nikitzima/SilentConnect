@@ -103,7 +103,7 @@ ALLOWED_PUBLIC_SCRIPTS = {
 
 
 TEXT_EXTENSIONS = {
-    ".py", ".md", ".txt", ".json", ".sh", ".yml", ".yaml", ".service", ".html", ".css", ".example"
+    ".py", ".md", ".txt", ".json", ".sh", ".yml", ".yaml", ".service", ".html", ".css", ".js", ".example"
 }
 
 EXPORT_REPLACEMENTS = [

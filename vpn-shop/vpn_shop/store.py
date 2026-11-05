@@ -138,7 +138,9 @@ CREATE TABLE IF NOT EXISTS profiles (
   awg_quota_bytes INTEGER NOT NULL DEFAULT 0,
   awg_used_bytes INTEGER NOT NULL DEFAULT 0,
   awg_reset_at INTEGER,
-  device_limit INTEGER NOT NULL DEFAULT 3
+  device_limit INTEGER NOT NULL DEFAULT 3,
+  xui_traffic_baseline INTEGER NOT NULL DEFAULT 0,
+  xui_reset_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS profile_owners (
@@ -412,9 +414,9 @@ ORDER_TRANSITIONS: dict[str, frozenset[str]] = {
     "provisioning": frozenset({"delivered", "failed", "waiting_payment", "pending_provision"}),
     "pending_provision": frozenset({"provisioning", "delivered", "failed", "cancelled"}),
     "failed": frozenset({"provisioning", "delivered", "cancelled"}),
-    # terminal states (delivered can transition to cancelled upon refund/chargeback)
+    # terminal states (delivered can transition to cancelled upon refund/chargeback; cancelled can transition to provisioning upon admin reactivation)
     "delivered": frozenset({"cancelled"}),
-    "cancelled": frozenset(),
+    "cancelled": frozenset({"provisioning"}),
     "expired": frozenset(),
 }
 TERMINAL_ORDER_STATES = frozenset({"delivered", "cancelled", "expired"})
@@ -502,6 +504,8 @@ class Store:
                 self._ensure_column(conn, "profiles", "awg_reset_at", "INTEGER")
                 self._ensure_column(conn, "profiles", "device_limit", "INTEGER NOT NULL DEFAULT 3")
                 self._ensure_column(conn, "profiles", "xui_sub_id", "TEXT")
+                self._ensure_column(conn, "profiles", "xui_traffic_baseline", "INTEGER NOT NULL DEFAULT 0")
+                self._ensure_column(conn, "profiles", "xui_reset_at", "INTEGER")
             if "awg_slots" in existing_tables:
                 self._ensure_column(conn, "awg_slots", "server_code", "TEXT NOT NULL DEFAULT 'nl'")
                 table_sql_row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='awg_slots'").fetchone()
@@ -556,6 +560,8 @@ class Store:
             self._ensure_column(conn, "profiles", "awg_reset_at", "INTEGER")
             self._ensure_column(conn, "profiles", "device_limit", "INTEGER NOT NULL DEFAULT 3")
             self._ensure_column(conn, "profiles", "xui_sub_id", "TEXT")
+            self._ensure_column(conn, "profiles", "xui_traffic_baseline", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "profiles", "xui_reset_at", "INTEGER")
             self._ensure_column(conn, "awg_slots", "server_code", "TEXT NOT NULL DEFAULT 'nl'")
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_awg_slots_server_ip ON awg_slots(server_code, client_ip);")
             conn.execute("CREATE INDEX IF NOT EXISTS ix_orders_provisioned_profile ON orders(provisioned_profile_id);")
@@ -3613,6 +3619,80 @@ class Store:
                 )
 
         return self.get_awg_profile_quota(profile_public_id)
+
+    def get_or_update_xui_cycle_traffic(
+        self,
+        profile_public_id: str,
+        raw_used_bytes: int,
+        cycle_info: dict[str, Any] | None = None,
+    ) -> int:
+        """Рассчитывает трафик основного профиля (X-UI) строго за текущий 30-дневный период.
+        Автоматически фиксирует baseline при наступлении нового расчетного месяца."""
+        from .quota import get_quota_cycle_info
+        from .security import now_ts
+
+        now = now_ts()
+        try:
+            with self.read_connection() as conn:
+                row = conn.execute(
+                    """
+                    SELECT public_id, created_at, expires_at, xui_traffic_baseline, xui_reset_at
+                    FROM profiles
+                    WHERE public_id = ?
+                    """,
+                    (profile_public_id,),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            with self.transaction() as conn:
+                self._ensure_column(conn, "profiles", "xui_traffic_baseline", "INTEGER NOT NULL DEFAULT 0")
+                self._ensure_column(conn, "profiles", "xui_reset_at", "INTEGER")
+                row = conn.execute(
+                    """
+                    SELECT public_id, created_at, expires_at, xui_traffic_baseline, xui_reset_at
+                    FROM profiles
+                    WHERE public_id = ?
+                    """,
+                    (profile_public_id,),
+                ).fetchone()
+        if not row:
+            return max(0, int(raw_used_bytes))
+
+        prof = self._row_to_dict(row) or {}
+        cycle = cycle_info or get_quota_cycle_info(prof, now_ts=now)
+        next_reset_utc = int(cycle.get("next_reset_utc") or (now + 30 * 86400))
+        cur_reset_at = int(prof.get("xui_reset_at") or 0)
+        cur_baseline = int(prof.get("xui_traffic_baseline") or 0)
+        raw_int = max(0, int(raw_used_bytes))
+
+        # Новый расчетный период наступил, либо первичная привязка baseline
+        cycle_rolled_over = (cur_reset_at <= now) or (cur_reset_at == 0)
+
+        if cycle_rolled_over:
+            with self.transaction() as conn:
+                conn.execute(
+                    """
+                    UPDATE profiles
+                    SET xui_traffic_baseline = ?, xui_reset_at = ?
+                    WHERE public_id = ?
+                    """,
+                    (raw_int, next_reset_utc, profile_public_id),
+                )
+            return 0
+
+        # Если счётчик в X-UI был принудительно сброшен ниже baseline — самовосстановление
+        if raw_int < cur_baseline:
+            with self.transaction() as conn:
+                conn.execute(
+                    """
+                    UPDATE profiles
+                    SET xui_traffic_baseline = 0
+                    WHERE public_id = ?
+                    """,
+                    (profile_public_id,),
+                )
+            return raw_int
+
+        return max(0, raw_int - cur_baseline)
 
     def get_awg_traffic_ledger(
         self,

@@ -95,10 +95,17 @@ def render_subscription_email_html(
     bind_tg_url: str = "",
     expires_ts: int | float | None = None,
     expires_at_str: str = "",
+    device_limit: int = 3,
     support_email: str = "support@example.com",
     support_tg: str = "https://t.me/your_support",
 ) -> str:
     expiry_display = format_expiry_ru(duration_days, expires_ts, expires_at_str)
+    device_lbl = (
+        f"{device_limit} устройства"
+        if device_limit in (2, 3, 4)
+        else (f"{device_limit} устройство" if device_limit == 1 else f"{device_limit} устройств")
+    )
+    plan_display = plan_name or "Стандартный"
     tg_target_url = bind_tg_url or os.environ.get("SUPPORT_TG_URL", "https://t.me/your_support_bot")
     tg_btn_label = "Привязать к Telegram-боту ✈️" if bind_tg_url else "Открыть Telegram-бота ✈️"
     tg_bind_box = f"""
@@ -223,6 +230,12 @@ def render_subscription_email_html(
       color: #2fbf71;
       text-decoration: none;
     }}
+    @media only screen and (max-width: 480px) {{
+      body {{ padding: 10px 6px; }}
+      .content {{ padding: 16px 12px; }}
+      .summary-table td {{ font-size: 13px; }}
+      .btn {{ display: block !important; width: 100% !important; box-sizing: border-box !important; padding: 14px 12px !important; font-size: 15px !important; }}
+    }}
   </style>
 </head>
 <body>
@@ -242,6 +255,10 @@ def render_subscription_email_html(
             <td style="text-align: right; color: #2fbf71; font-weight: bold;">Оплачено и активно ✅</td>
           </tr>
           <tr>
+            <td style="color: #8ea89a;">Тариф:</td>
+            <td style="text-align: right; color: #ffffff; font-weight: bold;">{plan_display}</td>
+          </tr>
+          <tr>
             <td style="color: #8ea89a;">Продление:</td>
             <td style="text-align: right; color: #ffffff; font-weight: bold;">+ {duration_days} дней</td>
           </tr>
@@ -251,7 +268,7 @@ def render_subscription_email_html(
           </tr>
           <tr>
             <td style="color: #8ea89a;">Лимит устройств:</td>
-            <td style="text-align: right; color: #ffffff; font-weight: bold;">3 устройства</td>
+            <td style="text-align: right; color: #ffffff; font-weight: bold;">{device_lbl}</td>
           </tr>
         </table>
       </div>
@@ -326,35 +343,178 @@ def render_expiration_reminder_email_html(
     support_email: str = "support@example.com",
     support_tg: str = "https://t.me/your_support",
 ) -> str:
-    time_label = "завтра (через 24 часа)" if reminder_kind == "1_day" else "уже через 1 час"
-    urgent_tag = "⏳ Напоминание о продлении" if reminder_kind == "1_day" else "🚨 Срочно: скорое отключение"
+    is_urgent = (reminder_kind != "1_day")
+    time_label = "уже через 1 час" if is_urgent else "завтра (через 24 часа)"
+    titlebar_text = "🚨 SilentConnect · Срочное уведомление о подписке" if is_urgent else "⏳ SilentConnect · Напоминание об окончании подписки"
+    accent_color = "#ef4444" if is_urgent else "#f59e0b"
+    accent_border = "rgba(239, 68, 68, 0.4)" if is_urgent else "rgba(245, 158, 11, 0.35)"
+    accent_bg = "rgba(239, 68, 68, 0.08)" if is_urgent else "rgba(245, 158, 11, 0.08)"
+    clean_setup_url = setup_url.split("?")[0]
 
     return f"""<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Срок действия подписки SilentConnect истекает</title>
   <style>
-    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #050a08; color: #f4f7f5; margin: 0; padding: 20px; }}
-    .container {{ max-width: 600px; margin: 0 auto; background-color: #14231c; border: 1px solid #2fbf71; border-radius: 12px; padding: 20px; }}
-    h2 {{ color: #2fbf71; margin-top: 0; }}
-    p {{ color: #8ea89a; line-height: 1.5; font-size: 15px; }}
-    .btn {{ display: inline-block; background-color: #2fbf71; color: #000000 !important; text-decoration: none; font-weight: bold; padding: 14px 28px; border-radius: 8px; font-size: 16px; margin: 15px 0; }}
-    .footer {{ margin-top: 20px; font-size: 12px; color: #8ea89a; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #050a08;
+      color: #f4f7f5;
+      margin: 0;
+      padding: 20px;
+    }}
+    .container {{
+      max-width: 600px;
+      margin: 0 auto;
+      background-color: #14231c;
+      border: 1px solid {accent_color};
+      border-radius: 12px;
+      padding: 4px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }}
+    .titlebar {{
+      background: linear-gradient(90deg, #14231c 0%, {accent_color} 100%);
+      color: #ffffff;
+      font-weight: bold;
+      padding: 12px 18px;
+      font-size: 16px;
+      border-radius: 8px 8px 0 0;
+      letter-spacing: 0.3px;
+    }}
+    .content {{
+      padding: 20px;
+      background-color: #0a1410;
+      border-radius: 0 0 8px 8px;
+    }}
+    .box {{
+      background-color: #14231c;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      padding: 18px;
+      margin-bottom: 16px;
+    }}
+    .summary-card {{
+      background-color: {accent_bg};
+      border: 1px solid {accent_border};
+      border-radius: 8px;
+      padding: 16px 18px;
+      margin-bottom: 18px;
+    }}
+    .summary-table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }}
+    .summary-table td {{
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }}
+    .summary-table tr:last-child td {{
+      border-bottom: none;
+    }}
+    h2 {{
+      margin-top: 0;
+      color: {accent_color};
+      font-size: 20px;
+    }}
+    h3 {{
+      margin-top: 0;
+      color: #ffffff;
+      font-size: 16px;
+    }}
+    p {{
+      line-height: 1.5;
+      font-size: 14px;
+      color: #8ea89a;
+    }}
+    .btn {{
+      display: inline-block;
+      background-color: #2fbf71;
+      color: #000000 !important;
+      text-decoration: none;
+      font-weight: bold;
+      padding: 14px 28px;
+      border-radius: 8px;
+      font-size: 16px;
+      text-align: center;
+      box-shadow: 0 4px 12px rgba(47, 191, 113, 0.3);
+    }}
+    .footer {{
+      margin-top: 20px;
+      font-size: 12px;
+      color: #8ea89a;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      padding-top: 12px;
+    }}
+    .code-box {{
+      background-color: #050a08;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-family: monospace;
+      word-break: break-all;
+      font-size: 12px;
+      color: #2fbf71;
+    }}
+    .code-box a {{
+      color: #2fbf71;
+      text-decoration: none;
+    }}
+    @media only screen and (max-width: 480px) {{
+      body {{ padding: 10px 6px; }}
+      .content {{ padding: 16px 12px; }}
+      .summary-table td {{ font-size: 13px; }}
+      .btn {{ display: block !important; width: 100% !important; box-sizing: border-box !important; padding: 14px 12px !important; font-size: 15px !important; }}
+    }}
   </style>
 </head>
 <body>
   <div class="container">
-    <h2>{urgent_tag}</h2>
-    <p>Здравствуйте!</p>
-    <p>Напоминаем, что срок действия вашей подписки SilentConnect истекает <strong>{time_label}</strong>.</p>
-    <p>Чтобы доступ к сети не прерывался, вы можете продлить подписку прямо сейчас в один клик в вашем личном кабинете:</p>
-    <div style="text-align: center;">
-      <a href="{setup_url}" class="btn">Продлить подписку на сайте</a>
+    <div class="titlebar">
+      {titlebar_text}
     </div>
-    <p>При продлении ваш текущий адрес подключения и настройки в приложении сохранятся без необходимости перенастройки.</p>
-    <div class="footer">
-      <p>Служба поддержки SilentConnect: <a href="mailto:{support_email}" style="color:#2fbf71;">{support_email}</a> | <a href="{support_tg}" style="color:#2fbf71;">Telegram</a></p>
+    <div class="content">
+      <h2>Срок действия подписки истекает {time_label}! ⌛</h2>
+      <p style="margin-bottom: 16px;">Здравствуйте! Напоминаем, что оплаченный период вашей подписки SilentConnect заканчивается <strong>{time_label}</strong>.</p>
+      
+      <div class="summary-card">
+        <h3 style="color: {accent_color}; font-size: 15px; margin-bottom: 12px; margin-top: 0;">⏱ Информация о статусе:</h3>
+        <table class="summary-table" role="presentation">
+          <tr>
+            <td style="color: #8ea89a;">Статус:</td>
+            <td style="text-align: right; color: {accent_color}; font-weight: bold;">Истекает ({time_label})</td>
+          </tr>
+          <tr>
+            <td style="color: #8ea89a;">Конфигурации и ключи:</td>
+            <td style="text-align: right; color: #ffffff;">Сохраняются автоматически</td>
+          </tr>
+          <tr>
+            <td style="color: #8ea89a;">Перенастройка устройств:</td>
+            <td style="text-align: right; color: #2fbf71; font-weight: bold;">Не требуется ✅</td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="box" style="text-align: center; padding: 22px 16px;">
+        <h3>⚡ Продление доступа в один клик:</h3>
+        <p style="margin-bottom: 18px;">Чтобы интернет-доступ и все зашифрованные каналы продолжали работать без отключения, продлите подписку в личном кабинете:</p>
+        <div style="text-align: center; margin: 15px 0;">
+          <a href="{clean_setup_url}" class="btn">Продлить подписку на сайте ⚡</a>
+        </div>
+      </div>
+
+      <div class="box">
+        <h3>🔗 Прямой адрес вашей подписки:</h3>
+        <p style="margin-bottom: 6px;">Если кнопка выше не открывается, перейдите по прямой ссылке:</p>
+        <div class="code-box"><a href="{clean_setup_url}">{clean_setup_url}</a></div>
+      </div>
+
+      <div class="footer">
+        <p>Нужна помощь? Напишите нам на почту <a href="mailto:{support_email}" style="color:#2fbf71;">{support_email}</a> или в Telegram: <a href="{support_tg}" style="color:#2fbf71;">{support_tg}</a>.</p>
+        <p>© SilentConnect. Все права защищены.</p>
+      </div>
     </div>
   </div>
 </body>
@@ -421,11 +581,15 @@ def send_expiration_reminder_email_sync(
         customer_email=customer_email,
         reminder_kind=reminder_kind,
         setup_url=setup_url,
+        support_email=settings.support_email or "support@example.com",
+        support_tg=settings.support_tg_url or "https://t.me/your_support",
     )
     text_content = render_expiration_reminder_email_text(
         customer_email=customer_email,
         reminder_kind=reminder_kind,
         setup_url=setup_url,
+        support_email=settings.support_email or "support@example.com",
+        support_tg=settings.support_tg_url or "https://t.me/your_support",
     )
 
     if api_key:
@@ -495,6 +659,7 @@ def send_subscription_email_sync(
     bind_tg_url: str = "",
     expires_ts: int | float | None = None,
     expires_at_str: str = "",
+    device_limit: int = 3,
     subject: str | None = None,
 ) -> bool:
     if not customer_email or "@" not in customer_email:
@@ -530,6 +695,7 @@ def send_subscription_email_sync(
         bind_tg_url=bind_tg_url,
         expires_ts=expires_ts,
         expires_at_str=expires_at_str,
+        device_limit=device_limit,
         support_email=settings.support_email or "support@example.com",
         support_tg=settings.support_tg_url or "https://t.me/your_support",
     )
@@ -612,6 +778,7 @@ def send_subscription_email_async(
     bind_tg_url: str = "",
     expires_ts: int | float | None = None,
     expires_at_str: str = "",
+    device_limit: int = 3,
     subject: str | None = None,
 ) -> None:
     enqueue_email_task(
@@ -627,6 +794,402 @@ def send_subscription_email_async(
         bind_tg_url=bind_tg_url,
         expires_ts=expires_ts,
         expires_at_str=expires_at_str,
+        device_limit=device_limit,
+        subject=subject,
+    )
+
+
+def render_order_reviewed_email_html(
+    *,
+    customer_email: str,
+    order_public_id: str,
+    duration_days: int,
+    setup_url: str,
+    json_url: str,
+    cabinet_url: str,
+    bind_tg_url: str = "",
+    expires_ts: int | float | None = None,
+    expires_at_str: str = "",
+    device_limit: int = 3,
+    support_email: str = "support@example.com",
+    support_tg: str = "https://t.me/your_support",
+) -> str:
+    expiry_display = format_expiry_ru(duration_days, expires_ts, expires_at_str)
+    device_lbl = (
+        f"{device_limit} устройства"
+        if device_limit in (2, 3, 4)
+        else (f"{device_limit} устройство" if device_limit == 1 else f"{device_limit} устройств")
+    )
+    tg_target_url = bind_tg_url or os.environ.get("SUPPORT_TG_URL", "https://t.me/your_support_bot")
+    tg_btn_label = "Привязать к Telegram-боту ✈️" if bind_tg_url else "Открыть Telegram-бота ✈️"
+    tg_bind_box = f"""
+      <div class="box" style="text-align: center;">
+        <h3 style="color: #ffffff; font-size: 16px; margin-top: 0;">✈️ &nbsp;Удобное управление в Telegram:</h3>
+        <p style="margin-bottom: 15px;">Управляйте подпиской и продлевайте доступ прямо в нашем Telegram-боте:</p>
+        <div style="text-align: center; margin: 10px 0;">
+          <a href="{tg_target_url}" class="btn" style="background-color: #0088cc; padding: 12px 24px; font-size: 15px; border-radius: 8px; font-weight: bold;">{tg_btn_label}</a>
+        </div>
+      </div>
+    """
+
+    clean_setup_url = setup_url.split("?")[0]
+    return f"""<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Заказ пересмотрен · SilentConnect</title>
+  <style>
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #050a08;
+      color: #f4f7f5;
+      margin: 0;
+      padding: 20px;
+    }}
+    .container {{
+      max-width: 600px;
+      margin: 0 auto;
+      background-color: #14231c;
+      border: 1px solid #2fbf71;
+      border-radius: 12px;
+      padding: 4px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }}
+    .titlebar {{
+      background: linear-gradient(90deg, #14231c 0%, #2fbf71 100%);
+      color: #ffffff;
+      font-weight: bold;
+      padding: 12px 18px;
+      font-size: 16px;
+      border-radius: 8px 8px 0 0;
+      letter-spacing: 0.3px;
+    }}
+    .content {{
+      padding: 20px;
+      background-color: #0a1410;
+      border-radius: 0 0 8px 8px;
+    }}
+    .box {{
+      background-color: #14231c;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      padding: 18px;
+      margin-bottom: 16px;
+    }}
+    .summary-card {{
+      background-color: rgba(47, 191, 113, 0.08);
+      border: 1px solid rgba(47, 191, 113, 0.3);
+      border-radius: 8px;
+      padding: 16px 18px;
+      margin-bottom: 18px;
+    }}
+    .summary-table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }}
+    .summary-table td {{
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }}
+    .summary-table tr:last-child td {{
+      border-bottom: none;
+    }}
+    h2 {{
+      margin-top: 0;
+      color: #2fbf71;
+      font-size: 20px;
+    }}
+    h3 {{
+      margin-top: 0;
+      color: #ffffff;
+      font-size: 16px;
+    }}
+    p {{
+      line-height: 1.5;
+      font-size: 14px;
+      color: #8ea89a;
+    }}
+    .btn {{
+      display: inline-block;
+      background-color: #2fbf71;
+      color: #000000 !important;
+      text-decoration: none;
+      font-weight: bold;
+      padding: 14px 28px;
+      border-radius: 8px;
+      font-size: 16px;
+      text-align: center;
+      box-shadow: 0 4px 12px rgba(47, 191, 113, 0.3);
+    }}
+    .footer {{
+      margin-top: 20px;
+      font-size: 12px;
+      color: #8ea89a;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      padding-top: 12px;
+    }}
+    .code-box {{
+      background-color: #050a08;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-family: monospace;
+      word-break: break-all;
+      font-size: 12px;
+      color: #2fbf71;
+    }}
+    .code-box a {{
+      color: #2fbf71;
+      text-decoration: none;
+    }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="titlebar">
+      🔑 &nbsp;SilentConnect &nbsp;&nbsp;·&nbsp;&nbsp; Заказ пересмотрен
+    </div>
+    <div class="content">
+      <h2>Ваш заказ пересмотрен, доступ продлён! 🎉</h2>
+      <p style="margin-bottom: 16px;">Здравствуйте! Ваш заказ <strong>#{order_public_id}</strong> был успешно пересмотрен нашей службой заботы. На вашу подписку начислено <strong>+{duration_days} дней</strong> доступа. Приятного пользования!</p>
+      
+      <div class="summary-card">
+        <h3 style="color: #2fbf71; font-size: 15px; margin-bottom: 12px; margin-top: 0;">📋 Детали операции:</h3>
+        <table class="summary-table" role="presentation">
+          <tr>
+            <td style="color: #8ea89a;">Статус:</td>
+            <td style="text-align: right; color: #2fbf71; font-weight: bold;">Пересмотрен и активен ✅</td>
+          </tr>
+          <tr>
+            <td style="color: #8ea89a;">Начислено:</td>
+            <td style="text-align: right; color: #ffffff; font-weight: bold;">+ {duration_days} дней</td>
+          </tr>
+          <tr>
+            <td style="color: #8ea89a;">Действительна до:</td>
+            <td style="text-align: right; color: #2fbf71; font-weight: bold;">{expiry_display}</td>
+          </tr>
+          <tr>
+            <td style="color: #8ea89a;">Лимит устройств:</td>
+            <td style="text-align: right; color: #ffffff; font-weight: bold;">{device_lbl}</td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="box" style="text-align: center; padding: 22px 16px;">
+        <h3>💻 Личный кабинет подписки и подключение:</h3>
+        <p style="margin-bottom: 18px;">Нажмите кнопку ниже, чтобы открыть мастера подключения (Happ, Streisand, V2RayTun), смотреть статистику и продлевать доступ:</p>
+        <div style="text-align: center; margin: 15px 0;">
+          <a href="{clean_setup_url}" class="btn">Открыть Личный Кабинет 💻</a>
+        </div>
+      </div>
+
+      {tg_bind_box}
+
+      <div class="box">
+        <h3>🔗 Прямые ссылки на подписку:</h3>
+        <p style="margin-bottom: 6px;">Прямая ссылка для импорта в приложение:</p>
+        <div class="code-box"><a href="{clean_setup_url}">{clean_setup_url}</a></div>
+        
+        <p style="margin-top: 14px; margin-bottom: 6px; color:#ffffff; font-weight: bold; font-size: 13px;">Прямой формат JSON (для кастомных клиентов):</p>
+        <div class="code-box"><a href="{json_url}">{json_url}</a></div>
+      </div>
+
+      <div class="footer">
+        <p>Нужна помощь? Напишите нам на почту <a href="mailto:{support_email}" style="color:#2fbf71;">{support_email}</a> или в Telegram: <a href="{support_tg}" style="color:#2fbf71;">{support_tg}</a>.</p>
+        <p>© SilentConnect. Все права защищены.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
+
+def render_order_reviewed_email_text(
+    *,
+    customer_email: str,
+    order_public_id: str,
+    duration_days: int,
+    setup_url: str,
+    json_url: str,
+    cabinet_url: str,
+    expires_ts: int | float | None = None,
+    expires_at_str: str = "",
+    support_email: str = "support@example.com",
+    support_tg: str = "https://t.me/your_support",
+) -> str:
+    expiry_display = format_expiry_ru(duration_days, expires_ts, expires_at_str)
+    return f"""Здравствуйте!
+
+Ваш заказ #{order_public_id} был успешно пересмотрен нашей службой заботы.
+На вашу подписку начислено +{duration_days} дней доступа.
+Действительна до: {expiry_display}
+
+Личный кабинет и настройка подключения:
+{setup_url}
+
+Прямой формат подписки:
+{json_url}
+
+Приятного пользования!
+Служба заботы SilentConnect: {support_email} / {support_tg}
+"""
+
+
+def send_order_reviewed_email_sync(
+    settings: Settings,
+    *,
+    customer_email: str,
+    order_public_id: str,
+    duration_days: int,
+    setup_url: str,
+    json_url: str,
+    cabinet_url: str,
+    bind_tg_url: str = "",
+    expires_ts: int | float | None = None,
+    expires_at_str: str = "",
+    device_limit: int = 3,
+    subject: str | None = None,
+) -> bool:
+    if not customer_email or "@" not in customer_email:
+        LOGGER.warning("Invalid target email for reviewed order %s: %r", order_public_id, customer_email)
+        return False
+
+    smtp_host = str(getattr(settings, "smtp_host", "") or "").strip()
+    port = int(getattr(settings, "smtp_port", 0) or 465)
+    user = str(getattr(settings, "smtp_user", "") or "").strip()
+    password = str(getattr(settings, "smtp_password", "") or "").strip()
+    raw_from = getattr(settings, "smtp_from_email", "")
+    from_email = raw_from.strip() if isinstance(raw_from, str) and raw_from.strip() else "SilentConnect <support@example.com>"
+
+    resend_api_key = password if password.startswith("re_") else (user if user.startswith("re_") else "")
+    if not resend_api_key:
+        resend_api_key = os.environ.get("RESEND_API_KEY", "").strip()
+
+    if not smtp_host and not resend_api_key:
+        LOGGER.info(
+            "SMTP host / Resend API not configured. Reviewed email dispatch skipped for order %s to %s (Setup URL: %s)",
+            order_public_id,
+            customer_email,
+            setup_url,
+        )
+        return False
+
+    if not subject:
+        subject = f"Ваш заказ #{order_public_id} пересмотрен: начислено +{duration_days} дней доступа!"
+
+    html_content = render_order_reviewed_email_html(
+        customer_email=customer_email,
+        order_public_id=order_public_id,
+        duration_days=duration_days,
+        setup_url=setup_url,
+        json_url=json_url,
+        cabinet_url=cabinet_url,
+        bind_tg_url=bind_tg_url,
+        expires_ts=expires_ts,
+        expires_at_str=expires_at_str,
+        device_limit=device_limit,
+        support_email=settings.support_email or "support@example.com",
+        support_tg=settings.support_tg_url or "https://t.me/your_support",
+    )
+    text_content = render_order_reviewed_email_text(
+        customer_email=customer_email,
+        order_public_id=order_public_id,
+        duration_days=duration_days,
+        setup_url=setup_url,
+        json_url=json_url,
+        cabinet_url=cabinet_url,
+        expires_ts=expires_ts,
+        expires_at_str=expires_at_str,
+        support_email=settings.support_email or "support@example.com",
+        support_tg=settings.support_tg_url or "https://t.me/your_support",
+    )
+
+    if resend_api_key or "resend" in smtp_host.lower():
+        api_key = resend_api_key or password
+        try:
+            req = urllib.request.Request(
+                "https://api.resend.com/emails",
+                data=json.dumps({
+                    "from": from_email,
+                    "to": [customer_email],
+                    "subject": subject,
+                    "html": html_content,
+                    "text": text_content,
+                }).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                resp_data = json.loads(resp.read().decode("utf-8"))
+                LOGGER.info("Reviewed order email sent via Resend API to %s for order %s (ID: %s)", customer_email, order_public_id, resp_data.get("id"))
+                return True
+        except Exception as exc:
+            LOGGER.exception("Failed to send reviewed order email via Resend API to %s for order %s: %s", customer_email, order_public_id, exc)
+            return False
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = from_email
+    msg["To"] = customer_email
+    msg["Reply-To"] = settings.support_email or from_email
+
+    msg.attach(MIMEText(text_content, "plain", "utf-8"))
+    msg.attach(MIMEText(html_content, "html", "utf-8"))
+
+    try:
+        if port == 465:
+            with smtplib.SMTP_SSL(smtp_host, port, timeout=15) as server:
+                if user and password:
+                    server.login(user, password)
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(smtp_host, port, timeout=15) as server:
+                server.ehlo()
+                server.starttls()
+                if user and password:
+                    server.login(user, password)
+                server.send_message(msg)
+        LOGGER.info("Reviewed order email successfully sent to %s for order %s", customer_email, order_public_id)
+        return True
+    except Exception as exc:
+        LOGGER.exception("Failed to send reviewed order email to %s for order %s: %s", customer_email, order_public_id, exc)
+        return False
+
+
+def send_order_reviewed_email_async(
+    settings: Settings,
+    *,
+    customer_email: str,
+    order_public_id: str,
+    duration_days: int,
+    setup_url: str,
+    json_url: str,
+    cabinet_url: str,
+    bind_tg_url: str = "",
+    expires_ts: int | float | None = None,
+    expires_at_str: str = "",
+    device_limit: int = 3,
+    subject: str | None = None,
+) -> None:
+    enqueue_email_task(
+        send_order_reviewed_email_sync,
+        settings,
+        customer_email=customer_email,
+        order_public_id=order_public_id,
+        duration_days=duration_days,
+        setup_url=setup_url,
+        json_url=json_url,
+        cabinet_url=cabinet_url,
+        bind_tg_url=bind_tg_url,
+        expires_ts=expires_ts,
+        expires_at_str=expires_at_str,
+        device_limit=device_limit,
         subject=subject,
     )
 

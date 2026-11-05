@@ -1351,8 +1351,8 @@ def _notify_admins_new_renewal_order(
         text = "\n".join([
             "🛒 Продление подписки на сайте (ожидает оплаты)",
             "",
-            f"Заказ: `{_escape_tg_markdown(order_public_id)}`",
-            f"Email: `{_escape_tg_markdown(email_str)}`",
+            f"Заказ: `{order_public_id}`",
+            f"Email: `{email_str}`",
             f"Транспорт: {_escape_tg_markdown(tr_label)}",
             f"Срок: {duration_days} дн.",
             f"Лимит: {_escape_tg_markdown(lim_label)}",
@@ -1697,38 +1697,59 @@ def render_payment_notice_html(order_data: Any, status_override: str | None = No
     token_query = f"?token={html.escape(token, quote=True)}" if token else ""
     token_input = f'<input type="hidden" name="web_token" value="{html.escape(token, quote=True)}"/>' if token else ""
 
-    close_btn = f"""<button type="button" onclick="dismissPaymentNotice('{order_id}')" style="position:absolute; top:12px; right:12px; width:32px; height:32px; min-width:32px; min-height:32px; border-radius:50%; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.22); color:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:15px; font-weight:700; line-height:1; padding:0; outline:none; transition:all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.22)'; this.style.transform='scale(1.08)';" onmouseout="this.style.background='rgba(255,255,255,0.08)'; this.style.transform='scale(1)';" title="Закрыть">✕</button>"""
+    close_btn = f"""<button type="button" class="sub-flash-close" onclick="dismissPaymentNotice('{order_id}')" data-dismiss-order="{order_id}" title="Закрыть" aria-label="Закрыть"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg></button>"""
 
     if order_status in ("paid", "delivered"):
         email_info = f" на почту <strong>{html.escape(customer_email)}</strong>" if customer_email else ""
         return f"""
-        <section id="paymentNoticeCard" class="install" data-order-id="{order_id}" data-order-status="paid" style="position:relative; margin-bottom:24px; background:rgba(47,191,113,0.12); border:1px solid #2fbf71; border-radius:14px; padding:18px 20px; transition: all 0.3s ease;">
+        <section id="paymentNoticeCard" class="card glass spot sub-flash-card status-paid" data-order-id="{order_id}" data-order-status="paid">
           {close_btn}
-          <h2 id="noticeTitle" style="color:#2fbf71; margin:0 0 8px; font-size:18px; font-weight:700; display:flex; align-items:center; gap:8px;">✓ Оплата подтверждена!</h2>
-          <p id="noticeBody" style="color:#fff; font-size:14.5px; margin:0; line-height:1.5; padding-right:32px;">Мы зачислили продление по заказу <strong>#{order_id}</strong>: <strong>+{duration_days} дн.</strong> (до {device_limit} устр.). Уведомление и чек отправлены{email_info}. Приятного пользования!</p>
+          <div class="sub-flash-head">
+            <div class="sub-flash-title-wrap">
+              <span class="sub-flash-badge-ico ok">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+              </span>
+              <span id="noticeTitle" class="sub-flash-title">Оплата подтверждена!</span>
+            </div>
+          </div>
+          <p id="noticeBody" class="sub-flash-body">Мы зачислили продление по заказу <strong>#{order_id}</strong>: <strong>+{duration_days} дн.</strong> (до {device_limit} устр.). Уведомление и чек отправлены{email_info}. Приятного пользования!</p>
         </section>
         """
     elif order_status in ("canceled", "cancelled"):
         support_link = os.environ.get("SUPPORT_URL", "https://t.me/SilentConnectSupport")
         return f"""
-        <section id="paymentNoticeCard" class="install" data-order-id="{order_id}" data-order-status="canceled" style="position:relative; margin-bottom:24px; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.5); border-radius:14px; padding:18px 20px; transition: all 0.3s ease;">
+        <section id="paymentNoticeCard" class="card glass spot sub-flash-card status-canceled" data-order-id="{order_id}" data-order-status="canceled">
           {close_btn}
-          <h2 id="noticeTitle" style="color:#ef4444; margin:0 0 8px; font-size:18px; font-weight:700; display:flex; align-items:center; gap:8px;">✖ Заказ отменен</h2>
-          <p id="noticeBody" style="color:#fff; font-size:14.5px; margin:0; line-height:1.5; padding-right:32px;">Заказ <strong>#{order_id}</strong> отменен администратором. Пожалуйста, попробуйте оформить заказ заново или <a href="{html.escape(support_link)}" target="_blank" style="color:#ef4444; text-decoration:underline; font-weight:600;">свяжитесь с поддержкой</a>.</p>
+          <div class="sub-flash-head">
+            <div class="sub-flash-title-wrap">
+              <span class="sub-flash-badge-ico danger">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </span>
+              <span id="noticeTitle" class="sub-flash-title">Заказ отменён</span>
+            </div>
+          </div>
+          <p id="noticeBody" class="sub-flash-body">Заказ <strong>#{order_id}</strong> отменен администратором. Пожалуйста, попробуйте оформить заказ заново или <a href="{html.escape(support_link)}" target="_blank" style="color:var(--danger, #f87171); text-decoration:underline; font-weight:600;">свяжитесь с поддержкой</a>.</p>
         </section>
         """
     elif reported_at:
         return f"""
-        <section id="paymentNoticeCard" class="install" data-order-id="{order_id}" data-order-status="reported" style="position:relative; margin-bottom:24px; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.4); border-radius:14px; padding:18px 20px; transition: all 0.3s ease;">
+        <section id="paymentNoticeCard" class="card glass spot sub-flash-card status-reported" data-order-id="{order_id}" data-order-status="reported">
           {close_btn}
-          <h2 id="noticeTitle" style="color:#f59e0b; margin:0 0 8px; font-size:18px; font-weight:700; display:flex; align-items:center; gap:8px;">⏳ Уведомление об оплате отправлено!</h2>
-          <p id="noticeBody" style="color:#fff; font-size:14.5px; margin:0; line-height:1.5; padding-right:32px;">Мы получили ваше уведомление по заказу <strong>#{order_id}</strong>. Менеджер проверяет зачисление. Ваша подписка продлится автоматически без изменения ссылок!</p>
-          <div style="margin-top:14px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+          <div class="sub-flash-head">
+            <div class="sub-flash-title-wrap">
+              <span class="sub-flash-badge-ico warn">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              </span>
+              <span id="noticeTitle" class="sub-flash-title">Уведомление об оплате отправлено!</span>
+            </div>
+          </div>
+          <p id="noticeBody" class="sub-flash-body">Мы получили ваше уведомление по заказу <strong>#{order_id}</strong>. Менеджер проверяет зачисление. Ваша подписка продлится автоматически без изменения ссылок!</p>
+          <div style="margin-top:12px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
             <form method="post" action="/{SECRET_SEGMENT}/cancel/{order_id}{token_query}" style="margin:0;">
               {token_input}
-              <button type="submit" class="button secondary" style="min-height:36px; padding:6px 14px; font-size:13px; font-weight:600; background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.35); border-radius:8px; cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition:all 0.2s;" onmouseover="this.style.background='rgba(239,68,68,0.22)';" onmouseout="this.style.background='rgba(239,68,68,0.12)';">Отменить заказ ✖</button>
+              <button type="submit" class="btn btn-danger btn-sm" style="min-height:32px; padding:4px 12px; font-size:12.5px; font-weight:600; border-radius:8px; cursor:pointer; display:inline-flex; align-items:center; gap:6px;">Отменить заказ ✕</button>
             </form>
-            <span style="color:var(--muted); font-size:12.5px;">Если передумали или ошиблись</span>
+            <span style="color:var(--mut, rgba(255,255,255,0.6)); font-size:12.5px;">Если передумали или ошиблись</span>
           </div>
         </section>
         """
@@ -1743,39 +1764,48 @@ def render_payment_notice_html(order_data: Any, status_override: str | None = No
         if is_profile_active:
             price_val = order.get('final_price_rub', 0)
             return f"""
-            <section id="paymentNoticeCard" class="install" data-order-id="{order_id}" data-order-status="waiting_payment" style="position:relative; margin-bottom:16px; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.3); border-radius:12px; padding:10px 14px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
-              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                <span style="font-size:16px;">💳</span>
-                <span style="font-size:13.5px; color:#fff; font-weight:600;">Заказ продления #{order_id} ({price_val} ₽)</span>
-                <span style="background:rgba(245, 158, 11, 0.15); border:1px solid rgba(245, 158, 11, 0.35); color:#f59e0b; padding:2px 8px; border-radius:6px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px;">Ожидает оплаты</span>
+            <section id="paymentNoticeCard" class="card glass spot sub-flash-card status-waiting_payment" data-order-id="{order_id}" data-order-status="waiting_payment">
+              {close_btn}
+              <div class="sub-flash-head">
+                <div class="sub-flash-title-wrap">
+                  <span class="sub-flash-badge-ico warn">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+                  </span>
+                  <span id="noticeTitle" class="sub-flash-title">Заказ продления #{order_id} ({price_val} ₽)</span>
+                  <span style="background:rgba(245, 158, 11, 0.15); border:1px solid rgba(245, 158, 11, 0.35); color:var(--warn,#fbbf24); padding:2px 8px; border-radius:6px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px;">Ожидает оплаты</span>
+                </div>
               </div>
-              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                <a href="{html.escape(order_page_url, quote=True)}" class="button" style="min-height:32px; padding:4px 14px; font-size:13px; font-weight:700; background:var(--green); color:#000; text-decoration:none; border-radius:8px; display:inline-flex; align-items:center;">Оплатить</a>
+              <div style="margin-top:10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                <a href="{html.escape(order_page_url, quote=True)}" class="btn btn-primary btn-sm" style="min-height:32px; padding:4px 14px; font-size:13px; font-weight:700; border-radius:8px; text-decoration:none; display:inline-flex; align-items:center;">Оплатить</a>
                 <form method="post" action="/{SECRET_SEGMENT}/cancel/{order_id}{token_query}" style="margin:0; display:inline;">
                   {token_input}
-                  <button type="submit" class="button secondary" style="min-height:32px; padding:4px 10px; font-size:12px; font-weight:600; background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.3); border-radius:8px; cursor:pointer; display:inline-flex; align-items:center; gap:4px; transition:all 0.2s;" onmouseover="this.style.background='rgba(239,68,68,0.22)';" onmouseout="this.style.background='rgba(239,68,68,0.12)';" title="Отменить заказ">Отменить ✖</button>
+                  <button type="submit" class="btn btn-ghost btn-sm" style="min-height:32px; padding:4px 10px; font-size:12px; font-weight:600; color:var(--danger,#f87171); border-radius:8px; cursor:pointer; display:inline-flex; align-items:center; gap:4px;" title="Отменить заказ">Отменить ✕</button>
                 </form>
               </div>
             </section>
             """
         return f"""
-        <section class="install" style="margin-bottom:24px; background:rgba(47,191,113,0.08); border:1px solid var(--green); border-radius:14px; padding:18px 20px;">
-          <div class="install-head" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
-            <h2 style="margin:0; font-size:18px; font-weight:700; color:#fff;">💳 Заказ продления #{order_id}</h2>
-            <span style="background:rgba(245, 158, 11, 0.15); border:1px solid rgba(245, 158, 11, 0.4); color:#f59e0b; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; display:inline-block;">Ожидает оплаты</span>
+        <section id="paymentNoticeCard" class="card glass spot sub-flash-card status-waiting_payment" data-order-id="{order_id}" data-order-status="waiting_payment">
+          {close_btn}
+          <div class="sub-flash-head">
+            <div class="sub-flash-title-wrap">
+              <span class="sub-flash-badge-ico warn">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+              </span>
+              <span id="noticeTitle" class="sub-flash-title">Заказ продления #{order_id}</span>
+              <span style="background:rgba(245, 158, 11, 0.15); border:1px solid rgba(245, 158, 11, 0.35); color:var(--warn,#fbbf24); padding:2px 8px; border-radius:6px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px;">Ожидает оплаты</span>
+            </div>
           </div>
-          <div style="font-size:28px; font-weight:800; color:#fff; margin:8px 0 14px;">
-            {order.get('final_price_rub', 0)} ₽ <span style="font-size:14px; color:var(--muted); font-weight:500;">({duration_days} дн., до {device_limit} устр.)</span>
+          <div style="font-size:24px; font-weight:800; color:var(--hi,#fff); margin:8px 0 10px;">
+            {order.get('final_price_rub', 0)} ₽ <span style="font-size:13.5px; color:var(--mut,rgba(255,255,255,0.6)); font-weight:500;">({duration_days} дн., до {device_limit} устр.)</span>
           </div>
-          <p style="color:#e2e8f0; font-size:14px; line-height:1.5; margin:0 0 16px;">
-            Оплатите заказ онлайн (СБП, банковские карты, криптовалюта) на защищённой странице оплаты:
-          </p>
-          <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
-            <a href="{html.escape(order_page_url, quote=True)}" class="button" style="min-height:44px; font-weight:700; text-decoration:none; background:var(--green); color:#000; display:inline-flex; align-items:center; justify-content:center; padding:10px 18px; border-radius:8px;">Перейти к оплате заказа</a>
-            <a href="{html.escape(support_link, quote=True)}" target="_blank" rel="noopener" class="button secondary" style="min-height:44px; font-weight:600; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; padding:10px 16px; border-radius:8px; background:rgba(255,255,255,0.08); color:#fff; border:1px solid rgba(255,255,255,0.2); transition:all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.16)';" onmouseout="this.style.background='rgba(255,255,255,0.08)';">Поддержка 💬</a>
+          <p class="sub-flash-body" style="margin-bottom:12px;">Оплатите заказ онлайн (СБП, банковские карты, криптовалюта) на защищённой странице оплаты:</p>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+            <a href="{html.escape(order_page_url, quote=True)}" class="btn btn-primary btn-sm" style="min-height:36px; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; padding:6px 16px; border-radius:8px;">Перейти к оплате заказа</a>
+            <a href="{html.escape(support_link, quote=True)}" target="_blank" rel="noopener" class="btn btn-telegram btn-sm" style="min-height:36px; font-weight:600; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; padding:6px 14px; border-radius:8px;">Поддержка 💬</a>
             <form method="post" action="/{SECRET_SEGMENT}/cancel/{order_id}{token_query}" style="margin:0;">
               {token_input}
-              <button type="submit" class="button secondary" style="min-height:44px; font-weight:600; background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.3); border-radius:8px; cursor:pointer; padding:10px 16px; display:inline-flex; align-items:center; justify-content:center; transition:all 0.2s;" onmouseover="this.style.background='rgba(239,68,68,0.22)';" onmouseout="this.style.background='rgba(239,68,68,0.12)';">Отменить ✖</button>
+              <button type="submit" class="btn btn-ghost btn-sm" style="min-height:36px; font-weight:600; color:var(--danger,#f87171); border-radius:8px; cursor:pointer; padding:6px 14px; display:inline-flex; align-items:center; justify-content:center;">Отменить ✕</button>
             </form>
           </div>
         </section>
@@ -1973,10 +2003,10 @@ def handle_inline_order_paid(order_public_id: str, web_token: str | None = None)
             if admin_chats:
                 row_dict = dict(row)
                 customer_email = str(row_dict.get("customer_email") or meta.get("customer_email") or "").strip()
-                email_info = f"\n📧 Email: `{_escape_tg_markdown(customer_email)}`" if customer_email else ""
+                email_info = f"\n📧 Email: `{customer_email}`" if customer_email else ""
                 msg_text = (
                     f"💳 *Покупатель с сайта сообщил об оплате*\n\n"
-                    f"Заказ: `{_escape_tg_markdown(order_public_id)}`\n"
+                    f"Заказ: `{order_public_id}`\n"
                     f"Тип: Продление подписки\n"
                     f"Срок: {row_dict.get('duration_days', 30)} дн.{email_info}\n"
                     f"Сумма: {row_dict.get('final_price_rub', 0)} RUB\n\n"
@@ -9466,7 +9496,7 @@ def setup_page_html(
         if tpl_path.is_file():
             tpl_html = tpl_path.read_text(encoding="utf-8")
             tg_bot_url = f"https://t.me/{bot_username}"
-            pub_base = str(os.getenv("SUB_PUBLIC_BASE_URL", "https://example.com") or "https://example.com").rstrip("/")  # PLACEHOLDER
+            pub_base = str(os.getenv("SUB_PUBLIC_BASE_URL", "https://example.com") or "https://example.com").rstrip("/")
             req_host = (headers.get("Host") or headers.get("host") or "") if headers else ""
             if "previewsub." in req_host or "preview." in req_host:
                 pub_base = "https://preview.example.com"
@@ -9487,6 +9517,8 @@ def setup_page_html(
             awg_reset_str = expires_str
             awg_max_slots = 3
             awg_slots_payload = []
+            main_cycle_bytes = 0
+            raw_main_bytes = int((summary.get("upload_bytes") or 0) + (summary.get("download_bytes") or 0))
             try:
                 wc_inst = get_shop_checkout()
                 prof_inst = find_profile_for_sub(wc_inst, subscription_id) if wc_inst else None
@@ -9495,6 +9527,14 @@ def setup_page_html(
                     from vpn_shop.quota import get_quota_cycle_info
                     q_status = evaluate_profile_quota(prof_inst["public_id"], wc_inst.store)
                     c_info = get_quota_cycle_info(prof_inst)
+                    if hasattr(wc_inst.store, "get_or_update_xui_cycle_traffic"):
+                        main_cycle_bytes = wc_inst.store.get_or_update_xui_cycle_traffic(
+                            prof_inst["public_id"],
+                            raw_main_bytes,
+                            c_info,
+                        )
+                    else:
+                        main_cycle_bytes = raw_main_bytes
                     awg_limit_bytes = int(getattr(q_status, "awg_quota_bytes", 0) or (250 * (1024**3)))
                     awg_used_bytes = int(getattr(q_status, "awg_used_bytes", 0) or 0)
                     rem_b = int(getattr(q_status, "remaining_bytes", 0) or max(0, awg_limit_bytes - awg_used_bytes))
@@ -9530,6 +9570,7 @@ def setup_page_html(
             plan_badge = {3: "Личный", 6: "Домашний", 9: "Расширенный"}.get(awg_max_slots, "Тариф")
             oflux_state_raw = str(oflux_slot_data.get("status") or "uninitialized")
             oflux_ui_state = "active" if oflux_state_raw == "active" else ("migrating" if oflux_state_raw == "migrating" else "inactive")
+            main_traffic_label = f"{format_bytes(main_cycle_bytes)} / ∞"
             sc_prod = {
                 "view": "sub",
                 "cfTurnstileSiteKey": cf_site_key,
@@ -9538,6 +9579,7 @@ def setup_page_html(
                 "botUrl": tg_bot_url,
                 "publicBaseUrl": pub_base,
                 "sub": {
+                    "secretSegment": SECRET_SEGMENT,
                     "subId": subscription_id,
                     "subUrl": clean_sub_url,
                     "subImportUrl": f"/{SECRET_SEGMENT}/import/{quoted_sub_id}",
@@ -9557,8 +9599,10 @@ def setup_page_html(
                     "expireDateLabel": expires_str,
                     "daysLeftLabel": subtitle,
                     "devicesLimitLabel": device_limit,
+                    "trafficLabel": main_traffic_label,
                     "emailBound": bool(customer_email),
                     "boundEmailMasked": masked_email,
+                    "customerEmail": customer_email,
                     "flashHtml": payment_card_html,
                     "awg": {
                         "packageGb": int(round(awg_limit_bytes / (1024**3))) if awg_limit_bytes > 0 else 250,
@@ -9592,6 +9636,17 @@ def setup_page_html(
             # SSR pre-toggles: #view-sub visible, #view-landing hidden
             rendered = re.sub(r'<main([^>]*id="view-landing"[^>]*)>', r'<main\1 hidden>', rendered)
             rendered = re.sub(r'<main([^>]*id="view-sub"[^>]*)\bhidden\b([^>]*)>', r'<main\1\2>', rendered)
+            if payment_card_html:
+                rendered = rendered.replace(
+                    '<div id="subNoticeSlot" class="sub-notice-slot"></div>',
+                    f'<div id="subNoticeSlot" class="sub-notice-slot">{payment_card_html}</div>',
+                    1,
+                )
+            rendered = re.sub(
+                r'<b id="subMetricMainTraffic"[^>]*>.*?</b>',
+                f'<b id="subMetricMainTraffic" style="color:var(--em-t)">{html.escape(main_traffic_label)}</b>',
+                rendered,
+            )
             return rendered.encode("utf-8")
     except Exception as v21_exc:
         LOGGER.warning("Could not render v2.1 setup page: %s", v21_exc)
@@ -10453,7 +10508,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                     email_reminders=email_reminders,
                 )
 
-                unified_order_url = f"{HAPP_WEB_PAGE_URL}/order/{res['public_id']}/{res['web_token']}"
+                req_host = (self.headers.get("Host") or self.headers.get("host") or "").split(":")[0]
+                if "previewsub." in req_host:
+                    order_base = f"https://{req_host}"
+                elif "preview." in req_host:
+                    order_base = f"https://{req_host}"
+                else:
+                    order_base = str(os.getenv("CHECKOUT_PUBLIC_BASE_URL") or HAPP_WEB_PAGE_URL or "https://example.com").rstrip("/")
+                unified_order_url = f"{order_base}/order/{res['public_id']}/{res['web_token']}"
 
                 if is_ajax:
                     self._send_json(HTTPStatus.OK, {
@@ -10577,12 +10639,16 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             parsed_path = [segment for segment in urllib.parse.urlsplit(self.path).path.split("/") if segment]
             sub_id = parsed_path[2] if len(parsed_path) >= 3 and parsed_path[0] in {SECRET_SEGMENT, "my-secret-sub"} and parsed_path[1] in ("renew", "bind-email") else "default"
+            existing_email = find_store_linked_email(sub_id) if sub_id != "default" else ""
             source_url = public_subscription_url(self.headers, "json", sub_id)
+            quoted_sub_id = urllib.parse.quote(sub_id, safe="")
+            import_query = urllib.parse.urlencode({"url": source_url})
             generic_html = setup_page_html(
                 subscription_url=source_url,
                 subscription_id=sub_id,
-                quoted_sub_id=urllib.parse.quote(sub_id, safe=""),
-                import_query="",
+                quoted_sub_id=quoted_sub_id,
+                import_query=import_query,
+                customer_email=existing_email,
                 payment_card_html=payment_card,
             )
             self._send_html(HTTPStatus.BAD_REQUEST, generic_html, include_body=True)
@@ -10745,6 +10811,40 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, get_openflux_slot_state_dict(pid), include_body)
                 return
 
+            # GET /my-secret-sub/qr/<sub_id> or /sub/qr/<sub_id>
+            if (len(path) == 3 and path[0] in {"sub", SECRET_SEGMENT, "my-secret-sub"} and path[1] in {"qr", "qrcode"}) or \
+               (len(path) == 4 and path[0] == "api" and path[1] in {"sub", "qr"} and path[3] in {"qr", "qrcode"}):
+                sub_id = path[2] if len(path) == 3 else path[3]
+                find_subscription(sub_id)
+                raw_source = first_non_empty(query.get("url")) or ""
+                if not _is_approved_import_url(raw_source, self.headers):
+                    source_url = public_subscription_url(self.headers, "json", sub_id)
+                else:
+                    parsed_source = urllib.parse.urlsplit(raw_source)
+                    source_url = urllib.parse.urlunsplit((parsed_source.scheme, parsed_source.netloc, parsed_source.path, "", "")) if parsed_source.scheme else raw_source
+
+                qr_bytes = b""
+                try:
+                    from vpn_shop import qr
+                    qr_bytes = qr.generate_qr_png(source_url, box_size=6, border=2)
+                except Exception as exc:
+                    LOGGER.warning("Subscription QR generation failed for %s: %s", sub_id, exc)
+
+                if not qr_bytes:
+                    self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "qr_generation_failed"}, include_body)
+                    return
+
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(qr_bytes)))
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                for k, v in SECURITY_HEADERS:
+                    self.send_header(k, v)
+                self.end_headers()
+                if include_body:
+                    self.wfile.write(qr_bytes)
+                return
+
             # OpenFlux Slot QR Code (Dynamic slot link or legacy country-specific)
             # GET /sub/openflux/<sub_id>/qr?target=active|pending
             # GET /sub/openflux/<sub_id>/<country>/qr
@@ -10822,13 +10922,37 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._redirect(f"{HAPP_WEB_PAGE_URL}/assets/telegram/avatar.webp", include_body)
                 return
 
-            if path == ["legal", "terms"] or (len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] == "legal" and path[2] == "terms"):
+            if path in (["legal", "privacy"], ["privacy"]) or (len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] == "legal" and path[2] == "privacy"):
+                checkout = get_shop_checkout()
+                if checkout:
+                    self._send_html(HTTPStatus.OK, checkout.render_legal_privacy(), include_body)
+                    return
+
+            if path in (["legal", "terms"], ["terms"]) or (len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] == "legal" and path[2] == "terms"):
+                checkout = get_shop_checkout()
+                if checkout:
+                    self._send_html(HTTPStatus.OK, checkout.render_legal_terms(), include_body)
+                    return
                 self._send_html(HTTPStatus.OK, legal_terms_html(), include_body)
                 return
 
-            if len(path) >= 2 and path[-2] == "legal" and path[-1] in ("privacy", "refund"):
-                self._redirect(f"{HAPP_WEB_PAGE_URL}/legal/{path[-1]}", include_body)
-                return
+            if path in (["legal", "refund"], ["refund"]) or (len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] == "legal" and path[2] == "refund"):
+                checkout = get_shop_checkout()
+                if checkout:
+                    self._send_html(HTTPStatus.OK, checkout.render_legal_refund(), include_body)
+                    return
+
+            if path in (["about"], ["legal", "about"]) or (len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] == "legal" and path[2] == "about"):
+                checkout = get_shop_checkout()
+                if checkout:
+                    self._send_html(HTTPStatus.OK, checkout.render_about(), include_body)
+                    return
+
+            if path in (["contact"], ["contacts"], ["legal", "contact"], ["legal", "contacts"]) or (len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] == "legal" and path[2] in ("contact", "contacts")):
+                checkout = get_shop_checkout()
+                if checkout:
+                    self._send_html(HTTPStatus.OK, checkout.render_contact(), include_body)
+                    return
 
             if len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"}:
                 if path[1] == "internal-fragment":
@@ -11402,6 +11526,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 wc = get_shop_checkout()
                 pings = wc.get_cluster_tcp_pings() if wc else {"nl": 5, "pl": 41, "fi": 41}
                 self._send_json(HTTPStatus.OK, {"ok": True, "pings": pings}, include_body)
+                return
+
+            if len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] in {"renew", "bind-email"}:
+                sub_id = path[2]
+                self._redirect(f"/{SECRET_SEGMENT}/import/{urllib.parse.quote(sub_id, safe='')}", include_body=include_body)
                 return
 
             if len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] in {"import", "setup"}:

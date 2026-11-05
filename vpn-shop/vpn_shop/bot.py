@@ -18,7 +18,7 @@ from . import awg_manager
 
 from .catalog import Offer, build_offers
 from .config import REFERRAL_INVITEE_DISCOUNT_PERCENT, Settings
-from .mailer import send_subscription_email_async
+from .mailer import send_subscription_email_async, send_order_reviewed_email_async
 from .platega import PlategaClient
 from .provisioning import ADMIN_PROFILE_NOTES, PUBLIC_TRIAL_PROFILE_NOTES, TEST_PROFILE_NOTES, Provisioner
 from .security import days_from_now, normalize_username, now_ts, order_to_profile_alias
@@ -4866,6 +4866,7 @@ class ShopBot:
         delivery_prefix: str = "Оплата подтверждена. Ваша ссылка:",
     ) -> dict[str, Any]:
         completed_now = False
+        from_cancelled = order.get("status") in ("cancelled", "canceled") or (order.get("meta_json") or {}).get("platega_collision_type") == "cancelled"
         if order.get("status") == "delivered" and order.get("provisioned_profile_id"):
             result = self._recover_subscription_for_order(order)
         else:
@@ -4873,7 +4874,7 @@ class ShopBot:
                 order = self.store.transition_order(
                     order["public_id"],
                     "provisioning",
-                    expected_from=("waiting_payment", "auto_provision", "failed"),
+                    expected_from=("waiting_payment", "auto_provision", "failed", "cancelled"),
                     actor=actor,
                     reason="complete_order_start",
                 )
@@ -5023,7 +5024,45 @@ class ShopBot:
                 try:
                     existing_profile = self.store.get_profile_for_order(order["public_id"])
                     if existing_profile:
-                        result = self._recover_subscription_for_order(order) or {}
+                        if from_cancelled:
+                            meta = order.get("meta_json") or {}
+                            raw_device_limit = meta.get("device_limit", self.settings.default_device_limit)
+                            device_limit = int(self.settings.default_device_limit if raw_device_limit is None else raw_device_limit)
+                            duration_days = int(order.get("duration_days") or 30)
+                            if str(order.get("transport") or "") == "hybrid" or meta.get("hybrid"):
+                                xhttp_profile_public_id = str(
+                                    meta.get("renewal_xhttp_profile_public_id")
+                                    or meta.get("xhttp_profile_public_id")
+                                    or ""
+                                )
+                                tcp_res = self.provisioner.renew_profile(
+                                    str(existing_profile["public_id"]),
+                                    duration_days,
+                                    device_limit=device_limit,
+                                )
+                                xhttp_res = self.provisioner.renew_profile(
+                                    xhttp_profile_public_id,
+                                    duration_days,
+                                    device_limit=device_limit,
+                                ) if xhttp_profile_public_id else tcp_res
+                                result = {
+                                    "profile": tcp_res["profile"],
+                                    "xhttp_profile": xhttp_res["profile"],
+                                    "subscription_url": self._hybrid_subscription_url(
+                                        str(tcp_res["sub_id"]),
+                                        str(xhttp_res["sub_id"]),
+                                    ) if xhttp_profile_public_id else tcp_res.get("subscription_url"),
+                                }
+                            else:
+                                result = self.provisioner.renew_profile(
+                                    str(existing_profile["public_id"]),
+                                    duration_days,
+                                    device_limit=device_limit,
+                                )
+                            for s in self.store.list_awg_slots(existing_profile["id"]):
+                                self.store.set_awg_slot_enabled(s["id"], True)
+                        else:
+                            result = self._recover_subscription_for_order(order) or {}
                         if not result.get("profile"):
                             result["profile"] = existing_profile
                     else:
@@ -6316,6 +6355,210 @@ class ShopBot:
                     )
                     self.telegram.send_message(chat_id, f"Заказ {order_public_id} отменён.")
                 return
+
+            if data.startswith(("admin:platega_ext:", "admin:platega_act:", "admin:platega_ack_refund:")):
+                if not self.is_admin(user):
+                    self.telegram.answer_callback_query(callback_id, "Доступ запрещен", show_alert=True)
+                    return
+
+                parts = data.split(":")
+                platega_action = parts[1]
+                order_public_id = parts[2] if len(parts) > 2 else ""
+                tx_id = parts[3] if len(parts) > 3 else ""
+
+                order = self.store.get_order(order_public_id)
+                if not order:
+                    self.telegram.answer_callback_query(callback_id, "Заказ не найден", show_alert=True)
+                    return
+
+                meta = dict(order.get("meta_json") or {})
+                if meta.get("platega_collision_resolution"):
+                    self.telegram.answer_callback_query(
+                        callback_id,
+                        f"Уже решено: {meta['platega_collision_resolution']}",
+                        show_alert=True,
+                    )
+                    return
+
+                orig_text = callback.get("message", {}).get("text") or ""
+                orig_base = orig_text.split("Выберите действие ниже:")[0].strip() if orig_text else f"Заказ #{order_public_id}"
+                admin_username = f"@{user.get('username')}" if user.get("username") else f"ID {user.get('id')}"
+
+                if platega_action == "platega_ext":
+                    self.telegram.answer_callback_query(callback_id, "Продление выполняется...")
+                    duration_days = int(order.get("duration_days") or 30)
+
+                    profile = self.store.get_profile_for_order(order_public_id)
+                    if not profile and order.get("provisioned_profile_id"):
+                        profile = self.store.get_profile_by_id(order["provisioned_profile_id"])
+                    if not profile and meta.get("renewal_profile_public_id"):
+                        profile = self.store.get_profile(meta["renewal_profile_public_id"])
+                    if not profile and meta.get("profile_public_id"):
+                        profile = self.store.get_profile(meta["profile_public_id"])
+
+                    raw_device_limit = meta.get("device_limit", self.settings.default_device_limit)
+                    device_limit = int(self.settings.default_device_limit if raw_device_limit is None else raw_device_limit)
+
+                    if str(order.get("transport") or "") == "hybrid" or meta.get("hybrid"):
+                        tcp_id = str(meta.get("tcp_profile_public_id") or (profile.get("public_id") if profile else ""))
+                        xhttp_id = str(meta.get("renewal_xhttp_profile_public_id") or meta.get("xhttp_profile_public_id") or "")
+                        tcp_res = self.provisioner.renew_profile(tcp_id, duration_days, device_limit=device_limit)
+                        xhttp_res = self.provisioner.renew_profile(xhttp_id, duration_days, device_limit=device_limit)
+                        sub_url = self._hybrid_subscription_url(str(tcp_res["sub_id"]), str(xhttp_res["sub_id"]))
+                        expires_at = min(int(tcp_res["expires_at"]), int(xhttp_res["expires_at"]))
+                    else:
+                        if not profile:
+                            raise RuntimeError(f"Order {order_public_id} has no linked profile to renew")
+                        res = self.provisioner.renew_profile(str(profile["public_id"]), duration_days, device_limit=device_limit)
+                        sub_url = res.get("subscription_url") or ""
+                        expires_at = int(res.get("expires_at") or 0)
+
+                    if profile:
+                        for s in self.store.list_awg_slots(profile["id"]):
+                            self.store.set_awg_slot_enabled(s["id"], True)
+
+                    from datetime import datetime, timezone
+                    exp_dt = datetime.fromtimestamp(expires_at, tz=timezone.utc).strftime("%d.%m.%Y") if expires_at else f"+{duration_days} дн."
+
+                    meta["platega_collision_resolution"] = "extended"
+                    meta["platega_collision_resolved_at"] = now_ts()
+                    meta["platega_collision_resolved_by"] = f"tg:{user.get('id')}"
+                    meta["platega_collision_resolved_tx_id"] = tx_id
+                    if not meta.get("platega_confirmed_at"):
+                        meta["platega_confirmed_at"] = now_ts()
+                    if tx_id and not meta.get("platega_transaction_id"):
+                        meta["platega_transaction_id"] = tx_id
+                    self.store.update_order_meta(order_public_id, meta)
+                    self.store.record_admin_action(
+                        action_type="platega_collision_extend",
+                        target_type="order",
+                        target_public_id=order_public_id,
+                        actor=f"tg:{user.get('id')}",
+                        meta={"duration_days": duration_days, "tx_id": tx_id, "expires_at": expires_at},
+                    )
+
+                    new_text = f"{orig_base}\n\n✅ РЕШЕНО: Подписка успешно продлена ещё на {duration_days} дн. (до {exp_dt})\nОператор: {admin_username}"
+
+                    if chat_id is not None and message_id is not None:
+                        try:
+                            self.telegram.edit_message_text(chat_id=chat_id, message_id=message_id, text=new_text, reply_markup={"inline_keyboard": []})
+                        except Exception:
+                            pass
+
+                    for alert in meta.get("platega_collision_alert_messages") or []:
+                        a_chat = alert.get("chat_id")
+                        a_msg = alert.get("message_id")
+                        if a_chat and a_msg and (a_chat != chat_id or a_msg != message_id):
+                            try:
+                                self.telegram.edit_message_text(chat_id=a_chat, message_id=a_msg, text=new_text, reply_markup={"inline_keyboard": []})
+                            except Exception:
+                                pass
+
+                    customer_email = str(order.get("customer_email") or meta.get("customer_email") or "").strip()
+                    web_token = str(meta.get("web_token") or "")
+                    cabinet_url = f"{self.settings.web_public_base_url}/order/{quote(str(order['public_id']), safe='')}/{quote(web_token, safe='')}" if web_token else self.settings.web_public_base_url
+                    setup_url = subscription_setup_url(sub_url) if sub_url else cabinet_url
+                    if customer_email:
+                        try:
+                            send_order_reviewed_email_async(
+                                self.settings,
+                                customer_email=customer_email,
+                                order_public_id=order_public_id,
+                                duration_days=duration_days,
+                                setup_url=setup_url,
+                                json_url=sub_url,
+                                cabinet_url=cabinet_url,
+                                expires_ts=expires_at,
+                                device_limit=device_limit,
+                            )
+                        except Exception:
+                            LOGGER.exception("Failed to send reviewed email for order %s", order_public_id)
+
+                    if order.get("customer_chat_id"):
+                        try:
+                            self.telegram.send_message(
+                                order["customer_chat_id"],
+                                f"Ваш заказ #{order_public_id} был пересмотрен службой заботы. Начислено +{duration_days} дн. доступа (до {exp_dt})! Ссылка для подключения: {setup_url}",
+                            )
+                        except Exception:
+                            pass
+
+                    return
+
+                elif platega_action == "platega_act":
+                    self.telegram.answer_callback_query(callback_id, "Активируем доступ...")
+                    self.complete_order(order, actor=f"tg_admin:{user.get('id')}")
+
+                    refreshed = self.store.get_order(order_public_id) or order
+                    meta = dict(refreshed.get("meta_json") or {})
+                    meta["platega_collision_resolution"] = "activated"
+                    meta["platega_collision_resolved_at"] = now_ts()
+                    meta["platega_collision_resolved_by"] = f"tg:{user.get('id')}"
+                    meta["platega_collision_resolved_tx_id"] = tx_id
+                    if tx_id:
+                        meta["platega_transaction_id"] = tx_id
+                    meta["platega_confirmed_at"] = meta.get("platega_confirmed_at") or now_ts()
+                    self.store.update_order_meta(order_public_id, meta)
+                    self.store.record_admin_action(
+                        action_type="platega_collision_activate",
+                        target_type="order",
+                        target_public_id=order_public_id,
+                        actor=f"tg:{user.get('id')}",
+                        meta={"tx_id": tx_id},
+                    )
+
+                    new_text = f"{orig_base}\n\n✅ РЕШЕНО: Заказ активирован, доступ отправлен клиенту.\nОператор: {admin_username}"
+
+                    if chat_id is not None and message_id is not None:
+                        try:
+                            self.telegram.edit_message_text(chat_id=chat_id, message_id=message_id, text=new_text, reply_markup={"inline_keyboard": []})
+                        except Exception:
+                            pass
+
+                    for alert in meta.get("platega_collision_alert_messages") or []:
+                        a_chat = alert.get("chat_id")
+                        a_msg = alert.get("message_id")
+                        if a_chat and a_msg and (a_chat != chat_id or a_msg != message_id):
+                            try:
+                                self.telegram.edit_message_text(chat_id=a_chat, message_id=a_msg, text=new_text, reply_markup={"inline_keyboard": []})
+                            except Exception:
+                                pass
+
+                    return
+
+                elif platega_action == "platega_ack_refund":
+                    self.telegram.answer_callback_query(callback_id, "Отмечено: возврат")
+                    meta["platega_collision_resolution"] = "refund_manual"
+                    meta["platega_collision_resolved_at"] = now_ts()
+                    meta["platega_collision_resolved_by"] = f"tg:{user.get('id')}"
+                    meta["platega_collision_resolved_tx_id"] = tx_id
+                    self.store.update_order_meta(order_public_id, meta)
+                    self.store.record_admin_action(
+                        action_type="platega_collision_refund",
+                        target_type="order",
+                        target_public_id=order_public_id,
+                        actor=f"tg:{user.get('id')}",
+                        meta={"tx_id": tx_id},
+                    )
+
+                    new_text = f"{orig_base}\n\nℹ️ ОТМЕЧЕНО: Оформлен возврат в кабинете Platega.\nОператор: {admin_username}"
+
+                    if chat_id is not None and message_id is not None:
+                        try:
+                            self.telegram.edit_message_text(chat_id=chat_id, message_id=message_id, text=new_text, reply_markup={"inline_keyboard": []})
+                        except Exception:
+                            pass
+
+                    for alert in meta.get("platega_collision_alert_messages") or []:
+                        a_chat = alert.get("chat_id")
+                        a_msg = alert.get("message_id")
+                        if a_chat and a_msg and (a_chat != chat_id or a_msg != message_id):
+                            try:
+                                self.telegram.edit_message_text(chat_id=a_chat, message_id=a_msg, text=new_text, reply_markup={"inline_keyboard": []})
+                            except Exception:
+                                pass
+
+                    return
 
             self.telegram.answer_callback_query(callback_id, "Неизвестное действие", show_alert=True)
         except Exception:
