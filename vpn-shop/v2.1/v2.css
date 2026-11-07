@@ -190,8 +190,15 @@ h1, h2, h3, .hero h1, .sec-head h2, .bcard h3 {
 /* =========================================================================
    HERO (Центральная симметрия: крупный девиз + подзаголовок + CTA + 3D-глобус)
    ========================================================================= */
-.hero{position:relative;padding-top:calc(var(--lab-h) + 78px);padding-bottom:16px;min-height:min(100vh,980px);min-height:min(100svh,980px);display:flex;align-items:center}
-.hero>.container{width:100%}
+.hero{position:relative;overflow:hidden;padding-top:calc(var(--lab-h) + 78px);padding-bottom:16px;min-height:min(100vh,980px);min-height:min(100svh,980px);display:flex;align-items:center}
+.hero-gridmask{
+  position:absolute;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(rgba(255,255,255,.038) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.038) 1px,transparent 1px);
+  background-size:64px 64px;
+  -webkit-mask-image:radial-gradient(58% 54% at 50% 42%,#000,transparent 74%);
+          mask-image:radial-gradient(58% 54% at 50% 42%,#000,transparent 74%);
+}
+.hero>.container{position:relative;z-index:1;width:100%}
 .hero-grid{display:flex;flex-direction:column;align-items:center;text-align:center;gap:0;width:100%}
 .hero-copy{min-width:0;width:100%;max-width:860px;margin:0 auto;display:flex;flex-direction:column;align-items:center;text-align:center}
 .stage-col{position:relative;display:flex;justify-content:center;align-items:center;min-width:0;width:100%;margin-top:6px}
@@ -563,8 +570,11 @@ h1, h2, h3, .hero h1, .sec-head h2, .bcard h3 {
 .ping b{font-size:12px;color:var(--em-t);font-weight:600;padding:2px 8px;border-radius:99px;background:rgba(16,185,129,.12);border:1px solid rgba(52,227,164,.25);white-space:nowrap}
 
 .of-info-banner{background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.28);border-radius:16px;padding:14px 18px;margin-bottom:16px}
-.of-box{padding:20px;border-radius:18px;background:rgba(0,0,0,.32);border:1px solid rgba(234,179,8,.32);margin-bottom:20px}
-.of-timer{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:99px;font-size:12.5px;font-weight:600;color:var(--warn);background:rgba(246,196,83,.12);border:1px solid rgba(246,196,83,.35)}
+.of-box{padding:20px;border-radius:18px;background:rgba(0,0,0,.32);border:1px solid rgba(234,179,8,.32);margin-bottom:20px;overflow:hidden}
+.of-timer{display:inline-block;max-width:100%;padding:6px 12px;border-radius:12px;font-size:12.5px;font-weight:600;line-height:1.45;color:var(--warn);background:rgba(246,196,83,.12);border:1px solid rgba(246,196,83,.35)}
+.of-timer > .ico{display:inline-block;vertical-align:-2px;margin-right:4px}
+.of-timer b{display:inline;white-space:normal}
+.of-timer .flag-badge{display:inline-flex;vertical-align:-1px;margin:0 4px 0 2px}
 .country-opt{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid var(--line-2);cursor:pointer;transition:background .2s,border-color .2s,color .2s,transform .2s}
 .country-opt:hover{background:rgba(255,255,255,.08);border-color:rgba(52,227,164,.45)}
 .country-opt input{accent-color:var(--em);width:16px;height:16px}
@@ -675,8 +685,10 @@ h1, h2, h3, .hero h1, .sec-head h2, .bcard h3 {
   .hero h1 span:first-child::after{content:none}
   .hero-subtext{min-width:0;width:100%;display:flex;flex-direction:column;align-items:center;justify-content:center}
   .hero-lead{margin:8px auto 0;max-width:30em;font-size:13px;line-height:1.42;color:var(--mut);text-align:center}
-  .hero-cta{margin-top:11px;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:7px;width:100%}
-  .hero-cta .btn-lg{min-height:40px;padding:0 16px;font-size:13.5px;width:auto;max-width:100%}
+  .hero-cta{margin-top:11px;display:flex;flex-wrap:nowrap;align-items:center;justify-content:center;gap:6px;width:100%}
+  .hero-cta .btn-lg{min-height:38px;padding:0 11px;font-size:clamp(11.5px,3.25vw,13px);gap:5px;white-space:nowrap;flex:0 1 auto;max-width:100%}
+  .hero-cta .btn-telegram svg{width:14px;height:14px}
+  .hero-gridmask{background-size:44px 44px;-webkit-mask-image:radial-gradient(75% 60% at 50% 42%,#000,transparent 78%);mask-image:radial-gradient(75% 60% at 50% 42%,#000,transparent 78%)}
   .hero-price{font-size:12.5px}
   .stage-col{display:flex;justify-content:center;align-items:center;min-width:0;width:100%;margin-top:2px;overflow:visible}
   .stage-wrap{
@@ -1030,7 +1042,9 @@ h1, h2, h3, .hero h1, .sec-head h2, .bcard h3 {
   .of-box p{font-size:12px!important;line-height:1.45!important}
   .of-box .status{max-width:100%;flex-wrap:nowrap;white-space:nowrap;font-size:11.5px;padding:4px 10px}
   .of-box .status b{display:inline-flex;align-items:center;overflow:hidden;text-overflow:ellipsis}
-  .of-box .btn-sm{min-height:34px;font-size:11.5px;padding:0 8px;gap:4px}
+  .of-box .of-timer{font-size:11.5px;padding:6px 10px;border-radius:10px;line-height:1.4;display:block;width:100%}
+  .of-box .btn-sm{min-height:36px;height:auto;font-size:11.5px;padding:6px 10px;gap:5px;line-height:1.25;text-align:center;justify-content:center}
+  #ofMigrating > div:last-child > .btn-sm{width:100%}
   #subMode-openflux h3{font-size:15px!important}
   #subMode-openflux > div:nth-of-type(2) p{font-size:11.5px!important;margin-top:2px!important}
   #subMode-openflux .lab-group{width:100%;justify-content:flex-start;gap:4px;flex-wrap:wrap}

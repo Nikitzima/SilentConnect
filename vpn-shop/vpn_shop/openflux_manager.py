@@ -375,6 +375,7 @@ def start_openflux_worker(server_code: str, container_name: str, public_doc_url:
     docker_cmd = (
         f"docker rm -f {clean_name} 2>/dev/null || true; "
         f"docker run -d --name {clean_name} --restart unless-stopped "
+        f"--dns 1.1.1.1 --dns 8.8.8.8 "
         f"--memory=32m --cpus=0.5 "
         f"-v /opt/openflux:/opt/openflux:ro "
         f"php:8.2-cli-alpine "

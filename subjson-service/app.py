@@ -10966,13 +10966,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._redirect(f"{HAPP_WEB_PAGE_URL}/assets/telegram/avatar.webp", include_body)
                 return
 
-            if path in (["legal", "privacy"], ["privacy"]) or (len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] == "legal" and path[2] == "privacy"):
+            if path in (["legal", "privacy"], ["privacy"], ["policy"], ["legal", "policy"]) or (len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] == "legal" and path[2] in ("privacy", "policy")):
                 checkout = get_shop_checkout()
                 if checkout:
                     self._send_html(HTTPStatus.OK, checkout.render_legal_privacy(), include_body)
                     return
 
-            if path in (["legal", "terms"], ["terms"]) or (len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] == "legal" and path[2] == "terms"):
+            if path in (["legal", "terms"], ["terms"], ["legal"], ["offer"], ["legal", "offer"]) or (len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] == "legal" and path[2] in ("terms", "offer")):
                 checkout = get_shop_checkout()
                 if checkout:
                     self._send_html(HTTPStatus.OK, checkout.render_legal_terms(), include_body)

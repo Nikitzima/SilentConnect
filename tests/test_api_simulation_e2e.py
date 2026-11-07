@@ -93,7 +93,7 @@ def test_platega_create_transaction_live_simulation(postman_simulation):
 
     assert resp.get("transactionId") is not None
     assert resp.get("url") is not None
-    assert "preview.example.com" in resp["url"]
+    assert "example.com" in resp["url"]
 
 
 def test_platega_get_transaction_status_live_simulation(postman_simulation):

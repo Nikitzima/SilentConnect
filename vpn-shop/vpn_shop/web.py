@@ -5835,10 +5835,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                     extra_headers=extra_headers if extra_headers else None,
                 )
                 return
-            if path in (["legal", "privacy"], ["privacy"]):
+            if path in (["legal", "privacy"], ["privacy"], ["policy"], ["legal", "policy"]):
                 self._send(HTTPStatus.OK, self.checkout.render_legal_privacy())
                 return
-            if path in (["legal", "terms"], ["terms"]):
+            if path in (["legal", "terms"], ["terms"], ["legal"], ["offer"], ["legal", "offer"]):
                 self._send(HTTPStatus.OK, self.checkout.render_legal_terms())
                 return
             if path in (["legal", "refund"], ["refund"]):

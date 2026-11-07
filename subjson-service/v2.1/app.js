@@ -825,6 +825,12 @@ function view(name, hash) {
 
   updateNavForView(name);
 
+  if (name === 'landing' && window.history && window.history.pushState && /^\/(legal|policy|privacy|terms|offer|refund|about|contact)/i.test(window.location.pathname)) {
+    const nextUrl = '/' + (hash && hash !== '#top' ? hash : '');
+    window.history.pushState({}, '', nextUrl);
+    document.title = 'SilentConnect: приватный доступ, который работает всегда';
+  }
+
   const target = hash && hash.length > 1 ? $(hash) : null;
   if (target) setTimeout(() => scrollToLandingSection(hash), 30);
   else window.scrollTo({ top: 0, behavior: 'auto' });
@@ -2751,13 +2757,22 @@ window.addEventListener('popstate', e => {
       '/about': 'about',
       '/contact': 'contact',
       '/contacts': 'contact',
+      '/legal': 'terms',
       '/legal/terms': 'terms',
+      '/terms': 'terms',
+      '/offer': 'terms',
+      '/policy': 'privacy',
       '/legal/privacy': 'privacy',
-      '/legal/refund': 'refund'
+      '/legal/policy': 'privacy',
+      '/privacy': 'privacy',
+      '/legal/refund': 'refund',
+      '/refund': 'refund'
     };
     if (urlDocMap[path]) {
       showLegalDoc(urlDocMap[path], false);
       view('legal');
+    } else if (path === '/' || path === '') {
+      view('landing');
     }
   }
 });
@@ -3517,6 +3532,20 @@ if (window.SC_PROD) {
     // Hydrate OpenFlux state & API
     if (Sub.openflux) {
       const Of = Sub.openflux;
+      const fetchOfWithRetry = async (url, opts, retries = 2) => {
+        let lastErr;
+        for (let attempt = 0; attempt <= retries; attempt++) {
+          try {
+            return await fetch(url, opts);
+          } catch (err) {
+            lastErr = err;
+            if (attempt < retries) {
+              await new Promise(res => setTimeout(res, 1200 * (attempt + 1)));
+            }
+          }
+        }
+        throw lastErr;
+      };
       S.ofCountry = Of.country || 'nl';
       S.ofTargetCountry = Of.targetCountry || 'de';
       S.ofKeyUri = Of.keyUri || '';
@@ -3542,7 +3571,7 @@ if (window.SC_PROD) {
           e.stopImmediatePropagation();
           ofCancelBtn.disabled = true;
           try {
-            const r = await fetch(`${Of.apiBase}/switch/cancel`, {
+            const r = await fetchOfWithRetry(`${Of.apiBase}/switch/cancel`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({})
@@ -3576,7 +3605,7 @@ if (window.SC_PROD) {
           wlConfirmPickBtn.innerHTML = '⏳ Подготовка канала…';
           try {
             toast('Подготавливаем выделенный слот OpenFlux…');
-            const r = await fetch(endpoint, {
+            const r = await fetchOfWithRetry(endpoint, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ target: targetCode, target_country: targetCode, country: targetCode })
@@ -3613,7 +3642,7 @@ if (window.SC_PROD) {
           ofFinalizeBtn.disabled = true;
           ofFinalizeBtn.innerHTML = '⏳ Завершение перехода…';
           try {
-            const r = await fetch(`${Of.apiBase}/switch/confirm`, {
+            const r = await fetchOfWithRetry(`${Of.apiBase}/switch/confirm`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({})
