@@ -849,6 +849,27 @@ def get_openflux_slot_state_dict(sub_id: str) -> dict[str, Any]:
         elif active_srv == "fi":
             active_srv = "nl"
         active_doc_url = slot.get("active_doc_url") or ""
+
+        if status in {"active", "migrating"}:
+            clean_uid = re.sub(r"[^\w\-]", "", pid)
+            c_name = slot.get("active_container_name") or f"openflux-worker-{clean_uid}"
+            if not openflux_manager.is_cups_room_alive(active_doc_url) or not openflux_manager.is_openflux_worker_running(active_srv, c_name):
+                try:
+                    rw_conn = get_store_db()
+                    try:
+                        slot = openflux_manager.ensure_openflux_slot_healthy(rw_conn, pid)
+                        status = slot.get("status") or status
+                        active_srv = (slot.get("active_server") or active_srv).lower()
+                        if active_srv == "pl":
+                            active_srv = "de"
+                        elif active_srv == "fi":
+                            active_srv = "nl"
+                        active_doc_url = slot.get("active_doc_url") or active_doc_url
+                    finally:
+                        rw_conn.close()
+                except Exception as heal_exc:
+                    LOGGER.warning("Could not self-heal openflux slot for %s: %s", pid, heal_exc)
+
         active_link = ""
         if status in {"active", "migrating"} and active_doc_url:
             active_link = openflux_manager.build_openflux_stream_link(active_doc_url, active_srv)
@@ -870,23 +891,33 @@ def get_openflux_slot_state_dict(sub_id: str) -> dict[str, Any]:
         srv_info = openflux_manager.SERVERS
         active_info = srv_info.get(active_srv, srv_info["nl"])
         pending_info = srv_info.get(pending_srv, {}) if pending_srv else {}
+        ui_state = "active" if status == "active" else ("migrating" if status == "migrating" else "inactive")
+        slot_dict = {
+            "profile_public_id": pid,
+            "status": status,
+            "state": ui_state,
+            "active_server": active_srv,
+            "active_server_name": active_info.get("name", "Нидерланды"),
+            "active_server_flag": active_info.get("flag", "🇳🇱"),
+            "active_link": active_link,
+            "pending_server": pending_srv,
+            "pending_server_name": pending_info.get("name", "") if pending_info else "",
+            "pending_server_flag": pending_info.get("flag", "") if pending_info else "",
+            "pending_link": pending_link,
+            "pending_started_at": slot.get("pending_started_at"),
+            "pending_remaining_seconds": pending_remaining,
+        }
 
         return {
             "ok": True,
-            "slot": {
-                "profile_public_id": pid,
-                "status": status,
-                "active_server": active_srv,
-                "active_server_name": active_info.get("name", "Нидерланды"),
-                "active_server_flag": active_info.get("flag", "🇳🇱"),
-                "active_link": active_link,
-                "pending_server": pending_srv,
-                "pending_server_name": pending_info.get("name", "") if pending_info else "",
-                "pending_server_flag": pending_info.get("flag", "") if pending_info else "",
-                "pending_link": pending_link,
-                "pending_started_at": slot.get("pending_started_at"),
-                "pending_remaining_seconds": pending_remaining,
-            }
+            "state": ui_state,
+            "status": status,
+            "active_server": active_srv,
+            "active_link": active_link,
+            "pending_server": pending_srv,
+            "pending_link": pending_link,
+            "pending_remaining_seconds": pending_remaining,
+            "slot": slot_dict,
         }
     except Exception as exc:
         LOGGER.exception("get_openflux_slot_state_dict error: %s", exc)
@@ -902,13 +933,16 @@ def _start_openflux_watchdog() -> None:
     _openflux_watchdog_started = True
 
     def _loop() -> None:
+        first_run = True
         while True:
             try:
-                time.sleep(300)
+                time.sleep(10 if first_run else 300)
+                first_run = False
                 conn = get_store_db()
                 try:
                     from vpn_shop import openflux_manager
                     openflux_manager.cleanup_expired_migrations(conn)
+                    openflux_manager.heal_all_active_slots(conn)
                 finally:
                     conn.close()
             except Exception as e:

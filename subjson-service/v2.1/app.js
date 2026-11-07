@@ -1406,12 +1406,15 @@ const setModeSegVisual = bindLiquidSegmented(
   }
 );
 
-function setSubMode(mode) {
+function setSubMode(mode, persist = true) {
   if (!MODES.includes(mode)) mode = 'main';
   const newIdx = MODES.indexOf(mode);
   const prevIdx = MODES.indexOf(S.subMode);
   const changed = mode !== S.subMode;
   S.subMode = mode;
+  if (persist) {
+    try { sessionStorage.setItem('sc_sub_mode', mode); } catch (_) {}
+  }
   setModeSegVisual(newIdx, changed);
 
   const viewport = $('#subViewport');
@@ -1877,9 +1880,35 @@ function setOfState(state) {
 }
 window.setOfState = setOfState;
 
+function applyOfSlotPayload(d) {
+  if (!d || typeof d !== 'object') return false;
+  const slot = (d.slot && typeof d.slot === 'object') ? d.slot : d;
+  const rawStatus = slot.status || slot.state || d.state || 'active';
+  const nextState = rawStatus === 'migrating' ? 'migrating' : (rawStatus === 'active' ? 'active' : 'inactive');
+  const normSrv = c => {
+    const s = String(c || '').toLowerCase().trim();
+    if (s === 'pl') return 'de';
+    if (s === 'fi') return 'nl';
+    return (s === 'nl' || s === 'de') ? s : '';
+  };
+  const actSrv = normSrv(slot.active_server || slot.country || d.active_server) || S.ofCountry || 'nl';
+  const pendSrv = normSrv(slot.pending_server || slot.targetCountry || d.pending_server) || S.ofTargetCountry || (actSrv === 'nl' ? 'de' : 'nl');
+  S.ofCountry = actSrv;
+  S.ofTargetCountry = pendSrv;
+  S.ofKeyUri = slot.active_link || slot.keyUri || d.active_link || S.ofKeyUri || '';
+  S.ofNewKeyUri = slot.pending_link || slot.newKeyUri || d.pending_link || '';
+  if (nextState === 'migrating') {
+    const rem = Number(slot.pending_remaining_seconds ?? slot.remainingSeconds ?? d.pending_remaining_seconds ?? 300);
+    ofTimeRemaining = rem > 0 ? rem : 300;
+  }
+  setOfState(nextState);
+  return true;
+}
+
 function startOfHandoverTimer() {
   clearInterval(ofTimerInterval);
   const timerBox = $('#ofTimer');
+  let ticksCount = 0;
   function tick() {
     if (ofTimeRemaining <= 0) {
       clearInterval(ofTimerInterval);
@@ -1888,11 +1917,10 @@ function startOfHandoverTimer() {
           .then(r => r.json())
           .then(d => {
             if (d && d.ok) {
-              S.ofCountry = d.active_server || S.ofCountry || 'nl';
-              S.ofKeyUri = d.active_link || S.ofKeyUri;
-              S.ofNewKeyUri = '';
-              setOfState(d.state === 'migrating' ? 'active' : (d.state || 'active'));
-              toast('Время подтверждения истекло. Смена сервера отменена, старый сервер сохранён.');
+              applyOfSlotPayload(d);
+              if (S.ofState !== 'migrating') {
+                toast('Время подтверждения истекло. Смена сервера отменена, старый сервер сохранён.');
+              }
             } else {
               window.location.reload();
             }
@@ -1909,16 +1937,16 @@ function startOfHandoverTimer() {
     const s = ofTimeRemaining % 60;
     if (timerBox) timerBox.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
     ofTimeRemaining--;
-    if (ofTimeRemaining > 0 && ofTimeRemaining % 5 === 0 && window.SC_PROD && window.SC_PROD.sub && window.SC_PROD.sub.openflux && window.SC_PROD.sub.openflux.apiBase) {
+    ticksCount++;
+    if (ticksCount > 0 && ticksCount % 5 === 0 && ofTimeRemaining > 0 && window.SC_PROD && window.SC_PROD.sub && window.SC_PROD.sub.openflux && window.SC_PROD.sub.openflux.apiBase) {
       fetch(`${window.SC_PROD.sub.openflux.apiBase}/state?t=${Date.now()}`)
         .then(r => r.json())
         .then(d => {
-          if (d && d.ok && d.state !== 'migrating') {
+          const slot = (d && d.slot) ? d.slot : d;
+          const st = slot ? (slot.status || slot.state || d.state) : '';
+          if (d && d.ok && st && st !== 'migrating') {
             clearInterval(ofTimerInterval);
-            S.ofCountry = d.active_server || S.ofCountry || 'nl';
-            S.ofKeyUri = d.active_link || S.ofKeyUri;
-            S.ofNewKeyUri = '';
-            setOfState(d.state || 'active');
+            applyOfSlotPayload(d);
           }
         })
         .catch(() => {});
@@ -3457,16 +3485,25 @@ if (window.SC_PROD) {
         ofCancelBtn.addEventListener('click', async e => {
           e.preventDefault();
           e.stopImmediatePropagation();
+          ofCancelBtn.disabled = true;
           try {
             const r = await fetch(`${Of.apiBase}/switch/cancel`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({})
             });
-            if (r.ok) window.location.reload();
-            else toast('Не удалось отменить переход');
+            const d = await r.json().catch(() => ({}));
+            if (r.ok && d.ok !== false) {
+              applyOfSlotPayload(d);
+              const srv = AWG_SERVERS[S.ofCountry] || AWG_SERVERS.nl;
+              toast(`Переход отменён, сохранён текущий сервер (${srv.name}).`);
+            } else {
+              toast((d && (d.error || d.message)) || 'Не удалось отменить переход');
+            }
           } catch (_) {
             toast('Ошибка соединения с сервером');
+          } finally {
+            ofCancelBtn.disabled = false;
           }
         }, true);
       }
@@ -3477,8 +3514,11 @@ if (window.SC_PROD) {
           e.stopImmediatePropagation();
           const checked = $('input[name="wl_country"]:checked');
           const targetCode = checked ? checked.value : 'de';
-          closeAllModals();
-          const endpoint = S.ofState === 'inactive' ? `${Of.apiBase}/activate` : `${Of.apiBase}/switch/prepare`;
+          const wasInactive = (S.ofState === 'inactive');
+          const endpoint = wasInactive ? `${Of.apiBase}/activate` : `${Of.apiBase}/switch/prepare`;
+          const origHtml = wlConfirmPickBtn.innerHTML;
+          wlConfirmPickBtn.disabled = true;
+          wlConfirmPickBtn.innerHTML = '⏳ Подготовка канала…';
           try {
             toast('Подготавливаем выделенный слот OpenFlux…');
             const r = await fetch(endpoint, {
@@ -3488,12 +3528,24 @@ if (window.SC_PROD) {
             });
             const d = await r.json().catch(() => ({}));
             if (r.ok && d.ok !== false) {
-              window.location.reload();
+              closeAllModals();
+              applyOfSlotPayload(d);
+              const srv = AWG_SERVERS[targetCode] || AWG_SERVERS.nl;
+              if (wasInactive) {
+                toast(`✓ Слот OpenFlux активирован (${srv.name})! Скопируйте ключ или нажмите «Подключить в OpenFlux».`);
+              } else {
+                toast(`✓ Новый сервер (${srv.name}) подготовлен! Скопируйте новый ключ и подтвердите переход.`);
+              }
             } else {
+              closeAllModals();
               toast((d && (d.error || d.message)) || 'Не удалось переключить слот OpenFlux');
             }
           } catch (_) {
+            closeAllModals();
             toast('Ошибка соединения с сервером');
+          } finally {
+            wlConfirmPickBtn.disabled = false;
+            wlConfirmPickBtn.innerHTML = origHtml;
           }
         }, true);
       }
@@ -3502,17 +3554,30 @@ if (window.SC_PROD) {
         ofFinalizeBtn.addEventListener('click', async e => {
           e.preventDefault();
           e.stopImmediatePropagation();
-          closeAllModals();
+          const origHtml = ofFinalizeBtn.innerHTML;
+          ofFinalizeBtn.disabled = true;
+          ofFinalizeBtn.innerHTML = '⏳ Завершение перехода…';
           try {
             const r = await fetch(`${Of.apiBase}/switch/confirm`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({})
             });
-            if (r.ok) window.location.reload();
-            else toast('Не удалось подтвердить переход');
+            const d = await r.json().catch(() => ({}));
+            closeAllModals();
+            if (r.ok && d.ok !== false) {
+              applyOfSlotPayload(d);
+              const srv = AWG_SERVERS[S.ofCountry] || AWG_SERVERS.nl;
+              toast(`✓ Переход на ${srv.name} успешно завершён! Старый сервер отключён.`);
+            } else {
+              toast((d && (d.error || d.message)) || 'Не удалось подтвердить переход');
+            }
           } catch (_) {
+            closeAllModals();
             toast('Ошибка соединения с сервером');
+          } finally {
+            ofFinalizeBtn.disabled = false;
+            ofFinalizeBtn.innerHTML = origHtml;
           }
         }, true);
       }
@@ -3645,6 +3710,12 @@ if (window.SC_PROD) {
 
     renderMainSetup();
     view('sub');
+    try {
+      const savedMode = sessionStorage.getItem('sc_sub_mode');
+      if (savedMode && MODES.includes(savedMode) && savedMode !== 'main') {
+        setSubMode(savedMode, false);
+      }
+    } catch (_) {}
   } else {
     view('landing');
   }

@@ -105,6 +105,38 @@ class TestOpenFluxManager(unittest.TestCase):
         self.assertEqual(slot["active_server"], expected_srv)
         self.assertIsNone(slot["pending_server"])
 
+    @patch("vpn_shop.openflux_manager.start_openflux_worker", return_value=True)
+    @patch("vpn_shop.openflux_manager.create_cups_room")
+    @patch("vpn_shop.openflux_manager.is_cups_room_alive", return_value=False)
+    def test_ensure_openflux_slot_healthy_heals_dead_room(self, mock_alive, mock_create_room, mock_start):
+        mock_create_room.return_value = ("uuid_healed_99", "https://interview.cups.online/live-coding/?room=uuid_healed_99")
+        openflux_manager.init_openflux_db(self.conn)
+        self.conn.execute(
+            """
+            INSERT INTO openflux_slots (
+                profile_public_id, slot_label, status, active_server,
+                active_doc_name, active_doc_url, active_container_name,
+                created_at, updated_at
+            ) VALUES (
+                'prf_test_user_2', 'Белые списки (OpenFlux)', 'active', 'de',
+                'cups_dead_404', 'https://interview.cups.online/live-coding/?room=dead_404',
+                'openflux-worker-prf_test_user_2', 1000, 1000
+            )
+            """
+        )
+        self.conn.commit()
+
+        healed = openflux_manager.ensure_openflux_slot_healthy(self.conn, "prf_test_user_2")
+        self.assertEqual(healed["status"], "active")
+        self.assertEqual(healed["active_server"], "de")
+        self.assertEqual(healed["active_doc_name"], "cups_uuid_healed_99")
+        self.assertEqual(healed["active_doc_url"], "https://interview.cups.online/live-coding/?room=uuid_healed_99")
+        mock_start.assert_called_once_with(
+            "de",
+            "openflux-worker-prf_test_user_2",
+            "https://interview.cups.online/live-coding/?room=uuid_healed_99",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

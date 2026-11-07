@@ -81,18 +81,17 @@ def get_mailru_env() -> dict[str, str]:
     return env
 
 
-_openflux_db_initialized = False
 _openflux_init_lock = threading.Lock()
 
 
 def init_openflux_db(conn: sqlite3.Connection) -> None:
-    """Create openflux_slots table if not exists (executed at most once per process)."""
-    global _openflux_db_initialized
-    if _openflux_db_initialized:
+    """Create openflux_slots table if not exists."""
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='openflux_slots' LIMIT 1"
+    ).fetchone()
+    if row is not None:
         return
     with _openflux_init_lock:
-        if _openflux_db_initialized:
-            return
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS openflux_slots (
@@ -122,7 +121,6 @@ def init_openflux_db(conn: sqlite3.Connection) -> None:
             "CREATE INDEX IF NOT EXISTS ix_openflux_slots_status ON openflux_slots(status);"
         )
         conn.commit()
-        _openflux_db_initialized = True
 
 
 def build_openflux_stream_link(public_url: str, country_code: str) -> str:
@@ -312,9 +310,66 @@ def rclone_delete_user_doc(doc_name: str) -> bool:
         return False
 
 
-# Docker Worker Operations
+# Docker Worker Operations & Health Cache
+_room_health_cache: dict[str, tuple[float, bool]] = {}
+_worker_health_cache: dict[str, tuple[float, bool]] = {}
+_HEALTH_CACHE_TTL = 60.0
+
+
+def is_cups_room_alive(room_url: str) -> bool:
+    """Check if a cups.online live-coding room URL is still valid (not 404 or legacy doc)."""
+    u = (room_url or "").strip()
+    if not u.startswith("https://interview.cups.online/live-coding/?room="):
+        return False
+    if get_server_ip("nl") in ("127.0.0.1", "192.0.2.1"):
+        return True
+    now = time.monotonic()
+    cached = _room_health_cache.get(u)
+    if cached and (now - cached[0]) < _HEALTH_CACHE_TTL:
+        return cached[1]
+    req = urllib.request.Request(
+        u,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ru-RU,ru;q=0.9",
+        },
+    )
+    alive = True
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            alive = (resp.status == 200)
+    except urllib.error.HTTPError as he:
+        if he.code in (404, 410):
+            alive = False
+    except Exception:
+        alive = True
+    _room_health_cache[u] = (now, alive)
+    return alive
+
+
+def is_openflux_worker_running(server_code: str, container_name: str) -> bool:
+    """Check if the Docker container for an OpenFlux slot is currently running on server_code."""
+    if not container_name:
+        return False
+    if get_server_ip("nl") in ("127.0.0.1", "192.0.2.1"):
+        return True
+    srv = "de" if (server_code or "").lower().strip() == "pl" else (server_code or "nl").lower().strip()
+    clean_name = re.sub(r"[^\w\-]", "", container_name)
+    cache_key = f"{srv}:{clean_name}"
+    now = time.monotonic()
+    cached = _worker_health_cache.get(cache_key)
+    if cached and (now - cached[0]) < _HEALTH_CACHE_TTL:
+        return cached[1]
+    code, stdout, _ = run_node_command(srv, f"docker inspect -f '{{{{.State.Running}}}}' {clean_name} 2>/dev/null", timeout=8)
+    running = (code == 0 and stdout.strip().lower() == "true")
+    _worker_health_cache[cache_key] = (now, running)
+    return running
+
+
 def start_openflux_worker(server_code: str, container_name: str, public_doc_url: str) -> bool:
     """Launch a lightweight Docker container running cupsexit.php via runner.php on target node."""
+    srv = "de" if (server_code or "").lower().strip() == "pl" else (server_code or "nl").lower().strip()
     clean_name = re.sub(r"[^\w\-]", "", container_name)
     quoted_url = shlex.quote(public_doc_url.strip())
     docker_cmd = (
@@ -325,11 +380,12 @@ def start_openflux_worker(server_code: str, container_name: str, public_doc_url:
         f"php:8.2-cli-alpine "
         f"sh -c 'while true; do php -d memory_limit=32M /opt/openflux/runner.php \"$1\"; sleep 1; done' _ {quoted_url}"
     )
-    code, stdout, stderr = run_node_command(server_code, docker_cmd, timeout=20)
+    code, stdout, stderr = run_node_command(srv, docker_cmd, timeout=20)
     if code == 0:
-        LOGGER.info("Started openflux worker %s on %s", clean_name, server_code)
+        _worker_health_cache[f"{srv}:{clean_name}"] = (time.monotonic(), True)
+        LOGGER.info("Started openflux worker %s on %s", clean_name, srv)
         return True
-    LOGGER.error("Failed to start openflux worker %s on %s: %s %s", clean_name, server_code, stdout, stderr)
+    LOGGER.error("Failed to start openflux worker %s on %s: %s %s", clean_name, srv, stdout, stderr)
     return False
 
 
@@ -337,9 +393,11 @@ def stop_openflux_worker(server_code: str, container_name: str) -> bool:
     """Stop and remove Docker container on target node."""
     if not container_name:
         return True
+    srv = "de" if (server_code or "").lower().strip() == "pl" else (server_code or "nl").lower().strip()
     clean_name = re.sub(r"[^\w\-]", "", container_name)
     docker_cmd = f"docker rm -f {clean_name} 2>/dev/null || true"
-    code, _, _ = run_node_command(server_code, docker_cmd, timeout=15)
+    code, _, _ = run_node_command(srv, docker_cmd, timeout=15)
+    _worker_health_cache.pop(f"{srv}:{clean_name}", None)
     return code == 0
 
 
@@ -347,10 +405,14 @@ def rename_openflux_worker(server_code: str, old_container: str, new_container: 
     """Rename a Docker container on target node."""
     if not old_container or not new_container or old_container == new_container:
         return True
+    srv = "de" if (server_code or "").lower().strip() == "pl" else (server_code or "nl").lower().strip()
     old_clean = re.sub(r"[^\w\-]", "", old_container)
     new_clean = re.sub(r"[^\w\-]", "", new_container)
     cmd = f"docker rm -f {new_clean} 2>/dev/null || true; docker rename {old_clean} {new_clean} 2>/dev/null || true"
-    code, _, _ = run_node_command(server_code, cmd, timeout=15)
+    code, _, _ = run_node_command(srv, cmd, timeout=15)
+    _worker_health_cache.pop(f"{srv}:{old_clean}", None)
+    if code == 0:
+        _worker_health_cache[f"{srv}:{new_clean}"] = (time.monotonic(), True)
     return code == 0
 
 
@@ -482,7 +544,7 @@ def activate_openflux_slot(conn: sqlite3.Connection, profile_id: str, preferred_
 def start_server_switch(conn: sqlite3.Connection, profile_id: str, target_server: str) -> dict[str, Any]:
     """
     Phase 1 of Two-Phase Handover:
-    - Prepares parallel worker on target node.
+    - Prepares parallel worker on target node (or refreshes room on current node).
     - Leaves old server working!
     - Starts 5-minute countdown.
     """
@@ -491,9 +553,8 @@ def start_server_switch(conn: sqlite3.Connection, profile_id: str, target_server
     if target_srv not in SERVERS:
         raise ValueError(f"Недопустимый целевой сервер: {target_server}")
 
-    cur_active_srv = "de" if (slot.get("active_server") or "").lower().strip() == "pl" else (slot.get("active_server") or "").lower().strip()
-    if target_srv == cur_active_srv:
-        raise ValueError(f"Сервер {target_srv.upper()} уже выбран текущим")
+    if slot.get("status") == "uninitialized":
+        return activate_openflux_slot(conn, profile_id, preferred_server=target_srv)
 
     # If slot is already migrating:
     if slot.get("status") == "migrating":
@@ -690,3 +751,92 @@ def cleanup_expired_migrations(conn: sqlite3.Connection, timeout_seconds: int = 
     if cleaned > 0:
         LOGGER.info("Watchdog cleaned up %d expired OpenFlux migrations", cleaned)
     return cleaned
+
+
+def ensure_openflux_slot_healthy(conn: sqlite3.Connection, profile_id: str) -> dict[str, Any]:
+    """
+    Self-heal an active OpenFlux slot:
+    - Normalizes legacy 'pl'/'fi' server codes to 'de'/'nl'.
+    - If active_doc_url is a dead (404) cups.online room or legacy Mail.ru doc,
+      automatically provisions a fresh cups.online room, starts the worker container,
+      and updates the DB row.
+    - If active_doc_url is alive (200 OK) but the Docker worker container is not running
+      on active_server, starts the worker container.
+    """
+    slot = get_or_create_openflux_slot(conn, profile_id)
+    status = slot.get("status") or "uninitialized"
+    if status not in ("active", "migrating"):
+        return slot
+
+    raw_srv = (slot.get("active_server") or "nl").lower().strip()
+    active_srv = "de" if raw_srv == "pl" else ("nl" if raw_srv == "fi" else raw_srv)
+    if active_srv not in ("nl", "de"):
+        active_srv = "nl"
+
+    clean_uid = re.sub(r"[^\w\-]", "", profile_id)
+    canonical_container = slot.get("active_container_name") or f"openflux-worker-{clean_uid}"
+    doc_url = (slot.get("active_doc_url") or "").strip()
+
+    room_ok = is_cups_room_alive(doc_url)
+    if not room_ok:
+        LOGGER.info(
+            "OpenFlux room for %s on %s is dead/404 or legacy (%s); auto-recreating room and worker",
+            profile_id,
+            active_srv,
+            doc_url,
+        )
+        try:
+            room_uuid, new_url = create_cups_room()
+            new_doc = f"cups_{room_uuid}"
+            if start_openflux_worker(active_srv, canonical_container, new_url):
+                _room_health_cache[new_url] = (time.monotonic(), True)
+                now = int(time.time())
+                conn.execute(
+                    """
+                    UPDATE openflux_slots
+                    SET active_server = ?,
+                        active_doc_name = ?,
+                        active_doc_url = ?,
+                        active_container_name = ?,
+                        updated_at = ?
+                    WHERE profile_public_id = ?
+                    """,
+                    (active_srv, new_doc, new_url, canonical_container, now, profile_id),
+                )
+                conn.commit()
+                return get_or_create_openflux_slot(conn, profile_id)
+        except Exception as exc:
+            LOGGER.warning("Failed to auto-recreate dead OpenFlux room for %s: %s", profile_id, exc)
+    else:
+        if not is_openflux_worker_running(active_srv, canonical_container):
+            LOGGER.info("OpenFlux worker %s on %s was stopped/missing for %s; restarting worker", canonical_container, active_srv, profile_id)
+            try:
+                start_openflux_worker(active_srv, canonical_container, doc_url)
+            except Exception as exc:
+                LOGGER.warning("Failed to restart OpenFlux worker for %s: %s", profile_id, exc)
+        if raw_srv != active_srv:
+            conn.execute(
+                "UPDATE openflux_slots SET active_server = ?, updated_at = ? WHERE profile_public_id = ?",
+                (active_srv, int(time.time()), profile_id),
+            )
+            conn.commit()
+            return get_or_create_openflux_slot(conn, profile_id)
+
+    return slot
+
+
+def heal_all_active_slots(conn: sqlite3.Connection) -> int:
+    """Watchdog check: verify all active/migrating slots have alive cups.online rooms and running workers."""
+    init_openflux_db(conn)
+    rows = conn.execute(
+        "SELECT profile_public_id FROM openflux_slots WHERE status IN ('active', 'migrating')"
+    ).fetchall()
+    healed = 0
+    for r in rows:
+        pid = str(r[0])
+        try:
+            ensure_openflux_slot_healthy(conn, pid)
+            healed += 1
+        except Exception as exc:
+            LOGGER.warning("Watchdog failed to check/heal OpenFlux slot for %s: %s", pid, exc)
+    return healed
