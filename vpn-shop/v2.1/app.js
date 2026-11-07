@@ -826,18 +826,71 @@ function view(name, hash) {
   updateNavForView(name);
 
   const target = hash && hash.length > 1 ? $(hash) : null;
-  if (target) setTimeout(() => target.scrollIntoView({ behavior: 'smooth' }), 30);
+  if (target) setTimeout(() => scrollToLandingSection(hash), 30);
   else window.scrollTo({ top: 0, behavior: 'auto' });
   syncNavScroll();
+  if (name === 'landing') requestAnimationFrame(fitHeroGlobe);
 }
 window.view = view;
 
+function scrollToLandingSection(hash) {
+  if (!hash || hash === '#top') {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return;
+  }
+  const sec = $(hash);
+  if (!sec) return;
+  const anchorEl = $('.sec-head', sec) || $('.faq-grid', sec) || sec;
+  const navRect = navEl ? navEl.getBoundingClientRect() : null;
+  const navBottom = (navRect && navRect.bottom > 0) ? navRect.bottom : (window.innerWidth <= 860 ? 56 : 68);
+  const gap = window.innerWidth <= 860 ? 12 : 16;
+  const top = Math.max(0, anchorEl.getBoundingClientRect().top + window.scrollY - (navBottom + gap));
+  window.scrollTo({ top, behavior: 'smooth' });
+}
+
+function fitHeroGlobe() {
+  const hero = $('#top.hero');
+  const stageWrap = hero ? $('.stage-wrap', hero) : null;
+  if (!hero || !stageWrap || hero.offsetParent === null) return;
+  stageWrap.style.width = '';
+  stageWrap.style.height = '';
+  const vh = (window.visualViewport && window.visualViewport.height) ? window.visualViewport.height : window.innerHeight;
+  const isMob = window.innerWidth <= 860;
+  const mbarReserve = (isMob && mbarEl && getComputedStyle(mbarEl).display !== 'none') ? 68 : 6;
+  const availH = vh - mbarReserve;
+  const heroH = hero.getBoundingClientRect().height;
+  if (heroH > availH) {
+    const curSize = stageWrap.getBoundingClientRect().height;
+    const minGlobe = isMob ? 115 : 190;
+    const nextSize = Math.max(minGlobe, Math.floor(curSize - (heroH - availH) - 4));
+    stageWrap.style.width = nextSize + 'px';
+    stageWrap.style.height = nextSize + 'px';
+  }
+}
+window.addEventListener('resize', fitHeroGlobe, { passive: true });
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', fitHeroGlobe, { passive: true });
+}
+requestAnimationFrame(fitHeroGlobe);
+
 $$('[data-page-tab]').forEach(b => b.addEventListener('click', () => view(b.dataset.pageTab)));
 document.addEventListener('click', e => {
+  const hashLink = e.target.closest('a[href^="#"]');
+  if (hashLink && !$('#view-landing').hidden) {
+    const href = hashLink.getAttribute('href') || '';
+    if (['#tariffs', '#features', '#faq', '#checkout', '#top'].includes(href)) {
+      e.preventDefault();
+      closeAllModals();
+      scrollToLandingSection(href);
+      return;
+    }
+  }
   const a = e.target.closest('[data-go]');
   if (!a) return;
   const href = a.getAttribute('href') || '';
   if (a.dataset.go === 'landing' && !$('#view-landing').hidden && href.startsWith('#')) {
+    e.preventDefault();
+    scrollToLandingSection(href);
     return;
   }
   e.preventDefault();
@@ -2866,6 +2919,8 @@ if (window.SC_PROD) {
     if ($('#fRef')) $('#fRef').value = P.refCode;
     S.refPct = Number(P.discountPercent || 10);
     if ($('#refBanner')) $('#refBanner').hidden = false;
+    const trialBtn = $('#heroTrialTgBtn');
+    if (trialBtn) trialBtn.href = `https://t.me/SilentConnectVPNBot?start=${encodeURIComponent(P.refCode)}`;
   }
   if (P.promoCode) {
     S.promo = P.promoCode;
