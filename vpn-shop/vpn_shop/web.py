@@ -4508,6 +4508,8 @@ class WebCheckout:
         if target_view in ("order", "sub", "cabinet", "legal") and target_view != "landing":
             rendered = rendered.replace('<main id="view-landing" data-view>', '<main id="view-landing" data-view hidden>', 1)
             rendered = rendered.replace(f'<main id="view-{target_view}" data-view hidden>', f'<main id="view-{target_view}" data-view>', 1)
+            shop_base = getattr(self.settings, "web_public_base_url", "") or "/"
+            rendered = re.sub(r'<a\s+href="[^"]*"\s+class="brand"', f'<a href="{shop_base}" class="brand"', rendered)
 
         if target_view == "legal":
             legal_doc_id = str(payload.get("legalDoc") or "about").strip()

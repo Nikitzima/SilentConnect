@@ -9679,6 +9679,7 @@ def setup_page_html(
             # SSR pre-toggles: #view-sub visible, #view-landing hidden
             rendered = re.sub(r'<main([^>]*id="view-landing"[^>]*)>', r'<main\1 hidden>', rendered)
             rendered = re.sub(r'<main([^>]*id="view-sub"[^>]*)\bhidden\b([^>]*)>', r'<main\1\2>', rendered)
+            rendered = re.sub(r'<a\s+href="[^"]*"\s+class="brand"', f'<a href="{pub_base}/" class="brand"', rendered)
             if payment_card_html:
                 rendered = rendered.replace(
                     '<div id="subNoticeSlot" class="sub-notice-slot"></div>',

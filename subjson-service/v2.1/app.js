@@ -894,10 +894,12 @@ document.addEventListener('click', e => {
   const a = e.target.closest('[data-go]');
   if (!a) return;
   const href = a.getAttribute('href') || '';
-  if (a.dataset.go === 'landing' && !$('#view-landing').hidden && href.startsWith('#')) {
-    e.preventDefault();
-    scrollToLandingSection(href);
-    return;
+  if (a.dataset.go === 'landing' && !$('#view-landing').hidden) {
+    if (href.startsWith('#') || href === '/' || href.endsWith('/')) {
+      e.preventDefault();
+      scrollToLandingSection(href.startsWith('#') ? href : '#top');
+      return;
+    }
   }
   e.preventDefault();
   closeAllModals();
@@ -2915,6 +2917,11 @@ if (window.SC_PROD) {
     }
   }
 
+  const shopBase = (P.publicBaseUrl || P.shopBaseUrl || 'https://example.com').replace(/\/$/, '');
+  $$('.brand').forEach(b => {
+    b.href = (P.view === 'landing') ? '#top' : `${shopBase}/`;
+  });
+
   // 4. Cross-page navigation when not on landing page (capture-phase delegation for [data-go] / [data-goto])
   document.addEventListener('click', e => {
     const el = e.target.closest('[data-go="landing"], [data-goto="landing"]');
@@ -2924,8 +2931,9 @@ if (window.SC_PROD) {
       e.stopImmediatePropagation();
       const href = el.getAttribute('href') || '';
       const scroll = el.dataset.scroll || (href.startsWith('#') && href !== '#top' ? href : '');
-      const base = P.publicBaseUrl || P.shopBaseUrl || '/';
-      window.location.href = scroll ? `${base.replace(/\/$/, '')}/${scroll}` : base;
+      const base = P.publicBaseUrl || P.shopBaseUrl || 'https://example.com';
+      const cleanBase = base.replace(/\/$/, '');
+      window.location.href = scroll ? `${cleanBase}/${scroll}` : `${cleanBase}/`;
     }
   }, true);
 
