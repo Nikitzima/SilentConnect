@@ -350,13 +350,43 @@ def render_expiration_reminder_email_html(
     support_email: str = "support@example.com",
     support_tg: str = "https://t.me/your_support",
 ) -> str:
-    is_urgent = (reminder_kind != "1_day")
-    time_label = "уже через 1 час" if is_urgent else "завтра (через 24 часа)"
-    titlebar_text = "🚨 SilentConnect · Срочное уведомление о подписке" if is_urgent else "⏳ SilentConnect · Напоминание об окончании подписки"
-    accent_color = "#ef4444" if is_urgent else "#f59e0b"
-    accent_border = "rgba(239, 68, 68, 0.4)" if is_urgent else "rgba(245, 158, 11, 0.35)"
-    accent_bg = "rgba(239, 68, 68, 0.08)" if is_urgent else "rgba(245, 158, 11, 0.08)"
     clean_setup_url = setup_url.split("?")[0]
+    if "/json/" in clean_setup_url:
+        clean_setup_url = clean_setup_url.replace("/json/", "/import/")
+
+    if reminder_kind == "expired":
+        titlebar_text = "⏹ SilentConnect · Подписка завершена"
+        accent_color = "#ef4444"
+        accent_border = "rgba(239, 68, 68, 0.4)"
+        accent_bg = "rgba(239, 68, 68, 0.08)"
+        heading_text = "Действие вашей подписки завершилось"
+        intro_text = "Здравствуйте! Оплаченный период вашей подписки SilentConnect подошёл к концу, и доступ был приостановлен."
+        status_text = "Завершена (требуется продление)"
+        action_heading = "⚡ Возобновление доступа в один клик:"
+        action_text = "Чтобы возобновить интернет-доступ на всех ваших устройствах, продлите подписку в личном кабинете:"
+        btn_text = "Возобновить доступ на сайте ⚡"
+    elif reminder_kind == "1_hour":
+        titlebar_text = "🚨 SilentConnect · Срочное уведомление о подписке"
+        accent_color = "#ef4444"
+        accent_border = "rgba(239, 68, 68, 0.4)"
+        accent_bg = "rgba(239, 68, 68, 0.08)"
+        heading_text = "Срок действия подписки истекает через 1 час! ⌛"
+        intro_text = "Здравствуйте! Напоминаем, что оплаченный период вашей подписки SilentConnect заканчивается <strong>через 1 час</strong>."
+        status_text = "Истекает через 1 час"
+        action_heading = "⚡ Продление доступа в один клик:"
+        action_text = "Чтобы интернет-доступ и все зашифрованные каналы продолжали работать без отключения, продлите подписку в личном кабинете:"
+        btn_text = "Продлить подписку на сайте ⚡"
+    else:
+        titlebar_text = "⏳ SilentConnect · Напоминание об окончании подписки"
+        accent_color = "#f59e0b"
+        accent_border = "rgba(245, 158, 11, 0.35)"
+        accent_bg = "rgba(245, 158, 11, 0.08)"
+        heading_text = "Срок действия подписки истекает через 24 часа! ⌛"
+        intro_text = "Здравствуйте! Напоминаем, что оплаченный период вашей подписки SilentConnect заканчивается <strong>через 24 часа</strong>."
+        status_text = "Истекает через 24 часа"
+        action_heading = "⚡ Продление доступа в один клик:"
+        action_text = "Чтобы интернет-доступ и все зашифрованные каналы продолжали работать без отключения, продлите подписку в личном кабинете:"
+        btn_text = "Продлить подписку на сайте ⚡"
 
     return f"""<!DOCTYPE html>
 <html lang="ru">
@@ -483,32 +513,28 @@ def render_expiration_reminder_email_html(
       {titlebar_text}
     </div>
     <div class="content">
-      <h2>Срок действия подписки истекает {time_label}! ⌛</h2>
-      <p style="margin-bottom: 16px;">Здравствуйте! Напоминаем, что оплаченный период вашей подписки SilentConnect заканчивается <strong>{time_label}</strong>.</p>
+      <h2>{heading_text}</h2>
+      <p style="margin-bottom: 16px;">{intro_text}</p>
       
       <div class="summary-card">
         <h3 style="color: {accent_color}; font-size: 15px; margin-bottom: 12px; margin-top: 0;">⏱ Информация о статусе:</h3>
         <table class="summary-table" role="presentation">
           <tr>
             <td style="color: #8ea89a;">Статус:</td>
-            <td style="text-align: right; color: {accent_color}; font-weight: bold;">Истекает ({time_label})</td>
+            <td style="text-align: right; color: {accent_color}; font-weight: bold;">{status_text}</td>
           </tr>
           <tr>
-            <td style="color: #8ea89a;">Конфигурации и ключи:</td>
-            <td style="text-align: right; color: #ffffff;">Сохраняются автоматически</td>
-          </tr>
-          <tr>
-            <td style="color: #8ea89a;">Перенастройка устройств:</td>
-            <td style="text-align: right; color: #2fbf71; font-weight: bold;">Не требуется ✅</td>
+            <td style="color: #8ea89a;">Учётная запись:</td>
+            <td style="text-align: right; color: #ffffff;">{customer_email}</td>
           </tr>
         </table>
       </div>
 
       <div class="box" style="text-align: center; padding: 22px 16px;">
-        <h3>⚡ Продление доступа в один клик:</h3>
-        <p style="margin-bottom: 18px;">Чтобы интернет-доступ и все зашифрованные каналы продолжали работать без отключения, продлите подписку в личном кабинете:</p>
+        <h3>{action_heading}</h3>
+        <p style="margin-bottom: 18px;">{action_text}</p>
         <div style="text-align: center; margin: 15px 0;">
-          <a href="{clean_setup_url}" class="btn">Продлить подписку на сайте ⚡</a>
+          <a href="{clean_setup_url}" class="btn">{btn_text}</a>
         </div>
       </div>
 
@@ -528,7 +554,6 @@ def render_expiration_reminder_email_html(
 </html>
 """
 
-
 def render_expiration_reminder_email_text(
     *,
     customer_email: str,
@@ -537,17 +562,31 @@ def render_expiration_reminder_email_text(
     support_email: str = "support@example.com",
     support_tg: str = "https://t.me/your_support",
 ) -> str:
-    time_label = "завтра (через 24 часа)" if reminder_kind == "1_day" else "уже через 1 час"
-    return f"""Здравствуйте!
+    clean_setup_url = setup_url.split("?")[0]
+    if "/json/" in clean_setup_url:
+        clean_setup_url = clean_setup_url.replace("/json/", "/import/")
 
-Напоминаем, что срок действия вашей подписки SilentConnect истекает {time_label}.
+    if reminder_kind == "expired":
+        return f"""Здравствуйте!
 
-Продлить подписку без смены ссылок и настроек вы можете в личном кабинете:
-{setup_url}
+Оплаченный период вашей подписки SilentConnect подошёл к концу, и доступ был приостановлен.
+
+Возобновить доступ вы можете в личном кабинете:
+{clean_setup_url}
 
 Служба поддержки: {support_email} | Telegram: {support_tg}
 """
 
+    time_label = "через 1 час" if reminder_kind == "1_hour" else "через 24 часа"
+    return f"""Здравствуйте!
+
+Напоминаем, что срок действия вашей подписки SilentConnect истекает {time_label}.
+
+Продлить подписку вы можете в личном кабинете:
+{clean_setup_url}
+
+Служба поддержки: {support_email} | Telegram: {support_tg}
+"""
 
 def send_expiration_reminder_email_sync(
     settings: Settings,
@@ -579,10 +618,12 @@ def send_expiration_reminder_email_sync(
     from_email = (settings.smtp_from_email or "SilentConnect <support@example.com>").strip()
 
     if not subject:
-        if reminder_kind == "1_day":
-            subject = "Срок действия вашей подписки SilentConnect истекает завтра"
-        else:
+        if reminder_kind == "expired":
+            subject = "Ваша подписка SilentConnect завершилась"
+        elif reminder_kind == "1_hour":
             subject = "Срочно: подписка SilentConnect будет отключена через 1 час"
+        else:
+            subject = "Срок действия вашей подписки SilentConnect истекает через 24 часа"
 
     html_content = render_expiration_reminder_email_html(
         customer_email=customer_email,
@@ -840,6 +881,11 @@ def render_order_reviewed_email_html(
     """
 
     clean_setup_url = setup_url.split("?")[0]
+    if "/json/" in clean_setup_url:
+        clean_setup_url = clean_setup_url.replace("/json/", "/import/")
+    clean_json_url = json_url.split("?")[0]
+    if "/import/" in clean_json_url:
+        clean_json_url = clean_json_url.replace("/import/", "/json/")
     return f"""<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -960,7 +1006,7 @@ def render_order_reviewed_email_html(
     </div>
     <div class="content">
       <h2>Ваш заказ пересмотрен, доступ продлён! 🎉</h2>
-      <p style="margin-bottom: 16px;">Здравствуйте! Ваш заказ <strong>#{order_public_id}</strong> был успешно пересмотрен нашей службой заботы. На вашу подписку начислено <strong>+{duration_days} дней</strong> доступа. Приятного пользования!</p>
+      <p style="margin-bottom: 16px;">Здравствуйте! Ваш заказ <strong>#{order_public_id}</strong> был успешно пересмотрен нашей службой поддержки. На вашу подписку начислено <strong>+{duration_days} дней</strong> доступа. Приятного пользования!</p>
       
       <div class="summary-card">
         <h3 style="color: #2fbf71; font-size: 15px; margin-bottom: 12px; margin-top: 0;">📋 Детали операции:</h3>
@@ -996,11 +1042,11 @@ def render_order_reviewed_email_html(
 
       <div class="box">
         <h3>🔗 Прямые ссылки на подписку:</h3>
-        <p style="margin-bottom: 6px;">Прямая ссылка для импорта в приложение:</p>
+        <p style="margin-bottom: 6px;">Веб-страница настройки и подключения:</p>
         <div class="code-box"><a href="{clean_setup_url}">{clean_setup_url}</a></div>
         
-        <p style="margin-top: 14px; margin-bottom: 6px; color:#ffffff; font-weight: bold; font-size: 13px;">Прямой формат JSON (для кастомных клиентов):</p>
-        <div class="code-box"><a href="{json_url}">{json_url}</a></div>
+        <p style="margin-top: 14px; margin-bottom: 6px; color:#ffffff; font-weight: bold; font-size: 13px;">Прямой формат JSON (для импорта в приложения):</p>
+        <div class="code-box"><a href="{clean_json_url}">{clean_json_url}</a></div>
       </div>
 
       <div class="footer">
@@ -1028,20 +1074,26 @@ def render_order_reviewed_email_text(
     support_tg: str = "https://t.me/your_support",
 ) -> str:
     expiry_display = format_expiry_ru(duration_days, expires_ts, expires_at_str)
+    clean_setup_url = setup_url.split("?")[0]
+    if "/json/" in clean_setup_url:
+        clean_setup_url = clean_setup_url.replace("/json/", "/import/")
+    clean_json_url = json_url.split("?")[0]
+    if "/import/" in clean_json_url:
+        clean_json_url = clean_json_url.replace("/import/", "/json/")
     return f"""Здравствуйте!
 
-Ваш заказ #{order_public_id} был успешно пересмотрен нашей службой заботы.
+Ваш заказ #{order_public_id} был успешно пересмотрен нашей службой поддержки.
 На вашу подписку начислено +{duration_days} дней доступа.
 Действительна до: {expiry_display}
 
 Личный кабинет и настройка подключения:
-{setup_url}
+{clean_setup_url}
 
-Прямой формат подписки:
-{json_url}
+Прямой формат JSON (для импорта в приложения):
+{clean_json_url}
 
 Приятного пользования!
-Служба заботы SilentConnect: {support_email} / {support_tg}
+Служба поддержки SilentConnect: {support_email} / {support_tg}
 """
 
 
@@ -1528,4 +1580,3 @@ def send_cabinet_access_email_async(
         profiles_data=profiles_data,
         cabinet_url=cabinet_url,
     )
-

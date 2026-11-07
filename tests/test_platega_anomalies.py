@@ -461,7 +461,7 @@ class TestPlategaAnomaliesAndCallbacks(unittest.TestCase):
             support_tg="https://t.me/SilentConnectSupport",
         )
         self.assertIn("ord_rev_email_1", html)
-        self.assertIn("пересмотрен нашей службой заботы", html)
+        self.assertIn("пересмотрен нашей службой поддержки", html)
         self.assertIn("+30дней", html.replace(" ", ""))
         self.assertIn("Приятного пользования!", html)
         self.assertIn("https://example.com/order/ord_rev_email_1/token123", html)
@@ -475,7 +475,7 @@ class TestPlategaAnomaliesAndCallbacks(unittest.TestCase):
             cabinet_url="https://example.com/cabinet",
         )
         self.assertIn("ord_rev_email_1", text)
-        self.assertIn("пересмотрен нашей службой заботы", text)
+        self.assertIn("пересмотрен нашей службой поддержки", text)
         self.assertIn("+30 дней", text)
         self.assertIn("Приятного пользования!", text)
 

@@ -11,7 +11,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/v2.1/v2.css?v=2.3.9">
+<link rel="stylesheet" href="/v2.1/v2.css?v=2.4.0">
 <script type="importmap">
 { "imports": {
   "three": "/v2.1/vendor/three.module.min.js",
@@ -356,6 +356,22 @@
         </section>
       </div>
 
+      <!-- Состояние 1.5: Оплата подтверждена, формируем доступ -->
+      <section class="card glass spot border-beam" id="ordProvisioning" hidden>
+        <div>
+          <div style="display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:rgba(47,191,113,.12);border:1px solid rgba(47,191,113,.25);color:var(--em);font-size:13px;font-weight:600;margin-bottom:14px">
+            <span class="live-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--em);box-shadow:0 0 10px var(--em)"></span>
+            Платёж подтверждён
+          </div>
+          <h2 style="font-size:23px;font-weight:600;letter-spacing:-.03em">Формируем защищённый доступ…</h2>
+          <p style="margin-top:8px;color:var(--mut);font-size:14.5px;line-height:1.55">Сервер генерирует конфигурацию и криптографические ключи для ваших устройств. Это занимает несколько секунд, страница обновится автоматически.</p>
+          <div style="margin-top:20px;padding:16px 20px;border-radius:12px;background:rgba(255,255,255,.03);border:1px solid var(--line);display:flex;align-items:center;gap:14px">
+            <div class="spinner" style="width:24px;height:24px;border:2.5px solid rgba(47,191,113,.2);border-top-color:var(--em);border-radius:50%;animation:spin 1s linear infinite;flex-shrink:0"></div>
+            <div style="font-size:13.5px;color:var(--mut)">Выпуск ключей и синхронизация нод…</div>
+          </div>
+        </div>
+      </section>
+
       <!-- Состояние 2: Оплачен и доставлен -->
       <section class="card glass spot border-beam" id="ordDone" hidden>
         <div>
@@ -678,7 +694,6 @@
       <div class="ping tab">
         <div><span><span class="flag-badge" aria-label="Нидерланды" title="Нидерланды"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#fff"/><rect width="16" height="3.67" rx="2" fill="#AE1C28"/><rect y="7.33" width="16" height="3.67" rx="2" fill="#21468B"/><rect y="2" width="16" height="7" fill="#fff"/></svg></span>Нидерланды</span><b id="pNl">32 мс</b></div>
         <div><span><span class="flag-badge" aria-label="Германия" title="Германия"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#FFCE00"/><rect width="16" height="7.33" rx="2" fill="#DD0000"/><rect width="16" height="3.67" rx="2" fill="#000"/></svg></span>Германия</span><b id="pPl">24 мс</b></div>
-        <div><span><span class="flag-badge" aria-label="Финляндия" title="Финляндия"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#fff"/><rect x="4.5" width="3" height="11" fill="#002F6C"/><rect y="4" width="16" height="3" fill="#002F6C"/></svg></span>Финляндия</span><b id="pFi">19 мс</b></div>
       </div>
 
       <div class="awg-slots-header" id="awgSlotsHeader">
@@ -739,7 +754,7 @@
           <div>
             <span class="status wait"><i></i>Не активирован</span>
             <h4 style="font-size:17px;font-weight:600;margin-top:8px">Персональный слот Белых списков свободен</h4>
-            <p style="margin-top:5px;color:var(--mut);font-size:13.5px;max-width:44em">Нажмите кнопку, чтобы выбрать страну (<span class="flag-badge" aria-label="Нидерланды" title="Нидерланды"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#fff"/><rect width="16" height="3.67" rx="2" fill="#AE1C28"/><rect y="7.33" width="16" height="3.67" rx="2" fill="#21468B"/><rect y="2" width="16" height="7" fill="#fff"/></svg></span>Нидерланды, <span class="flag-badge" aria-label="Германия" title="Германия"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#FFCE00"/><rect width="16" height="7.33" rx="2" fill="#DD0000"/><rect width="16" height="3.67" rx="2" fill="#000"/></svg></span>Германия или <span class="flag-badge" aria-label="Финляндия" title="Финляндия"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#fff"/><rect x="4.5" width="3" height="11" fill="#002F6C"/><rect y="4" width="16" height="3" fill="#002F6C"/></svg></span>Финляндия) и сгенерировать индивидуальный ключ OpenFlux.</p>
+            <p style="margin-top:5px;color:var(--mut);font-size:13.5px;max-width:44em">Нажмите кнопку, чтобы выбрать страну (<span class="flag-badge" aria-label="Нидерланды" title="Нидерланды"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#fff"/><rect width="16" height="3.67" rx="2" fill="#AE1C28"/><rect y="7.33" width="16" height="3.67" rx="2" fill="#21468B"/><rect y="2" width="16" height="7" fill="#fff"/></svg></span>Нидерланды или <span class="flag-badge" aria-label="Германия" title="Германия"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#FFCE00"/><rect width="16" height="7.33" rx="2" fill="#DD0000"/><rect width="16" height="3.67" rx="2" fill="#000"/></svg></span>Германия) и сгенерировать индивидуальный ключ OpenFlux.</p>
           </div>
           <button type="button" class="btn btn-primary btn-sm" data-open-wl-picker="activate"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> Активировать подключение <svg class="btn-arrow" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></button>
         </div>
@@ -973,10 +988,6 @@
         <span><b><span class="flag-badge" aria-label="Германия" title="Германия"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#FFCE00"/><rect width="16" height="7.33" rx="2" fill="#DD0000"/><rect width="16" height="3.67" rx="2" fill="#000"/></svg></span>Германия</b> (Франкфурт)</span>
         <input type="radio" name="awg_country" value="de">
       </label>
-      <label class="country-opt">
-        <span><b><span class="flag-badge" aria-label="Финляндия" title="Финляндия"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#fff"/><rect x="4.5" width="3" height="11" fill="#002F6C"/><rect y="4" width="16" height="3" fill="#002F6C"/></svg></span>Финляндия</b> (Хельсинки)</span>
-        <input type="radio" name="awg_country" value="fi">
-      </label>
     </div>
     <div style="margin-top:18px;display:grid;gap:8px">
       <button type="button" class="btn btn-primary btn-block" id="awgConfirmSwitchBtn">Сменить локацию и перевыпустить ключ</button>
@@ -999,10 +1010,6 @@
       <label class="country-opt">
         <span><b><span class="flag-badge" aria-label="Германия" title="Германия"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#FFCE00"/><rect width="16" height="7.33" rx="2" fill="#DD0000"/><rect width="16" height="3.67" rx="2" fill="#000"/></svg></span>Германия</b> (Франкфурт)</span>
         <input type="radio" name="wl_country" value="de" checked>
-      </label>
-      <label class="country-opt">
-        <span><b><span class="flag-badge" aria-label="Финляндия" title="Финляндия"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#fff"/><rect x="4.5" width="3" height="11" fill="#002F6C"/><rect y="4" width="16" height="3" fill="#002F6C"/></svg></span>Финляндия</b> (Хельсинки)</span>
-        <input type="radio" name="wl_country" value="fi">
       </label>
     </div>
     <div style="margin-top:18px;display:grid;gap:8px">
@@ -1048,7 +1055,7 @@
 <!--__SC_PROD_SCRIPT__-->
 <script src="/v2.1/bg.js"></script>
 <script src="/v2.1/os-icons.js"></script>
-<script src="/v2.1/app.js?v=2.3.9"></script>
+<script src="/v2.1/app.js?v=2.4.0"></script>
 <script type="module" src="/v2.1/globe.js"></script>
 </body>
 </html>

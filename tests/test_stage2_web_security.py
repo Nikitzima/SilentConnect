@@ -609,7 +609,7 @@ class TestStage2WebSecurityAndRedesign(unittest.TestCase):
             # 3. Verify Turnstile key & action URLs & preview host resolution in SC_PROD
             sc_prod = _extract_sc_prod(sub_html)
             self.assertEqual(sc_prod.get("turnstileSiteKey"), "0x4AAAAAA_dom_test_key")  # PLACEHOLDER
-            self.assertEqual(sc_prod.get("publicBaseUrl"), "https://preview.example.com")
+            self.assertEqual(sc_prod.get("publicBaseUrl"), "https://example.com")
             self.assertEqual(sc_prod["sub"].get("renewActionUrl"), f"/{subjson_app.SECRET_SEGMENT}/renew/{sub_id}")
             self.assertEqual(sc_prod["sub"].get("bindEmailActionUrl"), f"/{subjson_app.SECRET_SEGMENT}/bind-email/{sub_id}")
             self.assertEqual(sc_prod["sub"].get("qrUrl"), f"/{subjson_app.SECRET_SEGMENT}/qr/{sub_id}")
@@ -702,6 +702,152 @@ class TestStage2WebSecurityAndRedesign(unittest.TestCase):
         self.assertIn("https://sub.example.com/my-secret-sub/import/cvgh0qqws79dbpcl", text)
         self.assertIn("https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl", text)
 
+
+
+    def test_order_reviewed_mailer_links_sanitize_json_to_import(self) -> None:
+        from vpn_shop.mailer import render_order_reviewed_email_html, render_order_reviewed_email_text
+        html = render_order_reviewed_email_html(
+            customer_email="reviewed@example.com",
+            order_public_id="ord_reviewed99",
+            duration_days=30,
+            setup_url="https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl",
+            json_url="https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl",
+            cabinet_url="https://example.com/order/ord_reviewed99/token123",
+        )
+        # Button MUST link to /import/, NOT /json/
+        self.assertIn('href="https://sub.example.com/my-secret-sub/import/cvgh0qqws79dbpcl" class="btn"', html)
+        self.assertNotIn('href="https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl" class="btn"', html)
+        # Web setup link in box
+        self.assertIn('>https://sub.example.com/my-secret-sub/import/cvgh0qqws79dbpcl<', html)
+        # Raw JSON link in box
+        self.assertIn('>https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl<', html)
+
+        text = render_order_reviewed_email_text(
+            customer_email="reviewed@example.com",
+            order_public_id="ord_reviewed99",
+            duration_days=30,
+            setup_url="https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl",
+            json_url="https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl",
+            cabinet_url="https://example.com/order/ord_reviewed99/token123",
+        )
+        self.assertIn("https://sub.example.com/my-secret-sub/import/cvgh0qqws79dbpcl", text)
+        self.assertIn("https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl", text)
+
+    def test_order_waiting_payment_and_provisioning_renders_cleanly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            shop_db = tmp_path / "vpn_shop.db"
+            store = Store(shop_db)
+            base_settings = load_settings(VPN_SHOP_DIR)
+            settings = replace(
+                base_settings,
+                root_dir=VPN_SHOP_DIR,
+                database_path=shop_db,
+                platega_enabled=False,
+                web_public_base_url="https://preview.example.com",
+                subscription_base_url="https://sub.example.com/my-secret-sub",
+            )
+            checkout = WebCheckout(settings, store)
+            order = store.create_order(
+                kind="new",
+                status="waiting_payment",
+                transport="vless",
+                duration_days=30,
+                profile_mode="standard",
+                family_label=None,
+                base_price_rub=149,
+                final_price_rub=149,
+                promo_id=None,
+                invite_id=None,
+                customer_chat_id="web:anon-test",
+                privacy_ack=True,
+                loss_policy_ack=True,
+                terms_version="1.0",
+                customer_email="test@example.com",
+                meta={"web_token": "tok123", "device_limit": 3},
+                web_token="tok123",
+            )
+            order_pid = order["public_id"]
+
+            # Test 1: waiting_payment renders without AttributeError or order_poll_script
+            html_wp = checkout.render_order(headers={"Host": "preview.example.com"}, order=order).decode("utf-8")
+            self.assertIn('"rawStatus": "waiting_payment"', html_wp)
+            self.assertIn('"state": "waiting"', html_wp)
+            self.assertIn('id="ordWait"', html_wp)
+            self.assertNotIn("order_poll_script", html_wp)
+            self.assertNotIn('http-equiv="refresh"', html_wp)
+
+            # Test 2: provisioning renders v2.1 with state=provisioning, NO v1 refresh loop
+            store.update_order_status(order_pid, "provisioning")
+            prov_order = store.get_order(order_pid)
+            html_prov = checkout.render_order(headers={"Host": "preview.example.com"}, order=prov_order).decode("utf-8")
+            self.assertIn('"rawStatus": "provisioning"', html_prov)
+            self.assertIn('"state": "provisioning"', html_prov)
+            self.assertIn('id="ordProvisioning"', html_prov)
+            self.assertNotIn('http-equiv="refresh"', html_prov)
+            self.assertNotIn("Заказ обрабатывается", html_prov)
+
+
+    def test_expiration_reminder_email_links_sanitize_and_no_name_error(self) -> None:
+        from vpn_shop.mailer import render_expiration_reminder_email_html, render_expiration_reminder_email_text
+        # 1. 24 hours reminder (1_day): strictly 'через 24 часа', no 'завтра', no confusing tech rows
+        html_24h = render_expiration_reminder_email_html(
+            customer_email="rem@example.com",
+            reminder_kind="1_day",
+            setup_url="https://sub.example.com/my-secret-sub/json/sub_rem_123",
+        )
+        self.assertIn('href="https://sub.example.com/my-secret-sub/import/sub_rem_123" class="btn"', html_24h)
+        self.assertNotIn('href="https://sub.example.com/my-secret-sub/json/sub_rem_123" class="btn"', html_24h)
+        self.assertIn('>https://sub.example.com/my-secret-sub/import/sub_rem_123<', html_24h)
+        self.assertIn("через 24 часа", html_24h)
+        self.assertNotIn("завтра", html_24h)
+        self.assertNotIn("Конфигурации и ключи", html_24h)
+        self.assertNotIn("Перенастройка устройств", html_24h)
+
+        text_24h = render_expiration_reminder_email_text(
+            customer_email="rem@example.com",
+            reminder_kind="1_day",
+            setup_url="https://sub.example.com/my-secret-sub/json/sub_rem_123",
+        )
+        self.assertIn("https://sub.example.com/my-secret-sub/import/sub_rem_123", text_24h)
+        self.assertNotIn("/json/", text_24h)
+        self.assertIn("через 24 часа", text_24h)
+        self.assertNotIn("завтра", text_24h)
+
+        # 2. 1 hour reminder (1_hour): urgent red, 'через 1 час'
+        html_1h = render_expiration_reminder_email_html(
+            customer_email="rem@example.com",
+            reminder_kind="1_hour",
+            setup_url="https://sub.example.com/my-secret-sub/json/sub_rem_123",
+        )
+        self.assertIn("#ef4444", html_1h)
+        self.assertIn("через 1 час", html_1h)
+        self.assertNotIn("завтра", html_1h)
+
+        text_1h = render_expiration_reminder_email_text(
+            customer_email="rem@example.com",
+            reminder_kind="1_hour",
+            setup_url="https://sub.example.com/my-secret-sub/json/sub_rem_123",
+        )
+        self.assertIn("через 1 час", text_1h)
+
+        # 3. Expired subscription (expired): 'завершилось', 'Возобновить доступ'
+        html_exp = render_expiration_reminder_email_html(
+            customer_email="rem@example.com",
+            reminder_kind="expired",
+            setup_url="https://sub.example.com/my-secret-sub/json/sub_rem_123",
+        )
+        self.assertIn("Действие вашей подписки завершилось", html_exp)
+        self.assertIn("Возобновить доступ на сайте", html_exp)
+        self.assertNotIn("завтра", html_exp)
+
+        text_exp = render_expiration_reminder_email_text(
+            customer_email="rem@example.com",
+            reminder_kind="expired",
+            setup_url="https://sub.example.com/my-secret-sub/json/sub_rem_123",
+        )
+        self.assertIn("Возобновить доступ", text_exp)
+        self.assertIn("подошёл к концу", text_exp)
 
 
 if __name__ == "__main__":

@@ -91,17 +91,18 @@ class TestOpenFluxManager(unittest.TestCase):
         self.assertIn("openflux-worker-prf_test_user_1", slot["active_container_name"])
         mock_start.assert_called()
 
-        # 3. Two-phase migration: start switch to other server
+        # 3. Two-phase migration: start switch to other server ('pl' legacy code normalizes to 'de')
         target_srv = "pl" if slot["active_server"] == "nl" else "nl"
+        expected_srv = "de" if target_srv == "pl" else target_srv
         slot = openflux_manager.start_server_switch(self.conn, "prf_test_user_1", target_srv)
         self.assertEqual(slot["status"], "migrating")
-        self.assertEqual(slot["pending_server"], target_srv)
+        self.assertEqual(slot["pending_server"], expected_srv)
         self.assertIn("cups_uuid_pl_2", slot["pending_doc_name"])
 
         # 4. Confirm switch
         slot = openflux_manager.confirm_server_switch(self.conn, "prf_test_user_1", async_cleanup=False)
         self.assertEqual(slot["status"], "active")
-        self.assertEqual(slot["active_server"], target_srv)
+        self.assertEqual(slot["active_server"], expected_srv)
         self.assertIsNone(slot["pending_server"])
 
 

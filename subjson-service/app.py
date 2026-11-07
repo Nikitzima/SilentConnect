@@ -844,12 +844,20 @@ def get_openflux_slot_state_dict(sub_id: str) -> dict[str, Any]:
 
         status = slot.get("status") or "uninitialized"
         active_srv = (slot.get("active_server") or "nl").lower()
+        if active_srv == "pl":
+            active_srv = "de"
+        elif active_srv == "fi":
+            active_srv = "nl"
         active_doc_url = slot.get("active_doc_url") or ""
         active_link = ""
         if status in {"active", "migrating"} and active_doc_url:
             active_link = openflux_manager.build_openflux_stream_link(active_doc_url, active_srv)
 
         pending_srv = (slot.get("pending_server") or "").lower() or None
+        if pending_srv == "pl":
+            pending_srv = "de"
+        elif pending_srv == "fi":
+            pending_srv = "nl"
         pending_doc_url = slot.get("pending_doc_url") or ""
         pending_link = ""
         pending_remaining = 0
@@ -9498,7 +9506,7 @@ def setup_page_html(
             tg_bot_url = f"https://t.me/{bot_username}"
             pub_base = str(os.getenv("SUB_PUBLIC_BASE_URL", "https://example.com") or "https://example.com").rstrip("/")
             req_host = (headers.get("Host") or headers.get("host") or "") if headers else ""
-            if "previewsub." in req_host or "preview." in req_host:
+            if False and ("previewsub." in req_host or "preview." in req_host):
                 pub_base = "https://preview.example.com"
             cf_site_key = ""
             shop_st = None
@@ -9548,7 +9556,7 @@ def setup_page_html(
                         awg_slots_payload.append({
                             "index": s_idx,
                             "name": s_item.get("slot_label") or f"Устройство {s_idx}",
-                            "country": str(s_item.get("server_code") or "nl").lower(),
+                            "country": "de" if str(s_item.get("server_code") or "nl").lower() == "pl" else ("nl" if str(s_item.get("server_code") or "nl").lower() == "fi" else str(s_item.get("server_code") or "nl").lower()),
                             "address": s_item.get("client_ip") or f"10.8.1.{s_idx + 9}",
                             "active": bool(s_item.get("enabled", 1)),
                             "confUrl": f"/{SECRET_SEGMENT}/awg/{quoted_sub_id}/slot/{s_idx}/config",
@@ -9599,6 +9607,7 @@ def setup_page_html(
                     "expireDateLabel": expires_str,
                     "daysLeftLabel": subtitle,
                     "devicesLimitLabel": device_limit,
+                    "deviceLimit": awg_max_slots,
                     "trafficLabel": main_traffic_label,
                     "emailBound": bool(customer_email),
                     "boundEmailMasked": masked_email,
@@ -9618,9 +9627,9 @@ def setup_page_html(
                     },
                     "openflux": {
                         "state": oflux_ui_state,
-                        "country": str(oflux_slot_data.get("active_server") or "nl").lower(),
-                        "targetCountry": str(oflux_slot_data.get("pending_server") or "de").lower(),
-                        "keyUri": oflux_slot_data.get("active_link") or oflux_nl_link,
+                        "country": "de" if str(oflux_slot_data.get("active_server") or "nl").lower() == "pl" else str(oflux_slot_data.get("active_server") or "nl").lower(),
+                        "targetCountry": "de" if str(oflux_slot_data.get("pending_server") or "de").lower() == "pl" else str(oflux_slot_data.get("pending_server") or "de").lower(),
+                        "keyUri": (oflux_slot_data.get("active_link") or "") if oflux_ui_state != "inactive" else "",
                         "newKeyUri": oflux_slot_data.get("pending_link") or "",
                         "remainingSeconds": int(oflux_slot_data.get("pending_remaining_seconds") or 0),
                         "apiBase": f"/api/sub/openflux/{quoted_sub_id}",
@@ -10379,7 +10388,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                     return
                 try:
                     if oflux_action == "activate":
-                        openflux_manager.activate_openflux_slot(conn, pid)
+                        target_code = str(payload.get("target") or payload.get("target_server") or payload.get("server") or payload.get("target_country") or payload.get("country") or "").strip().lower()
+                        openflux_manager.activate_openflux_slot(conn, pid, preferred_server=target_code or None)
                     elif oflux_action in {"switch_prepare", "prepare"}:
                         target_code = str(payload.get("target") or payload.get("target_server") or payload.get("server") or payload.get("target_country") or payload.get("country") or "").strip().lower()
                         if not target_code or target_code not in openflux_manager.SERVERS:
@@ -10509,9 +10519,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 )
 
                 req_host = (self.headers.get("Host") or self.headers.get("host") or "").split(":")[0]
-                if "previewsub." in req_host:
+                if False and "previewsub." in req_host:
                     order_base = f"https://{req_host}"
-                elif "preview." in req_host:
+                elif False and "preview." in req_host:
                     order_base = f"https://{req_host}"
                 else:
                     order_base = str(os.getenv("CHECKOUT_PUBLIC_BASE_URL") or HAPP_WEB_PAGE_URL or "https://example.com").rstrip("/")

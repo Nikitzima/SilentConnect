@@ -252,7 +252,7 @@ def cmd_sync_stock(args: argparse.Namespace) -> int:
             f"1. Откройте ссылку на любом устройстве.\n"
             f"2. Выберите приложение (sing-box MT, Happ, Streisand, AmneziaWG).\n"
             f"3. Нажмите кнопку импорта профиля.\n\n"
-            f"Служба заботы: https://t.me/SilentConnectVPNBot"
+            f"Служба поддержки: https://t.me/SilentConnectVPNBot"
         )
         lines.append(text_item)
         print(f"  [{idx + 1}/{count}] Provisioned profile: {profile_id}")

@@ -2969,6 +2969,12 @@ class ShopBot:
         except Exception:
             LOGGER.exception("Periodic subscription reminder failed")
         try:
+            from .web import WebCheckout
+            web_checkout = WebCheckout(self.settings, self.store)
+            web_checkout.check_and_send_expiration_reminders()
+        except Exception:
+            LOGGER.exception("Periodic web email expiration reminders failed")
+        try:
             self.recover_stale_orders()
         except Exception:
             LOGGER.exception("Periodic stale orders recovery failed")
@@ -3014,7 +3020,7 @@ class ShopBot:
                     f"Ваша персональная ссылка на Личный кабинет:\n"
                     f"{sub_url}\n\n"
                     f"Подробная инструкция также отправлена на вашу почту: {email or 'почту'}.\n"
-                    f"Служба заботы: https://t.me/SilentConnectVPNBot"
+                    f"Служба поддержки: https://t.me/SilentConnectVPNBot"
                 )
                 try:
                     digiseller_client.deliver_unique_code(unique_code, delivery_text)
@@ -6478,7 +6484,7 @@ class ShopBot:
                         try:
                             self.telegram.send_message(
                                 order["customer_chat_id"],
-                                f"Ваш заказ #{order_public_id} был пересмотрен службой заботы. Начислено +{duration_days} дн. доступа (до {exp_dt})! Ссылка для подключения: {setup_url}",
+                                f"Ваш заказ #{order_public_id} был пересмотрен службой поддержки. Начислено +{duration_days} дн. доступа (до {exp_dt})! Ссылка для подключения: {setup_url}",
                             )
                         except Exception:
                             pass

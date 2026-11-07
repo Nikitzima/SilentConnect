@@ -3062,6 +3062,35 @@ class Store:
                 result.append(d)
         return result
 
+    def get_profiles_due_for_expired_email(self, max_past_seconds: int = 86400 * 3) -> list[dict[str, Any]]:
+        now = now_ts()
+        cutoff_min = now - max_past_seconds
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT p.*, o.customer_email, o.public_id AS order_public_id, o.meta_json AS order_meta
+                FROM profiles p
+                JOIN orders o ON o.provisioned_profile_id = p.id
+                LEFT JOIN profile_reminders pr ON pr.profile_public_id = p.public_id AND pr.reminder_kind = 'expired'
+                WHERE (p.status = 'expired' OR (p.status = 'active' AND p.expires_at > 0 AND p.expires_at <= ?))
+                  AND p.expires_at >= ?
+                  AND o.customer_email != ''
+                  AND pr.id IS NULL
+                ORDER BY p.expires_at DESC
+                """,
+                (now, cutoff_min),
+            ).fetchall()
+
+        result = []
+        for r in rows:
+            d = self._row_to_dict(r)
+            if not d:
+                continue
+            meta = json.loads(d.get("order_meta") or "{}") if isinstance(d.get("order_meta"), str) else (d.get("order_meta") or {})
+            if meta.get("email_reminders", True):
+                result.append(d)
+        return result
+
     def record_profile_reminder(self, profile_public_id: str, reminder_kind: str) -> None:
         now = now_ts()
         with self._connect() as conn:

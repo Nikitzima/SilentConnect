@@ -181,6 +181,10 @@ AWG_31_SERVER_DEFAULTS: dict[str, dict[str, str]] = {
 
 def build_slot_conf(slot: dict[str, Any], server_code: str = "nl", for_qr: bool = False) -> str:
     srv_code = str(slot.get("server_code") or server_code or "nl").lower().strip()
+    if srv_code == "pl":
+        srv_code = "de"
+    elif srv_code == "fi":
+        srv_code = "nl"
     node_defaults = AWG_31_SERVER_DEFAULTS.get(srv_code, AWG_31_SERVER_DEFAULTS.get("nl", {}))
 
     endpoint_host = (
@@ -381,8 +385,8 @@ def public_origin(headers: Any, fallback: str, allowed_hosts: tuple[str, ...] = 
     if fallback_host:
         allow.add(fallback_host.lower())
         if fallback_host.lower() == "example.com":
-            allow.add("preview.example.com")
-            allow.add("previewsub.example.com")
+            pass
+            pass
     host = str(headers.get("X-Forwarded-Host") or headers.get("Host") or "").split(",")[0].strip()
     if host and is_allowed_host(host, allow):
         proto = str(headers.get("X-Forwarded-Proto") or "https").split(",")[0].strip().lower()
@@ -1265,7 +1269,7 @@ class WebCheckout:
                 f"{sub_url}\n"
                 f"{cabinet_part}\n"
                 f"Подробная инструкция также отправлена на вашу почту: {email or 'почту'}.\n"
-                f"Служба заботы: https://t.me/SilentConnectVPNBot"
+                f"Служба поддержки: https://t.me/SilentConnectVPNBot"
             )
             self.digiseller.deliver_unique_code(unique_code, delivery_text)
             return True
@@ -2077,6 +2081,20 @@ class WebCheckout:
                 setup_url = f"{self.settings.subscription_base_url}/{segment}/import/{sub_id}"
                 if send_expiration_reminder_email_sync(self.settings, customer_email=email, reminder_kind="1_hour", setup_url=setup_url):
                     self.store.record_profile_reminder(str(item["public_id"]), "1_hour")
+
+            due_expired = self.store.get_profiles_due_for_expired_email()
+            for item in due_expired:
+                email = str(item.get("customer_email") or "").strip()
+                if not email:
+                    continue
+                found = self.provisioner.xui_db.find_client_by_email(str(item["xui_email"]))
+                sub_id = str(item["xui_email"])
+                if found and (found.get("client") or {}).get("subId"):
+                    sub_id = str(found["client"]["subId"])
+                segment = getattr(self.settings, "secret_segment", "my-secret-sub") or "my-secret-sub"
+                setup_url = f"{self.settings.subscription_base_url}/{segment}/import/{sub_id}"
+                if send_expiration_reminder_email_sync(self.settings, customer_email=email, reminder_kind="expired", setup_url=setup_url):
+                    self.store.record_profile_reminder(str(item["public_id"]), "expired")
         except Exception:
             LOGGER.exception("Error running check_and_send_expiration_reminders")
 
@@ -2131,8 +2149,8 @@ class WebCheckout:
             except Exception:
                 LOGGER.exception("Failed to notify admins in bg for order %s", order_dict.get("public_id"))
 
-        threading.Thread(target=_prewarm, daemon=True, name="bg-platega-prewarm").start()
         threading.Thread(target=_notify, daemon=True, name="bg-admin-notifier").start()
+        threading.Thread(target=_prewarm, daemon=True, name="bg-platega-prewarm").start()
 
     def _notify_admins_new_web_order(self, order: dict[str, Any]) -> None:
         if not self.telegram:
@@ -2159,13 +2177,21 @@ class WebCheckout:
             admin_chats = self.store.list_chat_ids_by_scope("admin")
             if not admin_chats:
                 admin_chats = [str(u) for u in (getattr(self.settings, "admin_user_ids", None) or (123456789,))]
+            t0 = time.monotonic()
             LOGGER.info("Notifying admin chats about web order %s: %s", order.get("public_id"), admin_chats)
             for chat_id in admin_chats:
                 try:
+                    t_tg_start = time.monotonic()
                     sent = self.telegram.send_message(
                         chat_id, text, reply_markup=inline_admin_markup(str(order["public_id"]))
                     )
+                    t_tg_done = time.monotonic()
                     self.store.attach_manager_message(str(order["public_id"]), chat_id, int(sent["message_id"]))
+                    t_attach_done = time.monotonic()
+                    LOGGER.info(
+                        "Admin notification for order %s chat %s: tg=%.3fs, db=%.3fs, total=%.3fs",
+                        order.get("public_id"), chat_id, t_tg_done - t_tg_start, t_attach_done - t_tg_done, t_attach_done - t0
+                    )
                 except TelegramApiError:
                     LOGGER.exception("Failed to notify admin chat %s about new web order %s", chat_id, order["public_id"])
         except Exception:
@@ -2242,12 +2268,26 @@ class WebCheckout:
         status = str(order.get("status") or "")
         meta = dict(order.get("meta_json") or {})
 
-        # Non-blocking check if local replica is stale (avoids locking DB on 5s poll)
+        # Fast sync for active orders with timeout safeguard and fresh order reload
         if status in ("waiting_payment", "provisioning") and getattr(self.store, "_replica_mgr", None) is not None:
             try:
-                self.store._replica_mgr.sync_if_stale()
+                def _do_sync():
+                    try:
+                        self.store._replica_mgr.force_sync(min_interval=3.0)
+                    except Exception as e:
+                        LOGGER.debug("force_sync error during order polling: %s", e)
+
+                sync_thread = threading.Thread(target=_do_sync, daemon=True, name="order-poll-sync")
+                sync_thread.start()
+                sync_thread.join(timeout=2.0)
+
+                refreshed = self.store.get_order(str(order["public_id"]))
+                if refreshed:
+                    order = refreshed
+                    status = str(order.get("status") or "")
+                    meta = dict(order.get("meta_json") or {})
             except Exception as exc:
-                LOGGER.debug("sync_if_stale during order polling: %s", exc)
+                LOGGER.debug("force_sync/reload during order polling: %s", exc)
 
         # Active reconciliation with Platega if order is waiting payment
         if status == "waiting_payment" and self.settings.platega_enabled and self.platega.is_configured:
@@ -2292,55 +2332,6 @@ class WebCheckout:
             if subscription_url:
                 payload["setup_url"] = subscription_setup_url(subscription_url)
         return json.dumps(payload, ensure_ascii=False).encode("utf-8")
-
-    def order_poll_script(self, order: dict[str, Any], *, interval_seconds: int = 5) -> str:
-        meta = order.get("meta_json") or {}
-        status_url = f"/order/{quote(str(order['public_id']), safe='')}/{quote(str(meta.get('web_token') or ''), safe='')}/status"
-        return f"""
-        <script>
-        (() => {{
-          const initialStatus = {json.dumps(str(order.get("status") or ""))};
-          const statusUrl = {json.dumps(status_url)};
-          const statusBox = document.getElementById("order-live-status");
-          let failures = 0;
-
-          async function pollOrderStatus() {{
-            try {{
-              const response = await fetch(statusUrl, {{ cache: "no-store", credentials: "same-origin" }});
-              if (!response.ok) return;
-              const data = await response.json();
-              failures = 0;
-
-              if (data.status && data.status !== initialStatus) {{
-                if (statusBox) {{
-                  statusBox.textContent = data.status === "delivered"
-                    ? "Оплата подтверждена. Открываем доступ..."
-                    : "Статус заказа изменился. Обновляем страницу...";
-                }}
-                if (data.status === "delivered" && data.setup_url) {{
-                  window.location.href = data.setup_url;
-                  return;
-                }}
-                window.location.reload();
-                return;
-              }}
-
-              if (statusBox && data.paid_reported) {{
-                statusBox.textContent = "Оплата отмечена. Ждём подтверждение админом, эта страница обновится сама.";
-              }}
-            }} catch (error) {{
-              failures += 1;
-              if (statusBox && failures >= 3) {{
-                statusBox.textContent = "Проверяем статус. Если страница долго не обновляется, обновите её вручную.";
-              }}
-            }}
-          }}
-
-          window.setTimeout(pollOrderStatus, 1500);
-          window.setInterval(pollOrderStatus, {int(interval_seconds) * 1000});
-        }})();
-        </script>
-        """
 
     _rate_limit_lock = threading.Lock()
     _cabinet_rate_limits: OrderedDict[str, float] = OrderedDict()
@@ -2624,10 +2615,10 @@ class WebCheckout:
         slot_index: int,
         target_server: str,
     ) -> dict[str, Any]:
-        country_names = {"nl": "Нидерланды", "de": "Германия", "fi": "Финляндия", "pl": "Германия"}
-        target_srv = (target_server or "").lower().strip()
+        country_names = {"nl": "Нидерланды", "de": "Германия"}
+        target_srv = "de" if (target_server or "").lower().strip() == "pl" else (target_server or "").lower().strip()
         if target_srv not in country_names:
-            return {"ok": False, "error": f"Неизвестная страна подключения '{target_server}'. Допустимы: nl, de, fi"}
+            return {"ok": False, "error": f"Неизвестная страна подключения '{target_server}'. Допустимы: nl, de"}
 
         prof = self.store.get_profile(profile_public_id)
         if not prof:
@@ -2643,6 +2634,10 @@ class WebCheckout:
             current_slot = self.ensure_awg_slot(profile_public_id, idx)
 
         current_srv = str(current_slot.get("server_code") or "nl").lower().strip()
+        if current_srv == "pl":
+            current_srv = "de"
+        elif current_srv == "fi":
+            current_srv = "nl"
         current_name = country_names.get(current_srv, current_srv.upper())
         target_name = country_names.get(target_srv, target_srv.upper())
 
@@ -2775,6 +2770,10 @@ class WebCheckout:
             clean_label = html.escape(raw_label, quote=True)
             client_ip = html.escape(str(s.get("client_ip") or ""))
             srv_code = str(s.get("server_code") or "nl").lower()
+            if srv_code == "pl":
+                srv_code = "de"
+            elif srv_code == "fi":
+                srv_code = "nl"
             srv_flag = "🇳🇱" if srv_code == "nl" else ("🇩🇪" if srv_code in ("de", "pl") else "🇫🇮")
             srv_name = "Нидерланды" if srv_code == "nl" else ("Германия" if srv_code in ("de", "pl") else "Финляндия")
             is_enabled = bool(s.get("enabled", 1))
@@ -5334,7 +5333,6 @@ class WebCheckout:
                 </div>
               </section>
             </div>
-            {self.order_poll_script(order)}
             """
             dev_lim = int(meta.get("device_limit") or 3)
             web_tok = str(meta.get("web_token") or "")
@@ -5343,6 +5341,7 @@ class WebCheckout:
                 "errorMessage": flash,
                 "order": {
                     "publicId": str(order["public_id"]),
+                    "rawStatus": str(order.get("status") or "waiting_payment"),
                     "kind": str(order.get("kind") or meta.get("kind") or "new"),
                     "isRenewal": bool(str(order.get("kind") or meta.get("kind") or "") == "renewal"),
                     "state": "waiting",
@@ -5380,7 +5379,7 @@ class WebCheckout:
                 }, compat_body=body)
             req_host = str(headers.get("X-Forwarded-Host") or headers.get("Host") or "").split(",")[0].strip().lower() if headers else ""
             if req_host.split(":")[0] in ("preview.example.com", "previewsub.example.com"):
-                subscription_url = subscription_url.replace("://sub.example.com/", "://previewsub.example.com/")
+                pass
             setup_url = subscription_setup_url(subscription_url)
             claim_url = self.claim_url(order)
             body = f"""
@@ -5410,6 +5409,7 @@ class WebCheckout:
                 "errorMessage": flash,
                 "order": {
                     "publicId": str(order["public_id"]),
+                    "rawStatus": "delivered",
                     "kind": str(order.get("kind") or meta.get("kind") or "new"),
                     "isRenewal": bool(str(order.get("kind") or meta.get("kind") or "") == "renewal"),
                     "state": "delivered",
@@ -5450,9 +5450,61 @@ class WebCheckout:
                 },
             }, compat_body=body)
 
-        body = f"<div style=\"max-width: 860px; margin: 0 auto;\"><section class=\"section\" style=\"padding: 24px 0 16px;\"><h2>Заказ обрабатывается</h2>{flash_html}</section><section class=\"order\">{summary}<div class=\"notice\">Статус: {html.escape(status)}</div></section></div>"
-        body += self.order_poll_script(order)
-        return self.render_page("Заказ обрабатывается", body, refresh_seconds=12)
+        if status == "provisioning":
+            dev_lim = int(meta.get("device_limit") or 3)
+            web_tok = str(meta.get("web_token") or "")
+            body = f"""
+            <div style="max-width: 860px; margin: 0 auto;">
+              <section class="section" style="padding: 24px 0 16px;"><h2>Формирование доступа</h2>{flash_html}</section>
+              <section class="order">{summary}<div class="card"><strong>Формируем защищённый доступ…</strong><p class="muted">Ваш платёж подтверждён. Сервер генерирует конфигурацию и криптографические ключи.</p></div></section>
+            </div>
+            """
+            return self.render_v21_page({
+                "view": "order",
+                "errorMessage": flash,
+                "order": {
+                    "publicId": str(order["public_id"]),
+                    "rawStatus": "provisioning",
+                    "kind": str(order.get("kind") or meta.get("kind") or "new"),
+                    "isRenewal": bool(str(order.get("kind") or meta.get("kind") or "") == "renewal"),
+                    "state": "provisioning",
+                    "planLabel": f"{({3: 'Личный', 6: 'Домашний', 9: 'Расширенный'}).get(dev_lim, 'Тариф')} · {device_limit_label(dev_lim)}",
+                    "durationLabel": f"{int(order['duration_days'])} дней",
+                    "awgLabel": f"{({3: 250, 6: 500, 9: 1000}).get(dev_lim, 250)} ГБ в месяц",
+                    "emailMasked": customer_email or "—",
+                    "amountRub": int(order["final_price_rub"]),
+                    "orderUrl": order_url,
+                    "statusPollUrl": f"/order/{order['public_id']}/{web_tok}/status",
+                },
+            }, compat_body=body)
+
+        dev_lim = int(meta.get("device_limit") or 3)
+        web_tok = str(meta.get("web_token") or "")
+        body = f"""
+        <div style="max-width: 860px; margin: 0 auto;">
+          <section class="section" style="padding: 24px 0 16px;"><h2>Заказ</h2>{flash_html}</section>
+          <section class="order">{summary}<div class="notice">Статус: {html.escape(status)}</div></section>
+        </div>
+        """
+        fallback_state = "cancelled" if status in ("failed", "rejected", "expired") else "waiting"
+        return self.render_v21_page({
+            "view": "order",
+            "errorMessage": flash or (f"Статус заказа: {status}" if status not in ("waiting_payment", "awaiting_payment") else ""),
+            "order": {
+                "publicId": str(order["public_id"]),
+                "rawStatus": str(status),
+                "kind": str(order.get("kind") or meta.get("kind") or "new"),
+                "isRenewal": bool(str(order.get("kind") or meta.get("kind") or "") == "renewal"),
+                "state": fallback_state,
+                "planLabel": f"{({3: 'Личный', 6: 'Домашний', 9: 'Расширенный'}).get(dev_lim, 'Тариф')} · {device_limit_label(dev_lim)}",
+                "durationLabel": f"{int(order['duration_days'])} дней",
+                "awgLabel": f"{({3: 250, 6: 500, 9: 1000}).get(dev_lim, 250)} ГБ в месяц",
+                "emailMasked": customer_email or "—",
+                "amountRub": int(order["final_price_rub"]),
+                "orderUrl": order_url,
+                "statusPollUrl": f"/order/{order['public_id']}/{web_tok}/status",
+            },
+        }, compat_body=body)
 
     def render_not_found(self) -> bytes:
         body = '<section class="section"><h2>Страница не найдена</h2><p class="muted">Проверьте ссылку или откройте главную страницу.</p><a class="btn" href="/">На главную</a></section>'

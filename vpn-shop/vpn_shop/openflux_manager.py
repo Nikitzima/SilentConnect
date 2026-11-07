@@ -238,7 +238,7 @@ def run_node_command(server_code: str, cmd: str, timeout: int = 15) -> tuple[int
         return res.returncode, res.stdout.strip(), res.stderr.strip()
     except Exception as exc:
         # Fallback for PL: jump through FI if direct SSH fails
-        if srv["code"] == "pl":
+        if srv["code"] in ("de", "pl"):
             try:
                 fi_host = get_server_ip("fi")
                 jump_cmd = [
@@ -399,7 +399,7 @@ def get_or_create_openflux_slot(conn: sqlite3.Connection, profile_id: str) -> di
 
 def _is_node_reachable(server_code: str) -> bool:
     ip = get_server_ip(server_code)
-    if ip in ("127.0.0.1", "192.0.2.1", "192.0.2.2"):
+    if ip in ("127.0.0.1", "192.0.2.1", "192.0.2.2", "192.0.2.3"):
         return True
     try:
         with socket.create_connection((ip, 22), timeout=1.5):
@@ -410,7 +410,7 @@ def _is_node_reachable(server_code: str) -> bool:
 
 def choose_least_loaded_server(conn: sqlite3.Connection) -> str:
     """Smart Balancer: Select least loaded reachable server between NL and PL."""
-    counts = {"nl": 0, "pl": 0}
+    counts = {"nl": 0, "de": 0}
     rows = conn.execute(
         """
         SELECT active_server, count(*) as cnt
@@ -420,11 +420,11 @@ def choose_least_loaded_server(conn: sqlite3.Connection) -> str:
         """
     ).fetchall()
     for r in rows:
-        srv = (r[0] or "").lower()
+        srv = "de" if (r[0] or "").lower() == "pl" else (r[0] or "").lower()
         if srv in counts:
-            counts[srv] = int(r[1])
+            counts[srv] += int(r[1])
 
-    reachable = [srv for srv in ("nl", "pl") if _is_node_reachable(srv)] or ["nl", "pl"]
+    reachable = [srv for srv in ("nl", "de") if _is_node_reachable(srv)] or ["nl", "de"]
     min_count = min(counts[s] for s in reachable)
     for srv in reachable:
         if counts[srv] == min_count:
@@ -432,7 +432,7 @@ def choose_least_loaded_server(conn: sqlite3.Connection) -> str:
     return reachable[0]
 
 
-def activate_openflux_slot(conn: sqlite3.Connection, profile_id: str) -> dict[str, Any]:
+def activate_openflux_slot(conn: sqlite3.Connection, profile_id: str, preferred_server: Optional[str] = None) -> dict[str, Any]:
     """
     Activate an uninitialized slot:
     1. Smart Balancer picks optimal node.
@@ -444,7 +444,10 @@ def activate_openflux_slot(conn: sqlite3.Connection, profile_id: str) -> dict[st
     if slot["status"] in ("active", "migrating") and slot.get("active_doc_url"):
         return slot
 
-    target_srv = choose_least_loaded_server(conn)
+    pref = (preferred_server or "").lower().strip()
+    if pref == "pl":
+        pref = "de"
+    target_srv = pref if pref in ("nl", "de") else choose_least_loaded_server(conn)
     clean_uid = re.sub(r"[^\w\-]", "", profile_id)
     container_name = f"openflux-worker-{clean_uid}"
 
@@ -484,11 +487,12 @@ def start_server_switch(conn: sqlite3.Connection, profile_id: str, target_server
     - Starts 5-minute countdown.
     """
     slot = get_or_create_openflux_slot(conn, profile_id)
-    target_srv = (target_server or "").lower().strip()
+    target_srv = "de" if (target_server or "").lower().strip() == "pl" else (target_server or "").lower().strip()
     if target_srv not in SERVERS:
         raise ValueError(f"Недопустимый целевой сервер: {target_server}")
 
-    if target_srv == slot.get("active_server"):
+    cur_active_srv = "de" if (slot.get("active_server") or "").lower().strip() == "pl" else (slot.get("active_server") or "").lower().strip()
+    if target_srv == cur_active_srv:
         raise ValueError(f"Сервер {target_srv.upper()} уже выбран текущим")
 
     # If slot is already migrating:

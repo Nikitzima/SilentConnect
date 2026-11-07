@@ -405,9 +405,10 @@ class TestAwgSlotsStorage(unittest.TestCase):
 
         slot_fi = {"client_ip": "10.8.2.10", "private_key_enc": "privFI==", "preshared_key": "pskFI==", "server_code": "fi"}
         conf_fi = build_slot_conf(slot_fi, server_code="fi")
-        self.assertIn("HeaderProtectionKey = MockHeaderProtectionKeyDE222222222222222222=", conf_fi)
-        self.assertTrue(any(h in conf_fi for h in ("fi.example.com:49752", "fi.example.com:49752")))
-        self.assertIn("PublicKey = MockServerPublicKeyDE3333333333333333333333=", conf_fi)
+        # FI is decommissioned for AWG and normalizes to NL
+        self.assertIn("HeaderProtectionKey = MockHeaderProtectionKeyNL111111111111111111=", conf_fi)
+        self.assertTrue(any(h in conf_fi for h in ("edge.example.com:44121", "warp.example.com:44121")))
+        self.assertIn("PublicKey = MockServerPublicKeyNL1111111111111111111111=", conf_fi)
         self.assertIn("ContentPaddingAddition = 10-100", conf_fi)
         self.assertIn("RandomTrailers = on", conf_fi)
         self.assertIn("DisableCookies = on", conf_fi)

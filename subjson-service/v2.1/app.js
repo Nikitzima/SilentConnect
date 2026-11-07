@@ -13,6 +13,7 @@
 const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const fmt = n => new Intl.NumberFormat('ru-RU').format(Math.round(n));
+const escHtml = s => String(s == null ? '' : s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
 
 const _initSub = (window.SC_PROD && window.SC_PROD.sub) || {};
 let SUB_ID = _initSub.subId || '';
@@ -361,7 +362,7 @@ const S = {
   osMain: detectedOs, appMain: 'incy',
   osAwg: (detectedOs === 'appletv' || detectedOs === 'androidtv') ? 'windows' : detectedOs, appAwg: 'amneziavpn',
   osOf: (detectedOs === 'androidtv' || detectedOs === 'appletv') ? 'ios' : detectedOs,
-  ofState: 'active', ofCountry: 'nl', ofTargetCountry: 'pl',
+  ofState: 'active', ofCountry: 'nl', ofTargetCountry: 'de',
   awgTargetSlot: 1
 };
 
@@ -896,8 +897,9 @@ document.addEventListener('click', e => {
 
 
 function setOrderState(state) {
-  if (!['waiting', 'delivered', 'cancelled'].includes(state)) state = 'waiting';
+  if (!['waiting', 'provisioning', 'delivered', 'cancelled'].includes(state)) state = 'waiting';
   if ($('#ordWait')) $('#ordWait').hidden = state !== 'waiting';
+  if ($('#ordProvisioning')) $('#ordProvisioning').hidden = state !== 'provisioning';
   if ($('#ordDone')) $('#ordDone').hidden = state !== 'delivered';
   if ($('#ordCancelled')) $('#ordCancelled').hidden = state !== 'cancelled';
 
@@ -906,6 +908,7 @@ function setOrderState(state) {
   const badge = $('#ordBadge');
   if (badge) {
     if (state === 'waiting') { badge.className = 'status wait'; badge.innerHTML = '<i></i>Ожидает оплаты'; }
+    else if (state === 'provisioning') { badge.className = 'status wait'; badge.innerHTML = '<i></i>Формируем доступ…'; }
     else if (state === 'delivered') { badge.className = 'status ok'; badge.innerHTML = '<i></i>Оплачен'; }
     else { badge.className = 'status cancel'; badge.innerHTML = '<i></i>Отменён'; }
   }
@@ -935,34 +938,6 @@ if ($('#cancelOrdBtn')) {
   });
 }
 
-const orderForm = $('#orderForm');
-if (orderForm) {
-  orderForm.addEventListener('submit', e => {
-    e.preventDefault();
-    const emailField = $('#email');
-    const email = (emailField ? emailField.value : '').trim();
-    if (!email || !email.includes('@')) {
-      if (emailField) emailField.classList.add('err');
-      const err = $('#emailErr');
-      if (err) err.hidden = false;
-      toast('Укажите корректный Email для получения ключа');
-      return;
-    }
-    const cur = calc(S.dev, S.months);
-    if ($('#ordPlanName')) $('#ordPlanName').textContent = `${CFG.names[S.dev]} · до ${S.dev} устройств`;
-    if ($('#ordDuration')) $('#ordDuration').textContent = `${CFG.days[S.months]} дней (${CFG.full[S.months]})`;
-    if ($('#ordAwg')) $('#ordAwg').textContent = `${CFG.awg[S.dev]} ГБ в месяц`;
-    if ($('#ordEmail')) $('#ordEmail').textContent = email;
-    if ($('#ordTotal')) $('#ordTotal').textContent = `${fmt(cur.total)} ₽`;
-    if ($('#payBtnSum')) $('#payBtnSum').textContent = `${fmt(cur.total)} ₽`;
-
-    toast('Создание защищённого заказа…');
-    setTimeout(() => {
-      setOrderState(cur.total === 0 ? 'delivered' : 'waiting');
-      view('order');
-    }, 300);
-  });
-}
 const emailInputEl = $('#email');
 if (emailInputEl) {
   emailInputEl.addEventListener('input', () => {
@@ -1353,30 +1328,30 @@ function renderMainSetup() {
       <div class="s-step">
         <div>
           <div class="s-step-head"><span class="s-step-num">1</span><h4>Установка клиента</h4></div>
-          <details class="step-details">
-            <summary class="step-details-summary">
+          <div class="step-details">
+            <button type="button" class="step-details-toggle" aria-expanded="false">
               <span>Подробнее</span>
               <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
-            </summary>
-            <div class="step-details-content"><div class="step-details-inner">
+            </button>
+            <div class="step-details-wrap"><div class="step-details-inner">
               <p class="step-details-text">${cur.description} Операционная система: ${OS_LABEL[os]}.</p>
             </div></div>
-          </details>
+          </div>
         </div>
         <div class="step-btns">${dlButtonsHtml(cur.downloads[os] || [])}</div>
       </div>
       <div class="s-step">
         <div>
           <div class="s-step-head"><span class="s-step-num">2</span><h4>Автоматический импорт ключа</h4></div>
-          <details class="step-details">
-            <summary class="step-details-summary">
+          <div class="step-details">
+            <button type="button" class="step-details-toggle" aria-expanded="false">
               <span>Подробнее</span>
               <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
-            </summary>
-            <div class="step-details-content"><div class="step-details-inner">
+            </button>
+            <div class="step-details-wrap"><div class="step-details-inner">
               <p class="step-details-text">Нажмите «Добавить подписку». Приложение откроется автоматически и применит зашифрованный профиль SilentConnect.</p>
             </div></div>
-          </details>
+          </div>
         </div>
         <div class="step-btns"><a href="${importUrlFor(cur.id)}" class="btn btn-primary btn-sm" onclick="${window.SC_PROD ? '' : 'event.preventDefault();'}toast('Открываем ${title} и передаём профиль…')"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> Добавить подписку</a></div>
       </div>
@@ -1389,15 +1364,15 @@ function renderMainSetup() {
       <div class="s-step">
         <div>
           <div class="s-step-head"><span class="s-step-num">4</span><h4>Резервный способ (ручной импорт)</h4></div>
-          <details class="step-details">
-            <summary class="step-details-summary">
+          <div class="step-details">
+            <button type="button" class="step-details-toggle" aria-expanded="false">
               <span>Подробнее</span>
               <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
-            </summary>
-            <div class="step-details-content"><div class="step-details-inner">
+            </button>
+            <div class="step-details-wrap"><div class="step-details-inner">
               <p class="step-details-text">Если бесшовный переход не сработал: скопируйте ссылку ниже в буфер обмена и выберите «Импорт из буфера обмена» в настройках приложения.</p>
             </div></div>
-          </details>
+          </div>
         </div>
         <div class="step-btns"><button type="button" class="btn btn-ghost btn-sm" onclick="copyToClipboard('${SUB_URL || SUB_IMPORT_URL}', 'Ссылка подписки скопирована!')">Скопировать ссылку <svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button></div>
         <input class="field mono-field" name="sub_manual_url" readonly value="${SUB_URL || SUB_IMPORT_URL}" aria-label="Ссылка подписки" onclick="this.select()">
@@ -1407,6 +1382,17 @@ function renderMainSetup() {
   syncSubViewport();
 }
 renderMainSetup();
+
+// Smooth 2-way accordion for step details (identical to promo-box-wrap animation)
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.step-details-toggle');
+  if (!btn) return;
+  const wrap = btn.nextElementSibling;
+  if (!wrap || !wrap.classList.contains('step-details-wrap')) return;
+  const isOpen = wrap.classList.contains('open');
+  wrap.classList.toggle('open', !isOpen);
+  btn.setAttribute('aria-expanded', String(!isOpen));
+});
 
 /* =========================================================================
    6. ПЕРЕКЛЮЧАТЕЛЬ 3 РЕЖИМОВ ПОДКЛЮЧЕНИЯ (Liquid Glass с физикой перетаскивания)
@@ -1500,26 +1486,28 @@ const AWG_APPS = [
       linux: [dl('GitHub Релизы (.deb / AppImage)', 'https://github.com/amnezia-vpn/amnezia-client/releases', 'github')]
     } },
   { id: 'amneziawg', name: 'AmneziaWG', badge: '', icon: `${ASSET_ROOT}apps/amneziawg.webp`,
-    platforms: ['windows', 'android', 'macos', 'ios'],
+    platforms: ['windows', 'android', 'macos', 'ios', 'linux'],
     description: 'Специализированная облегчённая сборка на базе нативного клиента WireGuard с поддержкой заголовков обфускации Jc/Jmin/Jmax.',
     downloads: {
-      ios: [dl('App Store', 'https://apps.apple.com/app/amneziawg/id6478942364', 'appstore')],
-      android: [dl('Google Play', 'https://play.google.com/store/apps/details?id=org.amnezia.awg', 'googleplay')],
+      ios: [dl('App Store', 'https://apps.apple.com/app/amneziawg/id6478942365', 'appstore')],
+      android: [dl('Google Play', 'https://play.google.com/store/apps/details?id=org.amnezia.awg', 'googleplay'), dl('GitHub Релизы (.apk)', 'https://github.com/amnezia-vpn/amneziawg-android/releases', 'github')],
       windows: [dl('GitHub Релизы (.msi)', 'https://github.com/amnezia-vpn/amneziawg-windows-client/releases', 'github')],
-      macos: [dl('App Store', 'https://apps.apple.com/app/amneziawg/id6478942364', 'appstore')]
+      macos: [dl('App Store', 'https://apps.apple.com/app/amneziawg/id6478942365', 'appstore')],
+      linux: [dl('GitHub Релизы (Go CLI / Kernel)', 'https://github.com/amnezia-vpn/amneziawg-go', 'github')]
     } }
 ];
 
 const AWG_SERVERS = {
   nl: { code: 'nl', name: 'Нидерланды', city: 'Амстердам', flag: '<span class="flag-badge" aria-label="Нидерланды"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#fff"/><rect width="16" height="3.67" rx="2" fill="#AE1C28"/><rect y="7.33" width="16" height="3.67" rx="2" fill="#21468B"/><rect y="2" width="16" height="7" fill="#fff"/></svg></span>', ping: 32 },
-  pl: { code: 'pl', name: 'Польша', city: 'Варшава', flag: '<span class="flag-badge" aria-label="Польша"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#DC143C"/><rect width="16" height="5.5" rx="2" fill="#fff"/></svg></span>', ping: 24 },
-  fi: { code: 'fi', name: 'Финляндия', city: 'Хельсинки', flag: '<span class="flag-badge" aria-label="Финляндия"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#fff"/><rect x="4.5" width="3" height="11" fill="#002F6C"/><rect y="4" width="16" height="3" fill="#002F6C"/></svg></span>', ping: 19 }
+  de: { code: 'de', name: 'Германия', city: 'Франкфурт', flag: '<span class="flag-badge" aria-label="Германия"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#FFCE00"/><rect width="16" height="7.33" rx="2" fill="#DD0000"/><rect width="16" height="3.67" rx="2" fill="#000"/></svg></span>', ping: 24 },
+  pl: { code: 'de', name: 'Германия', city: 'Франкфурт', flag: '<span class="flag-badge" aria-label="Германия"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#FFCE00"/><rect width="16" height="7.33" rx="2" fill="#DD0000"/><rect width="16" height="3.67" rx="2" fill="#000"/></svg></span>', ping: 24 },
+  fi: { code: 'nl', name: 'Нидерланды', city: 'Амстердам', flag: '<span class="flag-badge" aria-label="Нидерланды"><svg width="16" height="11" viewBox="0 0 16 11" fill="none" aria-hidden="true"><rect width="16" height="11" rx="2" fill="#fff"/><rect width="16" height="3.67" rx="2" fill="#AE1C28"/><rect y="7.33" width="16" height="3.67" rx="2" fill="#21468B"/><rect y="2" width="16" height="7" fill="#fff"/></svg></span>', ping: 32 }
 };
 
 const AWG_SLOTS = [
   { id: 1, name: 'Рабочий MacBook', server: 'nl', ip: '10.8.0.2', active: true },
-  { id: 2, name: 'iPhone 16 Pro', server: 'pl', ip: '10.8.0.3', active: true },
-  { id: 3, name: 'Домашний роутер', server: 'fi', ip: '10.8.0.4', active: false }
+  { id: 2, name: 'iPhone 16 Pro', server: 'de', ip: '10.8.0.3', active: true },
+  { id: 3, name: 'Домашний роутер', server: 'nl', ip: '10.8.0.4', active: false }
 ];
 
 function mockAwgConfig(slot) {
@@ -1593,14 +1581,14 @@ function renderAwgSetup() {
         <div>
           <div class="slot-top">
             <span style="font-weight:700;color:#fff;font-size:14.5px;display:inline-flex;align-items:center;gap:6px">
-              <span><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg></span> <span id="slotNameText-${slot.id}">${slot.name}</span>
+              <span><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg></span> <span id="slotNameText-${slot.id}">${escHtml(slot.name)}</span>
               <button type="button" style="font-size:12px;opacity:.75;cursor:pointer" title="Переименовать" onclick="event.stopPropagation();promptRenameSlot(${slot.id})"><svg class="ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
             </span>
             <span class="status ${slot.active ? 'ok' : 'wait'}"><i></i>${slot.active ? 'Активен' : 'Свободен'}</span>
           </div>
           <div style="margin-top:10px;font-size:13px;color:var(--mut);display:flex;justify-content:space-between">
             <span>Шлюз: <b style="color:#fff">${srv.flag} ${srv.name}</b></span>
-            <span>IP: <code style="color:var(--em-t)">${slot.ip}</code></span>
+            <span>IP: <code style="color:var(--em-t)">${escHtml(slot.ip)}</code></span>
           </div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
@@ -1650,27 +1638,27 @@ function renderAwgSetup() {
         <div class="s-step">
           <div>
             <div class="s-step-head"><span class="s-step-num">1</span><h4>Установка клиента ${cur.name}</h4></div>
-            <details class="step-details">
-              <summary class="step-details-summary">
+            <div class="step-details">
+              <button type="button" class="step-details-toggle" aria-expanded="false">
                 <span>Подробнее</span>
                 <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
-              </summary>
-              <div class="step-details-content"><div class="step-details-inner">
+              </button>
+              <div class="step-details-wrap"><div class="step-details-inner">
                 <p class="step-details-text">Скачайте официальное бесплатное приложение с открытым исходным кодом для вашей операционной системы (${OS_LABEL[S.osAwg]}):</p>
               </div></div>
-            </details>
+            </div>
           </div>
           <div class="step-btns">${dlButtonsHtml(cur.downloads[S.osAwg] || [])}</div>
         </div>
         <div class="s-step">
           <div>
             <div class="s-step-head"><span class="s-step-num">2</span><h4>Добавление конфигурации устройства</h4></div>
-            <details class="step-details">
-              <summary class="step-details-summary">
+            <div class="step-details">
+              <button type="button" class="step-details-toggle" aria-expanded="false">
                 <span>Подробнее</span>
                 <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
-              </summary>
-              <div class="step-details-content"><div class="step-details-inner">
+              </button>
+              <div class="step-details-wrap"><div class="step-details-inner">
                 <div class="step-details-text">
                   <p>Выберите нужное устройство из списка ниже или в блоке слотов выше:</p>
                   <ul>
@@ -1679,23 +1667,23 @@ function renderAwgSetup() {
                   </ul>
                 </div>
               </div></div>
-            </details>
+            </div>
           </div>
           <div class="awg-step-slot-picker">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
               <label for="awgStepSlotSelect" style="font-size:11.5px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em">Устройство / слот:</label>
-              <span style="font-size:12px;color:var(--em-t);font-weight:600" id="awgStepSlotServerLabel">${targetSrv.flag} ${targetSrv.name} (${targetSlot.ip})</span>
+              <span style="font-size:12px;color:var(--em-t);font-weight:600" id="awgStepSlotServerLabel">${targetSrv.flag} ${targetSrv.name} (${escHtml(targetSlot.ip)})</span>
             </div>
             <select id="awgStepSlotSelect" class="field" style="height:38px;padding:6px 10px;font-size:13px;font-weight:600;background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;width:100%;cursor:pointer">
               ${AWG_SLOTS.map(s => {
                 const srvSlot = AWG_SERVERS[s.server] || AWG_SERVERS.nl;
                 const sel = (s.id === targetSlot.id) ? 'selected' : '';
-                return `<option value="${s.id}" ${sel}>${s.name} · ${srvSlot.name} (${s.ip}) ${s.active ? '· Активен' : ''}</option>`;
+                return `<option value="${s.id}" ${sel}>${escHtml(s.name)} · ${srvSlot.name} (${escHtml(s.ip)}) ${s.active ? '· Активен' : ''}</option>`;
               }).join('')}
             </select>
           </div>
           <div class="step-btns" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px">
-            <button type="button" class="btn btn-primary btn-sm" id="awgStepDlBtn" style="flex:1 1 auto;min-width:140px"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Скачать .conf (<span id="awgStepSlotName">${targetSlot.name}</span>)</button>
+            <button type="button" class="btn btn-primary btn-sm" id="awgStepDlBtn" style="flex:1 1 auto;min-width:140px"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Скачать .conf (<span id="awgStepSlotName">${escHtml(targetSlot.name)}</span>)</button>
             <button type="button" class="btn btn-ghost btn-sm" id="awgStepQrBtn" title="Показать QR-код"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> QR-код</button>
             <button type="button" class="btn btn-ghost btn-sm" id="awgStepCopyBtn" title="Скопировать конфиг"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Ключ</button>
             <button type="button" class="btn btn-ghost btn-sm" id="awgStepSwitchBtn" title="Сменить сервер"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-1.19"/></svg> Сервер</button>
@@ -1769,7 +1757,8 @@ window.openAwgSwitchModal = function(slotId) {
   const slot = AWG_SLOTS.find(s => s.id === S.awgTargetSlot) || AWG_SLOTS[0];
   const title = $('#awgModalSlotTitle');
   if (title) title.textContent = `#${slot.id} (${slot.name})`;
-  const radio = $(`input[name="awg_country"][value="${slot.server}"]`);
+  const nextSrv = (slot.server === 'nl') ? 'de' : 'nl';
+  const radio = $(`input[name="awg_country"][value="${nextSrv}"]`);
   if (radio) radio.checked = true;
   openModal('awgSwitchModal');
 };
@@ -1796,7 +1785,7 @@ const pingBtn = $('#pingBtn');
 if (pingBtn) {
   pingBtn.addEventListener('click', async () => {
     toast('Измеряем сетевую задержку до узлов Европы…');
-    ['pNl', 'pPl', 'pFi'].forEach(id => {
+    ['pNl', 'pPl'].forEach(id => {
       const el = $('#' + id);
       if (el) el.textContent = '…';
     });
@@ -1810,10 +1799,8 @@ if (pingBtn) {
         const baseWire = httpRtt > 130 ? Math.round(httpRtt * 0.12) : Math.round(httpRtt * 0.42);
         const nlPing = Math.max(15, Math.min(180, baseWire));
         const deDelta = (d && d.pings && d.pings.de) ? Math.max(5, Math.min(20, Math.round(d.pings.de * 0.3))) : 7;
-        const fiDelta = (d && d.pings && d.pings.fi) ? Math.max(8, Math.min(30, Math.round(d.pings.fi * 0.4))) : 12;
         if ($('#pNl')) $('#pNl').textContent = `${nlPing} мс`;
         if ($('#pPl')) $('#pPl').textContent = `${nlPing + deDelta} мс`;
-        if ($('#pFi')) $('#pFi').textContent = `${nlPing + fiDelta} мс`;
         toast('✓ Задержка обновлена');
         return;
       } catch (_) {}
@@ -1821,7 +1808,6 @@ if (pingBtn) {
     setTimeout(() => {
       const pNl = $('#pNl'); if (pNl) pNl.textContent = (28 + Math.floor(Math.random() * 8)) + ' мс';
       const pPl = $('#pPl'); if (pPl) pPl.textContent = (22 + Math.floor(Math.random() * 6)) + ' мс';
-      const pFi = $('#pFi'); if (pFi) pFi.textContent = (18 + Math.floor(Math.random() * 5)) + ' мс';
       toast('✓ Задержка обновлена');
     }, 420);
   });
@@ -1846,7 +1832,7 @@ function setOfState(state) {
   $$('[data-of-state]').forEach(b => b.classList.toggle('on', b.dataset.ofState === state));
 
   const srv = AWG_SERVERS[S.ofCountry] || AWG_SERVERS.nl;
-  const targetSrv = AWG_SERVERS[S.ofTargetCountry] || AWG_SERVERS.pl;
+  const targetSrv = AWG_SERVERS[S.ofTargetCountry] || AWG_SERVERS.de;
 
   const actCountryEl = $('#ofActiveCountry');
   if (actCountryEl) actCountryEl.innerHTML = `${srv.flag} ${srv.name} (${srv.city})`;
@@ -1887,6 +1873,7 @@ function setOfState(state) {
 
   if (state === 'migrating') startOfHandoverTimer();
   else clearInterval(ofTimerInterval);
+  if (typeof renderOfSetup === 'function') renderOfSetup();
 }
 window.setOfState = setOfState;
 
@@ -1896,6 +1883,23 @@ function startOfHandoverTimer() {
   function tick() {
     if (ofTimeRemaining <= 0) {
       clearInterval(ofTimerInterval);
+      if (window.SC_PROD && window.SC_PROD.sub && window.SC_PROD.sub.openflux && window.SC_PROD.sub.openflux.apiBase) {
+        fetch(`${window.SC_PROD.sub.openflux.apiBase}/state?t=${Date.now()}`)
+          .then(r => r.json())
+          .then(d => {
+            if (d && d.ok) {
+              S.ofCountry = d.active_server || S.ofCountry || 'nl';
+              S.ofKeyUri = d.active_link || S.ofKeyUri;
+              S.ofNewKeyUri = '';
+              setOfState(d.state === 'migrating' ? 'active' : (d.state || 'active'));
+              toast('Время подтверждения истекло. Смена сервера отменена, старый сервер сохранён.');
+            } else {
+              window.location.reload();
+            }
+          })
+          .catch(() => window.location.reload());
+        return;
+      }
       S.ofCountry = S.ofTargetCountry;
       setOfState('active');
       toast('Миграция автоматически завершена!');
@@ -1905,6 +1909,20 @@ function startOfHandoverTimer() {
     const s = ofTimeRemaining % 60;
     if (timerBox) timerBox.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
     ofTimeRemaining--;
+    if (ofTimeRemaining > 0 && ofTimeRemaining % 5 === 0 && window.SC_PROD && window.SC_PROD.sub && window.SC_PROD.sub.openflux && window.SC_PROD.sub.openflux.apiBase) {
+      fetch(`${window.SC_PROD.sub.openflux.apiBase}/state?t=${Date.now()}`)
+        .then(r => r.json())
+        .then(d => {
+          if (d && d.ok && d.state !== 'migrating') {
+            clearInterval(ofTimerInterval);
+            S.ofCountry = d.active_server || S.ofCountry || 'nl';
+            S.ofKeyUri = d.active_link || S.ofKeyUri;
+            S.ofNewKeyUri = '';
+            setOfState(d.state || 'active');
+          }
+        })
+        .catch(() => {});
+    }
   }
   tick();
   ofTimerInterval = setInterval(tick, 1000);
@@ -1971,43 +1989,56 @@ function renderOfSetup() {
   if (curOsEl) curOsEl.textContent = OS_LABEL[S.osOf] || S.osOf;
 
   const data = OF_CLIENT_DATA[S.osOf] || OF_CLIENT_DATA.ios;
-  const curOfKey = ($('#ofKeyInput') ? $('#ofKeyInput').value : '') || S.ofKeyUri || '';
+  const isInactive = S.ofState === 'inactive';
+  const isMigrating = S.ofState === 'migrating';
+  const curOfKey = isMigrating
+    ? (($('#ofNewKeyInput') ? $('#ofNewKeyInput').value : '') || S.ofNewKeyUri || '')
+    : (($('#ofKeyInput') ? $('#ofKeyInput').value : '') || S.ofKeyUri || '');
+  const keySelector = isMigrating ? '#ofNewKeyInput' : '#ofKeyInput';
+  const qrTarget = isMigrating ? 'pending' : 'active';
+  const step2BodyHtml = isInactive
+    ? `<div style="padding:12px 14px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.22);border-radius:10px;margin-top:8px">
+         <div style="font-size:13px;color:var(--text-dim);margin-bottom:10px">Активируйте ваш выделенный слот OpenFlux (Нидерланды или Германия) в карточке выше — ключ и QR-код появятся мгновенно:</div>
+         <button type="button" class="btn btn-primary btn-sm" onclick="$('[data-open-wl-picker=\\'activate\\']')?.click()"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Активировать слот OpenFlux</button>
+       </div>`
+    : `<div class="step-btns">
+          <a class="btn btn-primary btn-sm" id="ofImportBtn" href="${curOfKey || 'javascript:void(0)'}" onclick="if(!this.getAttribute('href')||this.getAttribute('href').startsWith('javascript')){event.preventDefault();copyToClipboard($('${keySelector}')?.value || '', 'Ключ OpenFlux скопирован!');}"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> ${isMigrating ? 'Подключить новый сервер' : 'Подключить в OpenFlux'}</a>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="copyToClipboard($('${keySelector}')?.value || '', 'Ключ OpenFlux скопирован!')"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> ${isMigrating ? 'Скопировать новый ключ' : 'Скопировать ключ'}</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="openQrModal('OpenFlux QR-код', $('${keySelector}')?.value || '', window.SC_PROD ? ('/sub/openflux/' + encodeURIComponent(SUB_ID) + '/qr?target=${qrTarget}&t=' + Date.now()) : '')"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> QR-код</button>
+        </div>
+        ${S.osOf === 'ios' ? '<div style="margin-top:8px;font-size:12px;color:var(--text-dim)">💡 <b>На iOS (TestFlight):</b> если кнопка прямого открытия не сработала, нажмите «Скопировать ключ», откройте приложение OpenFlux — оно предложит вставить профиль из буфера обмена (или отсканируйте QR-код).</div>' : ''}`;
   const stepsGrid = $('#stepsGridOf');
   if (stepsGrid) {
     const stepsHtml = `
       <div class="s-step">
         <div>
           <div class="s-step-head"><span class="s-step-num">1</span><h4>Установка ${data.name}</h4></div>
-          <details class="step-details">
-            <summary class="step-details-summary">
+          <div class="step-details">
+            <button type="button" class="step-details-toggle" aria-expanded="false">
               <span>Подробнее</span>
               <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
-            </summary>
-            <div class="step-details-content"><div class="step-details-inner">
+            </button>
+            <div class="step-details-wrap"><div class="step-details-inner">
               <p class="step-details-text">${data.step1}</p>
             </div></div>
-          </details>
+          </div>
         </div>
         <div class="step-btns">${dlButtonsHtml(data.downloads)}</div>
       </div>
       <div class="s-step">
         <div>
           <div class="s-step-head"><span class="s-step-num">2</span><h4>Добавление подключения</h4></div>
-          <details class="step-details">
-            <summary class="step-details-summary">
+          <div class="step-details">
+            <button type="button" class="step-details-toggle" aria-expanded="false">
               <span>Подробнее</span>
               <svg class="step-details-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
-            </summary>
-            <div class="step-details-content"><div class="step-details-inner">
+            </button>
+            <div class="step-details-wrap"><div class="step-details-inner">
               <p class="step-details-text">${data.step2}</p>
             </div></div>
-          </details>
+          </div>
         </div>
-        <div class="step-btns">
-          <a class="btn btn-primary btn-sm" id="ofImportBtn" href="${curOfKey || 'javascript:void(0)'}" onclick="if(!this.getAttribute('href')||this.getAttribute('href').startsWith('javascript')){event.preventDefault();copyToClipboard($('#ofKeyInput')?.value || '', 'Ключ OpenFlux скопирован!');}"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> Подключить в OpenFlux</a>
-          <button type="button" class="btn btn-ghost btn-sm" onclick="copyToClipboard($('#ofKeyInput')?.value || '', 'Ключ OpenFlux скопирован!')"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Скопировать ключ</button>
-          <button type="button" class="btn btn-ghost btn-sm" onclick="openQrModal('OpenFlux QR-код', $('#ofKeyInput')?.value || '', window.SC_PROD ? ('/sub/openflux/' + encodeURIComponent(SUB_ID) + '/qr?target=active&t=' + Date.now()) : '')"><svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> QR-код</button>
-        </div>
+        ${step2BodyHtml}
       </div>
       <div class="s-step done">
         <div>
@@ -2032,6 +2063,11 @@ $$('[data-open-wl-picker]').forEach(b => {
         ? '<svg class="ico" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> Выберите страну для активации OpenFlux'
         : '<svg class="ico" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> Смена локации OpenFlux (с безопасным окном миграции)';
     }
+    if (mode === 'switch') {
+      const nextOf = (S.ofCountry === 'nl') ? 'de' : 'nl';
+      const r = $(`input[name="wl_country"][value="${nextOf}"]`);
+      if (r) r.checked = true;
+    }
     openModal('wlPickerModal');
   });
 });
@@ -2040,7 +2076,7 @@ const wlConfirmPickBtn = $('#wlConfirmPickBtn');
 if (wlConfirmPickBtn) {
   wlConfirmPickBtn.addEventListener('click', () => {
     const checked = $('input[name="wl_country"]:checked');
-    const targetCode = checked ? checked.value : 'pl';
+    const targetCode = checked ? checked.value : 'de';
     closeAllModals();
 
     if (S.ofState === 'inactive') {
@@ -3108,17 +3144,17 @@ if (window.SC_PROD) {
         }, true);
       }
 
-      if (O.state === 'waiting' && O.statusPollUrl) {
+      if (['waiting', 'provisioning'].includes(O.state) && O.statusPollUrl) {
         setInterval(async () => {
           try {
             const r = await fetch(O.statusPollUrl, { headers: { 'Accept': 'application/json' } });
             if (!r.ok) return;
             const d = await r.json();
-            if (d.status && d.status !== 'waiting_payment' && d.status !== 'pending') {
+            if (d.status && d.status !== (O.rawStatus || (O.state === 'waiting' ? 'waiting_payment' : O.state))) {
               window.location.reload();
             }
           } catch (_) {}
-        }, 4000);
+        }, 3500);
       }
     }
 
@@ -3136,17 +3172,17 @@ if (window.SC_PROD) {
         grid.innerHTML = C.items.map((item, idx) => `
           <div class="card cab-card ${item.isActive ? 'active-sub' : ''}" ${!item.isActive ? 'style="opacity:.86"' : ''}>
             <div class="cab-card-head">
-              <h3>Подписка #${idx + 1} · ${item.planTitle || 'Тариф'}</h3>
-              <span class="status ${item.statusClass || 'ok'}"><i></i>${item.statusText || 'Активна'}</span>
+              <h3>Подписка #${idx + 1} · ${escHtml(item.planTitle || 'Тариф')}</h3>
+              <span class="status ${escHtml(item.statusClass || 'ok')}"><i></i>${escHtml(item.statusText || 'Активна')}</span>
             </div>
             <div class="ord-rows">
-              <div class="ord-row"><span>Лимит устройств</span><b>до ${item.devices || 3} устройств</b></div>
-              <div class="ord-row"><span>Пакет AmneziaWG</span><b>${item.awgLabel || '250 ГБ / мес'}</b></div>
-              <div class="ord-row"><span>Действует до</span><b>${item.expiresLabel || '—'}</b></div>
-              <div class="ord-row"><span>ID профиля</span><b class="mono">${item.subId || ''}</b></div>
+              <div class="ord-row"><span>Лимит устройств</span><b>до ${escHtml(item.devices || 3)} устройств</b></div>
+              <div class="ord-row"><span>Пакет AmneziaWG</span><b>${escHtml(item.awgLabel || '250 ГБ / мес')}</b></div>
+              <div class="ord-row"><span>Действует до</span><b>${escHtml(item.expiresLabel || '—')}</b></div>
+              <div class="ord-row"><span>ID профиля</span><b class="mono">${escHtml(item.subId || '')}</b></div>
             </div>
             <div style="margin-top:auto;padding-top:6px">
-              <a href="${item.setupUrl || '#'}" class="btn btn-primary btn-block" style="height:44px">Мастер настройки и подключения <svg class="btn-arrow" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
+              <a href="${escHtml(item.setupUrl || '#')}" class="btn btn-primary btn-block" style="height:44px">Мастер настройки и подключения <svg class="btn-arrow" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
             </div>
           </div>
         `).join('');
@@ -3164,7 +3200,7 @@ if (window.SC_PROD) {
     if ($('#subHeroId')) $('#subHeroId').textContent = SUB_ID;
     if ($('#subStatusBadge')) {
       $('#subStatusBadge').className = `status ${Sub.isExpired ? 'err' : 'ok'}`;
-      $('#subStatusBadge').innerHTML = `<i></i>${Sub.statusLabel || (Sub.isExpired ? 'Истекла' : 'Активна')}`;
+      $('#subStatusBadge').innerHTML = `<i></i>${escHtml(Sub.statusLabel || (Sub.isExpired ? 'Истекла' : 'Активна'))}`;
     }
     if ($('#subPlanBadge')) $('#subPlanBadge').textContent = Sub.planBadge || 'Тариф';
     if ($('#subDaysLeft')) $('#subDaysLeft').textContent = Sub.daysLeftLabel || '';
@@ -3274,7 +3310,8 @@ if (window.SC_PROD) {
       window.downloadSlotConf = function(slotId) {
         const slot = AWG_SLOTS.find(s => s.id === slotId) || AWG_SLOTS[0];
         if (slot && slot.confUrl) {
-          window.location.href = slot.confUrl;
+          const sep = slot.confUrl.includes('?') ? '&' : '?';
+          window.location.href = `${slot.confUrl}${sep}t=${Date.now()}`;
           return;
         }
         if (slot && slot.configText) {
@@ -3293,7 +3330,29 @@ if (window.SC_PROD) {
         if (!slot) return;
         if (slot.configText) {
           copyToClipboard(slot.configText, `Конфигурация слота #${slot.id} скопирована!`);
-        } else if (slot.confUrl) {
+        } else if (Awg.apiBase || slot.confUrl) {
+          try {
+            if (Awg.apiBase) {
+              const r = await fetch(`${Awg.apiBase}/slot/${slot.id}/config_text?t=${Date.now()}`);
+              const d = await r.json().catch(() => ({}));
+              if (r.ok && d && d.config) {
+                slot.configText = d.config;
+                copyToClipboard(d.config, `Конфигурация слота #${slot.id} скопирована!`);
+                return;
+              }
+            }
+          } catch (_) {}
+          if (slot.confUrl) {
+            try {
+              const r = await fetch(slot.confUrl + (slot.confUrl.includes('?') ? '&' : '?') + 't=' + Date.now());
+              const t = await r.text();
+              slot.configText = t;
+              copyToClipboard(t, `Конфигурация слота #${slot.id} скопирована!`);
+            } catch (_) {
+              toast('Не удалось загрузить конфигурацию слота');
+            }
+          }
+        } else if (false) {
           try {
             const r = await fetch(slot.confUrl);
             const t = await r.text();
@@ -3356,6 +3415,7 @@ if (window.SC_PROD) {
             const d = await r.json().catch(() => ({}));
             if (r.ok && d.ok !== false) {
               slot.server = code;
+              slot.ip = d.client_ip || slot.ip;
               slot.configText = d.config || '';
               renderAwgSetup();
               const srv = AWG_SERVERS[code] || AWG_SERVERS.nl;
@@ -3479,7 +3539,11 @@ if (window.SC_PROD) {
           return;
         }
 
-        if (!checkTurnstileVerified(renForm, $('#renewTurnstileError'))) {
+        const errBox = $('#renewTurnstileError');
+        const cfWidget = renForm.querySelector('.cf-widget') || renForm.querySelector('.cf-turnstile');
+        const turnstileInp = renForm.querySelector('[name="cf-turnstile-response"]');
+        const turnstileToken = turnstileInp ? turnstileInp.value : (window.turnstile && typeof window.turnstile.getResponse === 'function' ? window.turnstile.getResponse() : '');
+        if (!checkTurnstileVerified(renForm, errBox)) {
           return;
         }
 
