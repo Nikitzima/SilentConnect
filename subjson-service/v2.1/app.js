@@ -3269,29 +3269,50 @@ if (window.SC_PROD) {
   } else if (P.view === 'cabinet' && P.cabinet) {
     const C = P.cabinet;
     if ($('#cabSessionEmail')) $('#cabSessionEmail').textContent = C.email || '';
-    if ($('#cabStatsCount')) $('#cabStatsCount').textContent = String((C.items || []).length);
+    const items = Array.isArray(C.items) ? C.items : [];
+    const activeCount = items.filter(x => x.isActive).length;
+    const expiredCount = items.length - activeCount;
+    if ($('#cabStatsRow')) {
+      let statsDetail = '';
+      if (items.length > 0) {
+        const parts = [];
+        if (activeCount > 0) parts.push(`${activeCount} активн${activeCount === 1 ? 'ая' : 'ые'}`);
+        if (expiredCount > 0) parts.push(`${expiredCount} истёкш${expiredCount === 1 ? 'ая' : (expiredCount >= 2 && expiredCount <= 4 ? 'ие' : 'их')}`);
+        statsDetail = parts.length ? ` (${parts.join(', ')})` : '';
+      }
+      $('#cabStatsRow').innerHTML = `Подписок: <b id="cabStatsCount">${items.length}</b>${statsDetail}`;
+    } else if ($('#cabStatsCount')) {
+      $('#cabStatsCount').textContent = String(items.length);
+    }
     const grid = $('#view-cabinet .cab-grid');
-    if (grid && Array.isArray(C.items)) {
-      if (C.items.length === 0) {
+    if (grid) {
+      if (items.length === 0) {
         grid.innerHTML = `<div class="card card-pad" style="grid-column:1/-1"><h3 style="font-size:18px;margin-bottom:6px">Подписки не найдены</h3><p style="color:var(--mut);font-size:14px">На эту почту пока нет активных или архивных подписок.</p></div>`;
       } else {
-        grid.innerHTML = C.items.map((item, idx) => `
-          <div class="card cab-card ${item.isActive ? 'active-sub' : ''}" ${!item.isActive ? 'style="opacity:.86"' : ''}>
-            <div class="cab-card-head">
-              <h3>Подписка #${idx + 1} · ${escHtml(item.planTitle || 'Тариф')}</h3>
-              <span class="status ${escHtml(item.statusClass || 'ok')}"><i></i>${escHtml(item.statusText || 'Активна')}</span>
+        grid.innerHTML = items.map((item, idx) => {
+          const btnLabel = item.isActive ? 'Мастер настройки и подключения' : 'Возобновить доступ и продлить';
+          const expLabelTitle = item.isActive ? 'Действует до' : 'Статус';
+          const expStyle = !item.isActive ? ' style="color:var(--danger)"' : '';
+          return `
+          <article class="cab-card glass spot ${item.isActive ? 'border-beam' : 'cab-card-expired'}" id="cabCard-${idx + 1}" data-cab-card="${idx + 1}">
+            <div>
+              <div class="cab-card-head" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+                <h2 style="font-size:19px;font-weight:600;letter-spacing:-.025em">Подписка #${idx + 1} · ${escHtml(item.planTitle || 'Тариф')}</h2>
+                <span class="status ${escHtml(item.statusClass || (item.isActive ? 'ok' : 'err'))}"><i></i>${escHtml(item.statusText || (item.isActive ? 'Активна' : 'Срок истёк'))}</span>
+              </div>
+              <div class="kv" style="margin-top:14px">
+                <div><span>Лимит устройств</span><b>до ${escHtml(item.devices || 3)} устройств</b></div>
+                <div><span>Пакет AmneziaWG</span><b class="tab">${escHtml(item.awgLabel || '250 ГБ / мес')}</b></div>
+                <div><span>${expLabelTitle}</span><b class="tab"${expStyle}>${escHtml(item.expiresLabel || '—')}</b></div>
+                <div><span>ID профиля</span><b class="tab mono">${escHtml(item.subId || '')}</b></div>
+              </div>
             </div>
-            <div class="ord-rows">
-              <div class="ord-row"><span>Лимит устройств</span><b>до ${escHtml(item.devices || 3)} устройств</b></div>
-              <div class="ord-row"><span>Пакет AmneziaWG</span><b>${escHtml(item.awgLabel || '250 ГБ / мес')}</b></div>
-              <div class="ord-row"><span>Действует до</span><b>${escHtml(item.expiresLabel || '—')}</b></div>
-              <div class="ord-row"><span>ID профиля</span><b class="mono">${escHtml(item.subId || '')}</b></div>
+            <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:auto;padding-top:14px">
+              <a href="${escHtml(item.setupUrl || '#')}" class="btn btn-primary btn-block" style="height:44px">${btnLabel} <svg class="btn-arrow" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
             </div>
-            <div style="margin-top:auto;padding-top:6px">
-              <a href="${escHtml(item.setupUrl || '#')}" class="btn btn-primary btn-block" style="height:44px">Мастер настройки и подключения <svg class="btn-arrow" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
-            </div>
-          </div>
-        `).join('');
+          </article>
+        `;
+        }).join('');
       }
     }
     view('cabinet');
