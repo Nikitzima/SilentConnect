@@ -98,6 +98,7 @@ def render_subscription_email_html(
     device_limit: int = 3,
     support_email: str = "support@example.com",
     support_tg: str = "https://t.me/your_support",
+    is_binding: bool = False,
 ) -> str:
     expiry_display = format_expiry_ru(duration_days, expires_ts, expires_at_str)
     device_lbl = (
@@ -124,12 +125,66 @@ def render_subscription_email_html(
     clean_json_url = json_url.split("?")[0]
     if "/import/" in clean_json_url:
         clean_json_url = clean_json_url.replace("/import/", "/json/")
+
+    page_title = "Привязка почты к подписке SilentConnect" if is_binding else "Ваша подписка SilentConnect"
+    titlebar_content = "✉️ &nbsp;SilentConnect &nbsp;&nbsp;·&nbsp;&nbsp; Почта привязана" if is_binding else "🔑 &nbsp;SilentConnect &nbsp;&nbsp;·&nbsp;&nbsp; Подписка готова"
+    heading = "Почта успешно привязана к подписке! ✉️" if is_binding else "Благодарим за покупку! 🎉"
+
+    if is_binding:
+        intro_paragraph = f"Вы привязали этот email (<strong>{html.escape(customer_email)}</strong>) к вашей активной подписке SilentConnect. Сохраните это письмо — по кнопке ниже вы всегда можете войти в Личный Кабинет и управлять своими устройствами."
+        card_heading = "📋 Детали подписки:"
+        summary_rows = f"""
+          <tr>
+            <td style="color: #8ea89a;">Статус:</td>
+            <td style="text-align: right; color: #2fbf71; font-weight: bold;">Активна ✅</td>
+          </tr>
+          <tr>
+            <td style="color: #8ea89a;">Тариф:</td>
+            <td style="text-align: right; color: #ffffff; font-weight: bold;">{plan_display}</td>
+          </tr>
+          <tr>
+            <td style="color: #8ea89a;">Действительна до:</td>
+            <td style="text-align: right; color: #2fbf71; font-weight: bold;">{expiry_display}</td>
+          </tr>
+          <tr>
+            <td style="color: #8ea89a;">Лимит устройств:</td>
+            <td style="text-align: right; color: #ffffff; font-weight: bold;">{device_lbl}</td>
+          </tr>
+        """
+        box_instruction = "Нажмите кнопку ниже, чтобы открыть мастера подключения (Happ, Streisand, V2RayTun), смотреть статистику и управлять устройствами:"
+    else:
+        intro_paragraph = f"Оплата заказа <strong>#{order_public_id}</strong> успешно подтверждена. Информация о вашей подписке:"
+        card_heading = "📋 Детали операции:"
+        summary_rows = f"""
+          <tr>
+            <td style="color: #8ea89a;">Статус:</td>
+            <td style="text-align: right; color: #2fbf71; font-weight: bold;">Оплачено и активно ✅</td>
+          </tr>
+          <tr>
+            <td style="color: #8ea89a;">Тариф:</td>
+            <td style="text-align: right; color: #ffffff; font-weight: bold;">{plan_display}</td>
+          </tr>
+          <tr>
+            <td style="color: #8ea89a;">Продление:</td>
+            <td style="text-align: right; color: #ffffff; font-weight: bold;">+ {duration_days} дней</td>
+          </tr>
+          <tr>
+            <td style="color: #8ea89a;">Действительна до:</td>
+            <td style="text-align: right; color: #2fbf71; font-weight: bold;">{expiry_display}</td>
+          </tr>
+          <tr>
+            <td style="color: #8ea89a;">Лимит устройств:</td>
+            <td style="text-align: right; color: #ffffff; font-weight: bold;">{device_lbl}</td>
+          </tr>
+        """
+        box_instruction = "Нажмите кнопку ниже, чтобы открыть мастера подключения (Happ, Streisand, V2RayTun), смотреть статистику и продлевать доступ:"
+
     return f"""<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ваша подписка SilentConnect</title>
+  <title>{page_title}</title>
   <style>
     body {{
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -246,41 +301,22 @@ def render_subscription_email_html(
 <body>
   <div class="container">
     <div class="titlebar">
-      🔑 &nbsp;SilentConnect &nbsp;&nbsp;·&nbsp;&nbsp; Подписка готова
+      {titlebar_content}
     </div>
     <div class="content">
-      <h2>Благодарим за покупку! 🎉</h2>
-      <p style="margin-bottom: 16px;">Оплата заказа <strong>#{order_public_id}</strong> успешно подтверждена. Информация о вашей подписке:</p>
+      <h2>{heading}</h2>
+      <p style="margin-bottom: 16px;">{intro_paragraph}</p>
       
       <div class="summary-card">
-        <h3 style="color: #2fbf71; font-size: 15px; margin-bottom: 12px; margin-top: 0;">📋 Детали операции:</h3>
+        <h3 style="color: #2fbf71; font-size: 15px; margin-bottom: 12px; margin-top: 0;">{card_heading}</h3>
         <table class="summary-table" role="presentation">
-          <tr>
-            <td style="color: #8ea89a;">Статус:</td>
-            <td style="text-align: right; color: #2fbf71; font-weight: bold;">Оплачено и активно ✅</td>
-          </tr>
-          <tr>
-            <td style="color: #8ea89a;">Тариф:</td>
-            <td style="text-align: right; color: #ffffff; font-weight: bold;">{plan_display}</td>
-          </tr>
-          <tr>
-            <td style="color: #8ea89a;">Продление:</td>
-            <td style="text-align: right; color: #ffffff; font-weight: bold;">+ {duration_days} дней</td>
-          </tr>
-          <tr>
-            <td style="color: #8ea89a;">Действительна до:</td>
-            <td style="text-align: right; color: #2fbf71; font-weight: bold;">{expiry_display}</td>
-          </tr>
-          <tr>
-            <td style="color: #8ea89a;">Лимит устройств:</td>
-            <td style="text-align: right; color: #ffffff; font-weight: bold;">{device_lbl}</td>
-          </tr>
+{summary_rows}
         </table>
       </div>
 
       <div class="box" style="text-align: center; padding: 22px 16px;">
         <h3>💻 Личный кабинет подписки и подключение:</h3>
-        <p style="margin-bottom: 18px;">Нажмите кнопку ниже, чтобы открыть мастера подключения (Happ, Streisand, V2RayTun), смотреть статистику и продлевать доступ:</p>
+        <p style="margin-bottom: 18px;">{box_instruction}</p>
         <div style="text-align: center; margin: 15px 0;">
           <a href="{clean_setup_url}" class="btn">Открыть Личный Кабинет 💻</a>
         </div>
@@ -320,10 +356,37 @@ def render_subscription_email_text(
     bind_tg_url: str = "",
     support_email: str = "support@example.com",
     support_tg: str = "https://t.me/your_support",
+    is_binding: bool = False,
+    expires_ts: int | float | None = None,
+    expires_at_str: str = "",
 ) -> str:
     bind_line = f"\nПривязать подписку к Telegram-боту: {bind_tg_url}\n" if bind_tg_url else ""
     clean_text_setup = setup_url.split("?")[0].replace("/json/", "/import/") if "/json/" in setup_url else setup_url
     clean_text_json = json_url.split("?")[0].replace("/import/", "/json/") if "/import/" in json_url else json_url
+
+    if is_binding:
+        expiry_display = format_expiry_ru(duration_days, expires_ts, expires_at_str)
+        return f"""SilentConnect: Почта успешно привязана к подписке! ✉️
+
+Вы привязали этот email ({customer_email}) к вашей активной подписке SilentConnect.
+Сохраните это письмо — по ссылкам ниже вы всегда можете войти в Личный Кабинет и настроить устройства.
+
+Тариф: {plan_name or "Стандартный"}
+Статус: Активна ✅
+Действительна до: {expiry_display}
+
+1. Веб-мастер подключения и Личный Кабинет:
+{clean_text_setup}
+{bind_line}
+2. Прямой формат JSON для приложений:
+{clean_text_json}
+
+3. Личный кабинет подписки:
+{cabinet_url}
+
+Поддержка: {support_email} | Telegram: {support_tg}
+"""
+
     return f"""Благодарим за покупку в SilentConnect!
 
 Оплата заказа #{order_public_id} успешно подтверждена.
@@ -709,6 +772,7 @@ def send_subscription_email_sync(
     expires_at_str: str = "",
     device_limit: int = 3,
     subject: str | None = None,
+    is_binding: bool = False,
 ) -> bool:
     if not customer_email or "@" not in customer_email:
         LOGGER.warning("Invalid target email for order %s: %r", order_public_id, customer_email)
@@ -730,7 +794,10 @@ def send_subscription_email_sync(
     from_email = (settings.smtp_from_email or "SilentConnect <support@example.com>").strip()
 
     if not subject:
-        subject = f"Ваша подписка SilentConnect готова! (#{order_public_id})"
+        if is_binding:
+            subject = "Подписка SilentConnect успешно привязана к почте! ✉️"
+        else:
+            subject = f"Ваша подписка SilentConnect готова! (#{order_public_id})"
 
     html_content = render_subscription_email_html(
         customer_email=customer_email,
@@ -746,6 +813,7 @@ def send_subscription_email_sync(
         device_limit=device_limit,
         support_email=settings.support_email or "support@example.com",
         support_tg=settings.support_tg_url or "https://t.me/your_support",
+        is_binding=is_binding,
     )
     text_content = render_subscription_email_text(
         customer_email=customer_email,
@@ -756,6 +824,11 @@ def send_subscription_email_sync(
         json_url=json_url,
         cabinet_url=cabinet_url,
         bind_tg_url=bind_tg_url,
+        support_email=settings.support_email or "support@example.com",
+        support_tg=settings.support_tg_url or "https://t.me/your_support",
+        is_binding=is_binding,
+        expires_ts=expires_ts,
+        expires_at_str=expires_at_str,
     )
 
     resend_api_key = password if password.startswith("re_") else (user if user.startswith("re_") else "")
@@ -828,6 +901,7 @@ def send_subscription_email_async(
     expires_at_str: str = "",
     device_limit: int = 3,
     subject: str | None = None,
+    is_binding: bool = False,
 ) -> None:
     enqueue_email_task(
         send_subscription_email_sync,
@@ -844,6 +918,7 @@ def send_subscription_email_async(
         expires_at_str=expires_at_str,
         device_limit=device_limit,
         subject=subject,
+        is_binding=is_binding,
     )
 
 

@@ -733,6 +733,60 @@ class TestStage2WebSecurityAndRedesign(unittest.TestCase):
         self.assertIn("https://sub.example.com/my-secret-sub/import/cvgh0qqws79dbpcl", text)
         self.assertIn("https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl", text)
 
+    def test_email_binding_mailer_template(self) -> None:
+        from vpn_shop.mailer import render_subscription_email_html, render_subscription_email_text
+        html = render_subscription_email_html(
+            customer_email="binding@example.com",
+            order_public_id="ord_bind123",
+            plan_name="SilentConnect · Личный",
+            duration_days=0,
+            setup_url="https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl",
+            json_url="https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl",
+            cabinet_url="https://example.com/cabinet",
+            device_limit=3,
+            is_binding=True,
+        )
+        self.assertIn("Почта успешно привязана к подписке! ✉️", html)
+        self.assertIn("Почта привязана", html)
+        self.assertIn("Активна ✅", html)
+        self.assertNotIn("Благодарим за покупку!", html)
+        self.assertNotIn("Оплачено и активно", html)
+        self.assertNotIn("Продление:", html)
+        self.assertIn('href="https://sub.example.com/my-secret-sub/import/cvgh0qqws79dbpcl" class="btn"', html)
+
+        text = render_subscription_email_text(
+            customer_email="binding@example.com",
+            order_public_id="ord_bind123",
+            plan_name="SilentConnect · Личный",
+            duration_days=0,
+            setup_url="https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl",
+            json_url="https://sub.example.com/my-secret-sub/json/cvgh0qqws79dbpcl",
+            cabinet_url="https://example.com/cabinet",
+            is_binding=True,
+        )
+        self.assertIn("Почта успешно привязана к подписке! ✉️", text)
+        self.assertIn("Активна ✅", text)
+        self.assertNotIn("Благодарим за покупку", text)
+        self.assertNotIn("Оплата заказа", text)
+
+    def test_not_found_renders_v21_cleanly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            db_path = tmp_path / "test_shop.db"
+            base_settings = load_settings(VPN_SHOP_DIR)
+            settings = replace(
+                base_settings,
+                root_dir=VPN_SHOP_DIR,
+                database_path=db_path,
+            )
+            store = Store(db_path)
+            checkout = WebCheckout(settings, store)
+            nf_bytes = checkout.render_not_found()
+            nf_prod = _extract_sc_prod(nf_bytes)
+            self.assertEqual(nf_prod["view"], "landing")
+            self.assertIn("страница не найдена", nf_prod["errorMessage"].lower())
+            self.assertNotIn(b"[code: mekbuda]", nf_bytes)
+
     def test_order_waiting_payment_and_provisioning_renders_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = pathlib.Path(tmpdir)

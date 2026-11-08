@@ -1328,18 +1328,22 @@ def bind_subscription_email(
             tg_claim_base = HAPP_SUPPORT_URL or "https://t.me/your_vpn_bot"
             bind_tg_url = "" if has_owner else (f"{tg_claim_base}?start=claim_{source_order['public_id']}_{web_token}" if web_token else tg_claim_base)
 
+            dev_limit = int(prof_dict.get("device_limit") or 3)
+            plan_label = {3: "Личный", 6: "Домашний", 9: "Расширенный"}.get(dev_limit, f"До {dev_limit} устр.")
             send_subscription_email_async(
                 shop_settings,
                 customer_email=clean_email,
                 order_public_id=str(source_order["public_id"]),
-                plan_name="SilentConnect (Привязка Email)",
-                duration_days=int(source_order.get("duration_days") or 30),
+                plan_name=f"SilentConnect · {plan_label}",
+                duration_days=0,
                 setup_url=setup_url,
                 json_url=sub_url,
                 cabinet_url=cabinet_url,
                 bind_tg_url=bind_tg_url,
                 expires_ts=prof_dict.get("expires_at"),
-                subject=f"Подписка SilentConnect успешно привязана к почте! (#{source_order['public_id']})",
+                device_limit=dev_limit,
+                subject="Подписка SilentConnect успешно привязана к почте! ✉️",
+                is_binding=True,
             )
     except Exception as mail_err:
         LOGGER.warning("Could not dispatch async confirmation email for bind_email: %s", mail_err)

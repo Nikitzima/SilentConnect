@@ -4324,7 +4324,7 @@ class WebCheckout:
         <a href="/legal/terms">Пользовательское соглашение</a>
             <a href="/legal/refund">Политика возвратов</a>
       </div>
-      <div class="footer-copy">© 2026 SilentConnect. Все права защищены. [code: mekbuda]</div>
+      <div class="footer-copy">© 2026 SilentConnect. Все права защищены.</div>
     </div>
   </footer>
 
@@ -5524,7 +5524,10 @@ class WebCheckout:
 
     def render_not_found(self) -> bytes:
         body = '<section class="section"><h2>Страница не найдена</h2><p class="muted">Проверьте ссылку или откройте главную страницу.</p><a class="btn" href="/">На главную</a></section>'
-        return self.render_page("Не найдено", body)
+        return self.render_v21_page({
+            "view": "landing",
+            "errorMessage": "Запрошенная страница не найдена. Проверьте адрес или перейдите к тарифам.",
+        }, compat_body=body)
 
 
 class RequestHandler(BaseHTTPRequestHandler):
@@ -5919,12 +5922,16 @@ class RequestHandler(BaseHTTPRequestHandler):
                 payload = verify_token(token, purpose="magic_link")
                 email = self.checkout.store.consume_magic_link(token, single_use=False) if payload else None
                 if not payload or not email or email != str(payload.get("email") or ""):
-                    self._send(HTTPStatus.NOT_FOUND, self.checkout.render_page(
-                        "Ссылка недействительна",
+                    compat_body = (
                         '<section class="section"><h2>Ссылка недействительна или устарела</h2>'
                         '<p class="muted">Ссылка для входа в личный кабинет действует 30 минут с момента отправки или была отменена более новым запросом (активна только последняя отправленная ссылка). Пожалуйста, используйте последнее полученное письмо или запросите новую ссылку на главной странице.</p>'
-                        '<p style="margin-top: 16px;"><a class="btn primary" href="/" style="display: inline-flex; width: auto; padding: 10px 20px;">На главную</a></p></section>',
-                    ))
+                        '<p style="margin-top: 16px;"><a class="btn primary" href="/" style="display: inline-flex; width: auto; padding: 10px 20px;">На главную</a></p></section>'
+                    )
+                    self._send(HTTPStatus.NOT_FOUND, self.checkout.render_v21_page({
+                        "view": "landing",
+                        "errorMessage": "Ссылка для входа в личный кабинет недействительна или устарела (действует 30 минут). Пожалуйста, запросите новую ссылку.",
+                        "openCabinetModal": True,
+                    }, compat_body=compat_body))
                     return
                 exp_ts = int(payload.get("exp") or 0)
                 rem_sec = max(0, exp_ts - now_ts()) if exp_ts else 1800

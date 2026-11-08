@@ -3184,6 +3184,12 @@ if (window.SC_PROD) {
     setTimeout(() => toast(P.errorMessage), 150);
   }
 
+  if (P.openCabinetModal) {
+    setTimeout(() => {
+      try { openModal('cabinetModal'); } catch(e) {}
+    }, 250);
+  }
+
   if (P.view === 'legal') {
     showLegalDoc(P.legalDoc || 'about');
     view('legal');
