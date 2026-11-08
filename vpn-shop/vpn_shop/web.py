@@ -2972,7 +2972,7 @@ class WebCheckout:
         """
         return self.render_page(f"Подписка {pid}", body)
 
-    def render_cabinet(self, email: str, profiles: list[dict[str, Any]]) -> bytes:
+    def render_cabinet(self, email: str, profiles: list[dict[str, Any]], session_remaining_sec: int = 1800) -> bytes:
         now = now_ts()
         count = len(profiles)
 
@@ -3089,18 +3089,24 @@ class WebCheckout:
             act = exp > now
             d_left = max(0, (exp - now) // 86400) if act else 0
             dev = int(p.get("device_limit") or self.settings.default_device_limit)
+            if not act or not exp:
+                exp_lbl = "Истекла"
+            elif d_left > 365 * 10:
+                exp_lbl = "Бессрочно"
+            else:
+                exp_lbl = f"{time.strftime('%d.%m.%Y', time.localtime(exp))} (осталось {d_left} дн.)"
             cab_items.append({
                 "subId": str(p.get("sub_id") or p.get("public_id") or ""),
                 "planTitle": {3: "Личный", 6: "Домашний", 9: "Расширенный"}.get(dev, f"До {dev} устр."),
                 "devices": dev,
                 "awgLabel": {3: "250 ГБ / мес", 6: "500 ГБ / мес", 9: "1 000 ГБ / мес"}.get(dev, "250 ГБ / мес"),
-                "expiresLabel": f"{time.strftime('%d.%m.%Y', time.localtime(exp))} (осталось {d_left} дн.)" if act and exp else "Истекла",
+                "expiresLabel": exp_lbl,
                 "isActive": act,
                 "statusClass": "ok" if act and d_left > 3 else ("wait" if act else "err"),
                 "statusText": "Активна" if act and d_left > 3 else (f"Истекает ({d_left} дн.)" if act else "Срок истёк"),
                 "setupUrl": str(p.get("setup_url") or "#"),
             })
-        return self.render_v21_page({"view": "cabinet", "cabinet": {"email": email, "items": cab_items}}, compat_body=body)
+        return self.render_v21_page({"view": "cabinet", "cabinet": {"email": email, "items": cab_items, "sessionRemainingSec": session_remaining_sec}}, compat_body=body)
 
     def check_promo_code(self, headers: Any, code: str) -> dict[str, Any]:
         clean_code = (code or "").strip().upper()
@@ -5920,7 +5926,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                         '<p style="margin-top: 16px;"><a class="btn primary" href="/" style="display: inline-flex; width: auto; padding: 10px 20px;">На главную</a></p></section>',
                     ))
                     return
-                self._send(HTTPStatus.OK, self.checkout.render_cabinet(email, self.checkout.cabinet_profiles_for_email(email)))
+                exp_ts = int(payload.get("exp") or 0)
+                rem_sec = max(0, exp_ts - now_ts()) if exp_ts else 1800
+                self._send(HTTPStatus.OK, self.checkout.render_cabinet(email, self.checkout.cabinet_profiles_for_email(email), session_remaining_sec=rem_sec))
                 return
 
             # AWG Slot Config Download

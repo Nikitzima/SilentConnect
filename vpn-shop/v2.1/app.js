@@ -3284,6 +3284,28 @@ if (window.SC_PROD) {
     } else if ($('#cabStatsCount')) {
       $('#cabStatsCount').textContent = String(items.length);
     }
+    let remSec = typeof C.sessionRemainingSec === 'number' ? C.sessionRemainingSec : 1800;
+    const timerEl = $('#cabSessionTimer');
+    function updateTimer() {
+      if (!timerEl) return;
+      if (remSec <= 0) {
+        timerEl.textContent = 'Истекла';
+        timerEl.style.color = 'var(--danger)';
+        return;
+      }
+      const m = Math.max(1, Math.ceil(remSec / 60));
+      timerEl.textContent = `${m} мин`;
+    }
+    updateTimer();
+    if (window._cabTimerInterval) clearInterval(window._cabTimerInterval);
+    window._cabTimerInterval = setInterval(() => {
+      remSec -= 10;
+      updateTimer();
+      if (remSec <= 0) {
+        clearInterval(window._cabTimerInterval);
+        toast('Время сессии кабинета истекло');
+      }
+    }, 10000);
     const grid = $('#view-cabinet .cab-grid');
     if (grid) {
       if (items.length === 0) {
