@@ -97,9 +97,7 @@ def derive_sub_order_token_candidates(order_public_id: str, sub_id: str) -> tupl
     if not oid or not sid:
         return ()
     primary = derive_sub_order_token(oid, sid)
-    msg = f"sub_order_token:{oid}:{sid}".encode("utf-8")
-    legacy = hmac.new(DEFAULT_SERVER_PEPPER.encode("utf-8"), msg, hashlib.sha256).hexdigest()
-    return (primary,) if primary == legacy else (primary, legacy)
+    return (primary,) if primary else ()
 
 def constant_time_equals(a: str | bytes | None, b: str | bytes | None) -> bool:
     if a is None or b is None:

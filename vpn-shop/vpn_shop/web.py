@@ -979,9 +979,7 @@ class WebCheckout:
                     # Persist meta and external_id in background thread to avoid blocking page render on Turso cloud sync (~0.8s)
                     def _persist_platega_meta(pub_id: str, meta_copy: dict[str, Any], ext_tx_id: str) -> None:
                         try:
-                            self.store.update_order_meta(pub_id, meta_copy)
-                            if ext_tx_id:
-                                self.store.link_order_external_id(pub_id, ext_tx_id)
+                            self.store.update_order_meta_and_external_id(pub_id, meta_copy, ext_tx_id or None)
                         except Exception:
                             LOGGER.warning("Could not persist Platega metadata for %s", pub_id, exc_info=True)
 

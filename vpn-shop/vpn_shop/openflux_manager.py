@@ -827,14 +827,73 @@ def ensure_openflux_slot_healthy(conn: sqlite3.Connection, profile_id: str) -> d
 
 
 def heal_all_active_slots(conn: sqlite3.Connection) -> int:
-    """Watchdog check: verify all active/migrating slots have alive cups.online rooms and running workers."""
+    """Watchdog check: verify all active/migrating slots have alive cups.online rooms and running workers.
+    Active Docker containers for expired or inactive profiles are automatically stopped and slots reset to uninitialized.
+    """
     init_openflux_db(conn)
     rows = conn.execute(
         "SELECT profile_public_id FROM openflux_slots WHERE status IN ('active', 'migrating')"
     ).fetchall()
     healed = 0
+    now = int(time.time())
+
     for r in rows:
         pid = str(r[0])
+        # Check profile validity
+        is_expired_or_inactive = False
+        try:
+            p_row = conn.execute("SELECT status, expires_at FROM profiles WHERE public_id = ?", (pid,)).fetchone()
+            if not p_row:
+                is_expired_or_inactive = True
+            else:
+                p_status = str(p_row[0] if isinstance(p_row, tuple) else p_row["status"]).strip().lower()
+                p_exp = int(p_row[1] if isinstance(p_row, tuple) else p_row["expires_at"] or 0)
+                if p_status != "active" or (p_exp > 0 and p_exp <= now):
+                    is_expired_or_inactive = True
+        except sqlite3.OperationalError:
+            # Table or columns do not exist in test mock
+            is_expired_or_inactive = False
+
+        if is_expired_or_inactive:
+            LOGGER.info("OpenFlux slot %s profile expired/inactive; stopping containers and uninitializing slot", pid)
+            try:
+                slot_row = conn.execute(
+                    "SELECT active_server, active_container_name, pending_server, pending_container_name FROM openflux_slots WHERE profile_public_id = ?",
+                    (pid,)
+                ).fetchone()
+                if slot_row:
+                    act_srv = slot_row[0] if isinstance(slot_row, tuple) else slot_row["active_server"]
+                    act_ctr = slot_row[1] if isinstance(slot_row, tuple) else slot_row["active_container_name"]
+                    pnd_srv = slot_row[2] if isinstance(slot_row, tuple) else slot_row["pending_server"]
+                    pnd_ctr = slot_row[3] if isinstance(slot_row, tuple) else slot_row["pending_container_name"]
+                    if act_srv and act_ctr:
+                        stop_openflux_worker(act_srv, act_ctr)
+                    if pnd_srv and pnd_ctr:
+                        stop_openflux_worker(pnd_srv, pnd_ctr)
+
+                conn.execute(
+                    """
+                    UPDATE openflux_slots SET
+                        status = 'uninitialized',
+                        active_server = NULL,
+                        active_doc_name = NULL,
+                        active_doc_url = NULL,
+                        active_container_name = NULL,
+                        pending_server = NULL,
+                        pending_doc_name = NULL,
+                        pending_doc_url = NULL,
+                        pending_container_name = NULL,
+                        pending_started_at = NULL,
+                        updated_at = ?
+                    WHERE profile_public_id = ?
+                    """,
+                    (now, pid),
+                )
+                conn.commit()
+            except Exception as exc:
+                LOGGER.warning("Failed to clean up expired OpenFlux slot for %s: %s", pid, exc)
+            continue
+
         try:
             ensure_openflux_slot_healthy(conn, pid)
             healed += 1

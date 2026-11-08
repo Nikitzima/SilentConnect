@@ -95,7 +95,7 @@ class XuiReconciler:
         if getattr(self.store, "_replica_mgr", None) is not None:
             self.store._replica_mgr.sync_if_stale()
 
-        with self.store.connection() as conn:
+        with self.store.read_connection() as conn:
             cols = {str(r["name"]) for r in conn.execute("PRAGMA table_info(profiles)").fetchall()}
             has_sub_col = "xui_sub_id" in cols
             sub_select = "p.xui_sub_id," if has_sub_col else "NULL AS xui_sub_id,"

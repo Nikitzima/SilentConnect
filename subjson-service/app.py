@@ -188,10 +188,10 @@ def _verify_order_web_token(order_row: Any, token: str | None) -> bool:
         meta = (json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta) or {}
         sub_hint = str(meta.get("sub_id") or meta.get("target_sub_id") or "").strip()
         if sub_hint:
-            for pep in eff_peppers:
-                expected_sub_tok = hmac.new(pep, f"sub_order_token:{order_row['public_id']}:{sub_hint}".encode("utf-8"), hashlib.sha256).hexdigest()
-                if hmac.compare_digest(expected_sub_tok, token):
-                    return True
+            active_pep = (os.environ.get("SERVER_PEPPER") or "silentconnect-pepper-secret-v1").encode("utf-8")
+            expected_sub_tok = hmac.new(active_pep, f"sub_order_token:{order_row['public_id']}:{sub_hint}".encode("utf-8"), hashlib.sha256).hexdigest()
+            if hmac.compare_digest(expected_sub_tok, token):
+                return True
     except Exception:
         pass
     # Fallback to meta_json['web_token']
@@ -308,6 +308,24 @@ def check_rate_limit(ip: str) -> bool:
   # FIX 2026-08-22: was hardcoded, see AUDIT_REPORT
 
 # Per-server REALITY identities (NL, FI, PL have their own server keypairs)
+_slot_switch_lock = threading.Lock()
+_slot_switch_cooldown: dict[str, float] = {}
+
+
+def check_slot_switch_cooldown(key: str, cooldown_seconds: float = 15.0) -> bool:
+    """Return True if switch action is allowed, False if within cooldown period."""
+    now_m = time.monotonic()
+    with _slot_switch_lock:
+        last_ts = _slot_switch_cooldown.get(key, 0.0)
+        if now_m - last_ts < cooldown_seconds:
+            return False
+        _slot_switch_cooldown[key] = now_m
+        if len(_slot_switch_cooldown) > 10000:
+            cutoff = now_m - 300.0
+            stale = [k for k, v in _slot_switch_cooldown.items() if v < cutoff]
+            for k in stale:
+                _slot_switch_cooldown.pop(k, None)
+        return True
 NL_REALITY_PUBLIC_KEY = os.environ.get("NL_REALITY_PUBLIC_KEY", "MockRealityPublicKey1111111111111111111111").strip()
 NL_REALITY_SHORT_ID = os.environ.get("NL_REALITY_SHORT_ID", "0123456789abcdef").strip()
 NL_GRPC_REALITY_PUBLIC_KEY = os.environ.get("NL_GRPC_REALITY_PUBLIC_KEY", "MockRealityPublicKey2222222222222222222222").strip()
@@ -956,6 +974,8 @@ def _start_openflux_watchdog() -> None:
     global _openflux_watchdog_started
     if _openflux_watchdog_started:
         return
+    if "unittest" in sys.modules or os.environ.get("ENV") == "test" or os.environ.get("PYTEST_CURRENT_TEST"):
+        return
     _openflux_watchdog_started = True
 
     def _loop() -> None:
@@ -1197,7 +1217,10 @@ def bind_subscription_email(
                     current_email = str(ord_r["customer_email"]).strip().lower()
                     break
 
-        is_email_change = bool(current_email and current_email != clean_email)
+        if current_email and current_email != clean_email:
+            raise ValueError("К этой подписке уже привязана почта. Для смены привязанной почты обратитесь в службу поддержки или используйте личный кабинет.")
+
+        is_email_change = False
         is_first_bind = bool(not current_email)
 
         # Enforce rate limit: maximum 5 email changes per 24 hours per subscription profile
@@ -2322,14 +2345,14 @@ def _find_subscription_impl(subscription_id: str) -> tuple[sqlite3.Row, dict[str
             return row, copy.deepcopy(settings), copy.deepcopy(stream_settings), copy.deepcopy(sniffing), copy.deepcopy(client)
 
     try:
-        conn = get_store_db()
+        conn = get_store_ro_db()
         try:
             prof = conn.execute(
                 "SELECT xui_email FROM profiles WHERE (public_id = ? OR xui_sub_id = ?) AND status != 'deleted'",
                 (target, target),
             ).fetchone()
         finally:
-            conn.close()
+            close_store_ro_db(conn)
         if prof and prof["xui_email"]:
             xemail = str(prof["xui_email"]).strip()
             with _inbounds_cache_lock:
@@ -5638,7 +5661,7 @@ def subscription_summary(subscription_id: str) -> dict[str, Any]:
 
     # Cross-check authoritative store DB for latest profile expiry
     try:
-        conn_shop = get_store_db()
+        conn_shop = get_store_ro_db()
         try:
             for cl in clients:
                 cl_email = str(cl.get("email") or "")
@@ -5652,7 +5675,7 @@ def subscription_summary(subscription_id: str) -> dict[str, Any]:
                         if shop_exp_ms > expiry_ms:
                             expiry_ms = shop_exp_ms
         finally:
-            conn_shop.close()
+            close_store_ro_db(conn_shop)
     except Exception:
         pass
 
@@ -10432,6 +10455,15 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "missing_country"}, True)
                     return
 
+                switch_key = f"awg:{sub_id}:{slot_idx}"
+                if not check_slot_switch_cooldown(switch_key, 15.0):
+                    self._send_json(
+                        HTTPStatus.TOO_MANY_REQUESTS,
+                        {"ok": False, "error": "Пожалуйста, подождите 15 секунд перед повторной сменой сервера."},
+                        True,
+                    )
+                    return
+
                 res = wc.switch_awg_slot_country(prof["public_id"], slot_idx, target_country)
                 status_code = HTTPStatus.OK if res.get("ok") else HTTPStatus.BAD_REQUEST
                 self._send_json(status_code, res, True)
@@ -10495,6 +10527,16 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "db_not_found"}, True)
                     return
                 try:
+                    if oflux_action in {"activate", "switch_prepare", "prepare"}:
+                        oflux_switch_key = f"oflux:{oflux_sub_id}"
+                        if not check_slot_switch_cooldown(oflux_switch_key, 15.0):
+                            self._send_json(
+                                HTTPStatus.TOO_MANY_REQUESTS,
+                                {"ok": False, "error": "Пожалуйста, подождите 15 секунд перед повторной сменой сервера."},
+                                True,
+                            )
+                            return
+
                     if oflux_action == "activate":
                         target_code = str(payload.get("target") or payload.get("target_server") or payload.get("server") or payload.get("target_country") or payload.get("country") or "").strip().lower()
                         openflux_manager.activate_openflux_slot(conn, pid, preferred_server=target_code or None)
@@ -11405,7 +11447,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             if len(path) == 3 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and path[1] in {"order-status", "order-status-sub"}:
                 lookup_val = path[2]
                 try:
-                    conn = get_store_db()
+                    conn = get_store_ro_db()
                     try:
                         if path[1] == "order-status-sub":
                             target_sub = lookup_val.strip().split("~")[0]
@@ -11445,7 +11487,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                             self._send_json(HTTPStatus.OK, data, include_body)
                             return
                     finally:
-                        conn.close()
+                        close_store_ro_db(conn)
                 except Exception as e:
                     LOGGER.warning("Error fetching order status: %s", e)
                 self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"}, include_body)

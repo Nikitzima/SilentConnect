@@ -23,7 +23,9 @@ class TestOpenFluxManager(unittest.TestCase):
             """
             CREATE TABLE profiles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                public_id TEXT NOT NULL UNIQUE
+                public_id TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'active',
+                expires_at INTEGER NOT NULL DEFAULT 0
             );
             """
         )

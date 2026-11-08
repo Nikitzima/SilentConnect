@@ -32,6 +32,8 @@ except ImportError:
     LibsqlReplicaManager = None
     HAS_LIBSQL = False
 
+PUBLIC_ID_RE = re.compile(r"^(ord|prf)_[a-z0-9_-]{6,36}$")
+
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -496,6 +498,7 @@ class Store:
         )
         replica_enabled = os.environ.get("TURSO_REPLICA_ENABLED", "true").strip().strip('"\'').lower() in ("1", "true", "yes")
         self._replica_mgr: LibsqlReplicaManager | None = None
+        self._miss_sync_at: dict[str, float] = {}
         if replica_enabled and self._turso_url and self._turso_token and HAS_LIBSQL and LibsqlReplicaManager is not None:
             r_name = (replica_name or os.environ.get("TURSO_REPLICA_NAME", "")).strip()
             if not r_name:
@@ -1678,9 +1681,15 @@ class Store:
         with self.read_connection() as conn:
             row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
         if row is None and self._replica_mgr is not None:
-            self._replica_mgr.force_sync(min_interval=2.0)
-            with self.read_connection() as conn:
-                row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
+            pid = str(public_id_value or "").strip()
+            if PUBLIC_ID_RE.match(pid):
+                now_m = time.monotonic()
+                last_sync = self._miss_sync_at.get(pid, 0.0)
+                if now_m - last_sync >= 60.0:
+                    self._miss_sync_at[pid] = now_m
+                    self._replica_mgr.force_sync(min_interval=2.0)
+                    with self.read_connection() as conn:
+                        row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
         return self._row_to_dict(row)
 
     def get_order_by_platega_tx_id(self, tx_id: str, _retried: bool = False) -> dict[str, Any] | None:
@@ -1778,6 +1787,30 @@ class Store:
                 (gateway, event_id),
             ).fetchone()
             return row is not None
+
+    def update_order_meta_and_external_id(self, public_id_value: str, meta: dict[str, Any], external_id: str | None = None) -> None:
+        """Atomically updates order metadata and external_id in a single write transaction."""
+        payload = json.dumps(meta, ensure_ascii=False)
+        now = now_ts()
+        with self._connect() as conn:
+            if external_id:
+                conn.execute(
+                    """
+                    UPDATE orders
+                    SET meta_json = ?, external_id = COALESCE(external_id, ?), updated_at = ?
+                    WHERE public_id = ?
+                    """,
+                    (payload, str(external_id), now, public_id_value),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE orders
+                    SET meta_json = ?, updated_at = ?
+                    WHERE public_id = ?
+                    """,
+                    (payload, now, public_id_value),
+                )
 
     def link_order_external_id(self, public_id_value: str, external_id: str) -> None:
         """Привязывает external_id (Platega tx_id) к ордеру. Idempotent — без ошибок при повторном вызове."""
@@ -1988,10 +2021,18 @@ class Store:
             and (dict_row.get("status") == "expired" or (dict_row.get("expires_at") and dict_row["expires_at"] < time.time()))
         )
         if (dict_row is None or is_stale_or_expired) and sync_on_miss and self._replica_mgr is not None:
-            self._replica_mgr.force_sync(min_interval=2.0)
-            with self.read_connection() as conn:
-                row = conn.execute("SELECT * FROM profiles WHERE public_id = ?", (public_id_value,)).fetchone()
-            dict_row = self._row_to_dict(row)
+            pid = str(public_id_value or "").strip()
+            # If row is absent, validate format; if row is expired, allow renewal check with 60s cooldown
+            if dict_row is not None or PUBLIC_ID_RE.match(pid):
+                key = f"prf:{pid}"
+                now_m = time.monotonic()
+                last_sync = self._miss_sync_at.get(key, 0.0)
+                if now_m - last_sync >= 60.0:
+                    self._miss_sync_at[key] = now_m
+                    self._replica_mgr.force_sync(min_interval=2.0)
+                    with self.read_connection() as conn:
+                        row = conn.execute("SELECT * FROM profiles WHERE public_id = ?", (public_id_value,)).fetchone()
+                    dict_row = self._row_to_dict(row)
         return dict_row
 
     def get_profile_by_xui_email(self, xui_email: str, sync_on_miss: bool = True) -> dict[str, Any] | None:
@@ -2006,13 +2047,20 @@ class Store:
             and (dict_row.get("status") == "expired" or (dict_row.get("expires_at") and dict_row["expires_at"] < time.time()))
         )
         if (dict_row is None or is_stale_or_expired) and sync_on_miss and self._replica_mgr is not None:
-            self._replica_mgr.force_sync(min_interval=2.0)
-            with self.read_connection() as conn:
-                row = conn.execute(
-                    "SELECT * FROM profiles WHERE xui_email = ? ORDER BY id DESC LIMIT 1",
-                    (xui_email,),
-                ).fetchone()
-            dict_row = self._row_to_dict(row)
+            raw_email = str(xui_email or "").strip().lower()
+            if raw_email:
+                email_key = f"xui:{raw_email}"
+                now_m = time.monotonic()
+                last_sync = self._miss_sync_at.get(email_key, 0.0)
+                if now_m - last_sync >= 60.0:
+                    self._miss_sync_at[email_key] = now_m
+                    self._replica_mgr.force_sync(min_interval=2.0)
+                    with self.read_connection() as conn:
+                        row = conn.execute(
+                            "SELECT * FROM profiles WHERE xui_email = ? ORDER BY id DESC LIMIT 1",
+                            (xui_email,),
+                        ).fetchone()
+                    dict_row = self._row_to_dict(row)
         return dict_row
 
     def get_profile_owner(self, profile_public_id: str) -> dict[str, Any] | None:
@@ -2354,8 +2402,9 @@ class Store:
 
     def expire_past_due_profiles(self, now: int | None = None) -> list[dict[str, Any]]:
         cutoff = now_ts() if now is None else int(now)
-        with self._connect() as conn:
-            rows = conn.execute(
+        # Fast read-only check first to prevent opening idle write transactions
+        with self.read_connection() as rconn:
+            rows = rconn.execute(
                 """
                 SELECT p.*, po.chat_id AS owner_chat_id
                 FROM profiles p
@@ -2365,15 +2414,17 @@ class Store:
                 """,
                 (cutoff,),
             ).fetchall()
-            if rows:
-                conn.execute(
-                    """
-                    UPDATE profiles
-                    SET status = 'expired'
-                    WHERE status = 'active' AND expires_at > 0 AND expires_at <= ?
-                    """,
-                    (cutoff,),
-                )
+        if not rows:
+            return []
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE profiles
+                SET status = 'expired'
+                WHERE status = 'active' AND expires_at > 0 AND expires_at <= ?
+                """,
+                (cutoff,),
+            )
         return [self._row_to_dict(row) or {} for row in rows]
 
     def mark_profile_expired(self, public_id_value: str) -> None:
@@ -3372,20 +3423,38 @@ class Store:
         return [self._row_to_dict(r) for r in rows if r]
 
     def list_active_awg_slots(self, server_code: str | None = None) -> list[dict[str, Any]]:
-        """List all active (enabled=1) AWG slots, optionally filtered by server_code.
+        """List all active (enabled=1) AWG slots belonging to active, non-expired profiles,
+        optionally filtered by server_code.
         Does NOT mask exceptions: on failure raises DatabaseQueryError.
         """
         try:
+            now = now_ts()
             with self.read_connection() as conn:
                 if server_code:
                     code = server_code.lower().strip()
                     rows = conn.execute(
-                        "SELECT * FROM awg_slots WHERE enabled = 1 AND LOWER(server_code) = ? ORDER BY id ASC",
-                        (code,),
+                        """
+                        SELECT s.* FROM awg_slots s
+                        JOIN profiles p ON p.public_id = s.profile_public_id
+                        WHERE s.enabled = 1
+                          AND LOWER(s.server_code) = ?
+                          AND p.status = 'active'
+                          AND (p.expires_at <= 0 OR p.expires_at > ?)
+                        ORDER BY s.id ASC
+                        """,
+                        (code, now),
                     ).fetchall()
                 else:
                     rows = conn.execute(
-                        "SELECT * FROM awg_slots WHERE enabled = 1 ORDER BY id ASC"
+                        """
+                        SELECT s.* FROM awg_slots s
+                        JOIN profiles p ON p.public_id = s.profile_public_id
+                        WHERE s.enabled = 1
+                          AND p.status = 'active'
+                          AND (p.expires_at <= 0 OR p.expires_at > ?)
+                        ORDER BY s.id ASC
+                        """,
+                        (now,),
                     ).fetchall()
             return [self._row_to_dict(r) for r in rows if r]
         except Exception as exc:
