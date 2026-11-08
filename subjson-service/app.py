@@ -151,7 +151,7 @@ SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
     ("Referrer-Policy", "no-referrer"),
     ("X-Content-Type-Options", "nosniff"),
     ("X-Frame-Options", "DENY"),
-    ("Strict-Transport-Security", "max-age=31536000; includeSubDomains"),
+    ("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload"),
     (
         "Content-Security-Policy",
         "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; "

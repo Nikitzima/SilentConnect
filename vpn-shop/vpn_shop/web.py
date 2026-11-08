@@ -302,7 +302,7 @@ SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
     ("Referrer-Policy", "strict-origin-when-cross-origin"),
     ("X-Content-Type-Options", "nosniff"),
     ("X-Frame-Options", "DENY"),
-    ("Strict-Transport-Security", "max-age=31536000; includeSubDomains"),
+    ("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload"),
     ("Permissions-Policy", "camera=(), microphone=(), geolocation=()"),
     ("Cross-Origin-Opener-Policy", "same-origin"),
     (
