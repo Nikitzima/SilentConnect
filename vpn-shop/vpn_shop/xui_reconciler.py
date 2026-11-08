@@ -532,9 +532,15 @@ class XuiReconciler:
 
         # 0. Автоматическая проверка и сброс 30-дневного цикла квот AmneziaWG
         try:
+            now_check = int(time.time())
             with self.store.read_connection() as conn:
                 active_profs = conn.execute(
-                    "SELECT public_id FROM profiles WHERE status = 'active'"
+                    """
+                    SELECT public_id FROM profiles
+                    WHERE status = 'active'
+                      AND (awg_reset_at IS NULL OR awg_reset_at <= ? OR awg_reset_at > ? + 86400 * 35)
+                    """,
+                    (now_check, now_check),
                 ).fetchall()
             for r in active_profs:
                 pid = str(r["public_id"] or "")

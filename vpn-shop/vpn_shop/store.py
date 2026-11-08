@@ -379,11 +379,55 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   applied_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS profile_email_changes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sub_id TEXT NOT NULL,
+  profile_id INTEGER NOT NULL,
+  old_email TEXT,
+  new_email TEXT NOT NULL,
+  changed_at INTEGER NOT NULL,
+  client_ip TEXT
+);
+
 CREATE INDEX IF NOT EXISTS ix_orders_customer_status ON orders(customer_chat_id, status);
 CREATE INDEX IF NOT EXISTS ix_orders_status_created ON orders(status, created_at);
 CREATE INDEX IF NOT EXISTS ix_profiles_status_expires ON profiles(status, expires_at);
+CREATE INDEX IF NOT EXISTS ix_profiles_status_awg_reset ON profiles(status, awg_reset_at);
+CREATE INDEX IF NOT EXISTS ix_profiles_xui_sub_id ON profiles(xui_sub_id);
+CREATE INDEX IF NOT EXISTS ix_profiles_xui_client_id ON profiles(xui_client_id);
 CREATE INDEX IF NOT EXISTS ix_orders_customer_email ON orders(customer_email);
+CREATE INDEX IF NOT EXISTS ix_orders_customer_email_lower ON orders(LOWER(customer_email));
 CREATE INDEX IF NOT EXISTS ix_orders_provisioned_profile ON orders(provisioned_profile_id);
+CREATE INDEX IF NOT EXISTS ix_orders_manager_msg ON orders(manager_chat_id, manager_message_id);
+CREATE INDEX IF NOT EXISTS ix_referral_attributions_referrer ON referral_attributions(referrer_id);
+CREATE INDEX IF NOT EXISTS ix_referral_ledger_referrer_status ON referral_ledger(referrer_id, status);
+CREATE INDEX IF NOT EXISTS ix_referral_payouts_referrer ON referral_payouts(referrer_id);
+CREATE INDEX IF NOT EXISTS idx_email_changes_sub_time ON profile_email_changes(sub_id, changed_at);
+CREATE INDEX IF NOT EXISTS idx_email_changes_prof_time ON profile_email_changes(profile_id, changed_at);
+CREATE INDEX IF NOT EXISTS idx_email_changes_ip_time ON profile_email_changes(client_ip, changed_at);
+"""
+
+IDEMPOTENT_SCHEMA_ENSURE = """
+CREATE TABLE IF NOT EXISTS profile_email_changes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sub_id TEXT NOT NULL,
+  profile_id INTEGER NOT NULL,
+  old_email TEXT,
+  new_email TEXT NOT NULL,
+  changed_at INTEGER NOT NULL,
+  client_ip TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_profiles_status_awg_reset ON profiles(status, awg_reset_at);
+CREATE INDEX IF NOT EXISTS ix_profiles_xui_sub_id ON profiles(xui_sub_id);
+CREATE INDEX IF NOT EXISTS ix_profiles_xui_client_id ON profiles(xui_client_id);
+CREATE INDEX IF NOT EXISTS ix_orders_customer_email_lower ON orders(LOWER(customer_email));
+CREATE INDEX IF NOT EXISTS ix_orders_manager_msg ON orders(manager_chat_id, manager_message_id);
+CREATE INDEX IF NOT EXISTS ix_referral_attributions_referrer ON referral_attributions(referrer_id);
+CREATE INDEX IF NOT EXISTS ix_referral_ledger_referrer_status ON referral_ledger(referrer_id, status);
+CREATE INDEX IF NOT EXISTS ix_referral_payouts_referrer ON referral_payouts(referrer_id);
+CREATE INDEX IF NOT EXISTS idx_email_changes_sub_time ON profile_email_changes(sub_id, changed_at);
+CREATE INDEX IF NOT EXISTS idx_email_changes_prof_time ON profile_email_changes(profile_id, changed_at);
+CREATE INDEX IF NOT EXISTS idx_email_changes_ip_time ON profile_email_changes(client_ip, changed_at);
 """
 
 SCHEMA_VERSION = 3
@@ -480,6 +524,7 @@ class Store:
                     try:
                         conn.execute("DROP INDEX IF EXISTS uq_open_orders_promo;")
                         conn.execute("CREATE INDEX IF NOT EXISTS ix_open_orders_promo ON orders(promo_id, status) WHERE promo_id IS NOT NULL;")
+                        conn.executescript(IDEMPOTENT_SCHEMA_ENSURE)
                     except Exception:
                         pass
             return
@@ -785,7 +830,7 @@ class Store:
             return _run(c)
 
     def list_order_state_log(self, public_id_value: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM order_state_log WHERE order_public_id = ? ORDER BY id",
                 (public_id_value,),
@@ -985,7 +1030,7 @@ class Store:
             return result
 
     def get_payment_confirmation(self, public_id_value: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM payment_confirmations WHERE order_public_id = ?", (public_id_value,)
             ).fetchone()
@@ -994,7 +1039,7 @@ class Store:
     def list_stale_provisioning_orders(self, older_than_seconds: int = 600) -> list[dict[str, Any]]:
         """Orders stuck in ``provisioning`` (process crashed mid-flight)."""
         cutoff = now_ts() - int(older_than_seconds)
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM orders WHERE status = 'provisioning' AND updated_at < ? ORDER BY updated_at",
                 (cutoff,),
@@ -1080,15 +1125,28 @@ class Store:
         tok_cands = hash_token_candidates(token, purpose="magic_link")
         tok_placeholders = ", ".join("?" for _ in tok_cands)
 
-        # Fast path for multi-use links: read check first via RO connection (<1ms)
-        if not single_use:
-            with self.read_connection() as rconn:
-                row = rconn.execute(
-                    f"SELECT email, used_at, expires_at FROM magic_links WHERE token_hash IN ({tok_placeholders}) AND expires_at >= ? LIMIT 1",
-                    (*tok_cands, now),
-                ).fetchone()
-            if row and row["used_at"] is not None:
-                return str(row["email"])
+        # Fast path & DoW protection: verify existence via RO connection first (<1ms)
+        with self.read_connection() as rconn:
+            ro_row = rconn.execute(
+                f"SELECT email, used_at, expires_at FROM magic_links WHERE token_hash IN ({tok_placeholders}) AND expires_at >= ? LIMIT 1",
+                (*tok_cands, now),
+            ).fetchone()
+        if not ro_row and self._replica_mgr is not None:
+            try:
+                self._replica_mgr.force_sync(min_interval=5.0)
+                with self.read_connection() as rconn:
+                    ro_row = rconn.execute(
+                        f"SELECT email, used_at, expires_at FROM magic_links WHERE token_hash IN ({tok_placeholders}) AND expires_at >= ? LIMIT 1",
+                        (*tok_cands, now),
+                    ).fetchone()
+            except Exception:
+                pass
+        if not ro_row:
+            return None
+        if single_use and ro_row["used_at"] is not None:
+            return None
+        if not single_use and ro_row["used_at"] is not None:
+            return str(ro_row["email"])
 
         with self.transaction() as conn:
             if single_use:
@@ -1110,35 +1168,11 @@ class Store:
                     (now, *tok_cands, now),
                 )
             row = cur.fetchone()
-            if not row and self._replica_mgr is not None:
-                try:
-                    self._replica_mgr.force_sync()
-                    if single_use:
-                        cur = conn.execute(
-                            f"""
-                            UPDATE magic_links SET used_at = ?
-                            WHERE token_hash IN ({tok_placeholders}) AND used_at IS NULL AND expires_at >= ?
-                            RETURNING email
-                            """,
-                            (now, *tok_cands, now),
-                        )
-                    else:
-                        cur = conn.execute(
-                            f"""
-                            UPDATE magic_links SET used_at = coalesce(used_at, ?)
-                            WHERE token_hash IN ({tok_placeholders}) AND expires_at >= ?
-                            RETURNING email
-                            """,
-                            (now, *tok_cands, now),
-                        )
-                    row = cur.fetchone()
-                except Exception:
-                    pass
         return str(row["email"]) if row else None
 
     def count_recent_magic_links(self, *, email: str, request_ip: str | None, window_seconds: int) -> int:
         since = now_ts() - int(window_seconds)
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 """
                 SELECT COUNT(*) AS n FROM magic_links
@@ -1174,7 +1208,7 @@ class Store:
         return result
 
     def get_session(self, chat_id: int | str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 "SELECT chat_id, scope, state, context_json, updated_at FROM chat_sessions WHERE chat_id = ?",
                 (str(chat_id),),
@@ -1255,7 +1289,7 @@ class Store:
                     result.append(aid)
             return result
 
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             rows = conn.execute(
                 "SELECT chat_id FROM chat_sessions WHERE scope = ? ORDER BY updated_at DESC",
                 (scope,),
@@ -1281,7 +1315,7 @@ class Store:
         now = now_ts()
         cands = hash_secret_candidates(code)
         placeholders = ", ".join("?" for _ in cands)
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 f"""
                 SELECT * FROM invite_tokens
@@ -1396,7 +1430,7 @@ class Store:
         return code, dict(row)
 
     def get_promo_code(self, promo_id: int) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute("SELECT * FROM promo_codes WHERE id = ?", (int(promo_id),)).fetchone()
         return self._row_to_dict(row)
 
@@ -1412,7 +1446,7 @@ class Store:
 
     def get_valid_promo_by_id(self, promo_id: int) -> dict[str, Any] | None:
         now = now_ts()
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 """
                 SELECT * FROM promo_codes
@@ -1429,7 +1463,7 @@ class Store:
         now = now_ts()
         cands = hash_secret_candidates(code)
         placeholders = ", ".join("?" for _ in cands)
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 f"""
                 SELECT * FROM promo_codes
@@ -1712,7 +1746,7 @@ class Store:
 
     def list_recent_digiseller_orders(self, limit: int = 50) -> list[dict[str, Any]]:
         """List most recent orders created via Digiseller."""
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM orders WHERE external_id LIKE 'digiseller:%' ORDER BY id DESC LIMIT ?",
                 (limit,),
@@ -1730,7 +1764,7 @@ class Store:
         if not invoice_id:
             return False
         event_id = f"tombstone:refund:{invoice_id}"
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 "SELECT status FROM webhook_events WHERE gateway = ? AND event_id = ? AND status = 'processed'",
                 (gateway, event_id),
@@ -1827,7 +1861,7 @@ class Store:
             query += f" AND status IN ({placeholders})"
             params.extend(statuses)
         query += " ORDER BY created_at DESC, id DESC LIMIT 1"
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(query, params).fetchone()
         return self._row_to_dict(row)
 
@@ -1848,7 +1882,7 @@ class Store:
             query += f" AND status IN ({placeholders})"
             params.extend(statuses)
         query += " ORDER BY created_at DESC, id DESC LIMIT 1"
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(query, params).fetchone()
         return self._row_to_dict(row)
 
@@ -1869,7 +1903,7 @@ class Store:
             query += f" AND status IN ({placeholders})"
             params.extend(statuses)
         query += " ORDER BY created_at ASC, id ASC"
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             rows = conn.execute(query, params).fetchall()
         return [self._row_to_dict(row) or {} for row in rows]
 
@@ -1924,7 +1958,7 @@ class Store:
         return expired_orders
 
     def get_order_by_manager_message(self, manager_chat_id: int | str, manager_message_id: int) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 """
                 SELECT *
@@ -2054,7 +2088,7 @@ class Store:
             LIMIT 1
         """
         params.append(now_ts())
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(query, params).fetchone()
         return self._row_to_dict(row)
 
@@ -2236,7 +2270,7 @@ class Store:
         return self._row_to_dict(row) or {}
 
     def get_profile_for_order(self, order_public_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 """
                 SELECT p.*
@@ -2275,7 +2309,7 @@ class Store:
         target_type: str,
         target_public_id: str,
     ) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 """
                 SELECT *
@@ -2306,7 +2340,7 @@ class Store:
             query += " AND notes = ?"
             params.append(notes)
         query += " ORDER BY expires_at ASC, id ASC"
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             rows = conn.execute(query, params).fetchall()
         return [self._row_to_dict(row) or {} for row in rows]
 
@@ -2375,7 +2409,7 @@ class Store:
             query += f" AND (p.notes IS NULL OR p.notes NOT IN ({placeholders}))"
             params.extend(excluded_notes)
         query += " ORDER BY p.expires_at ASC, p.id ASC"
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             rows = conn.execute(query, params).fetchall()
         return [self._row_to_dict(row) or {} for row in rows]
 
@@ -2402,7 +2436,7 @@ class Store:
             )
 
     def get_trial_redemption(self, user_id: int | str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM trial_redemptions WHERE user_id = ?",
                 (str(user_id),),
@@ -2472,17 +2506,17 @@ class Store:
             )
 
     def get_referrer_by_user(self, user_id: int | str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute("SELECT * FROM referrers WHERE user_id = ?", (str(user_id),)).fetchone()
         return self._row_to_dict(row)
 
     def get_referrer_by_id(self, referrer_id: int) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute("SELECT * FROM referrers WHERE id = ?", (int(referrer_id),)).fetchone()
         return self._row_to_dict(row)
 
     def find_referrer_by_code(self, code: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute("SELECT * FROM referrers WHERE code = ? AND status = 'active'", (code,)).fetchone()
         return self._row_to_dict(row)
 
@@ -2570,7 +2604,7 @@ class Store:
         return int(row["c"]) if row else 0
 
     def get_referral_attribution_for_user(self, user_id: int | str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             row = conn.execute(
                 """
                 SELECT a.*, r.code AS referrer_code, r.user_id AS referrer_user_id,
@@ -2909,7 +2943,7 @@ class Store:
             return self._row_to_dict(row), old_balance, new_balance
 
     def list_referral_balances(self) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT
@@ -3035,7 +3069,7 @@ class Store:
         now = now_ts()
         min_ts = now + min_seconds_left
         max_ts = now + max_seconds_left
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT p.*, o.customer_email, o.public_id AS order_public_id, o.meta_json AS order_meta
@@ -3065,7 +3099,7 @@ class Store:
     def get_profiles_due_for_expired_email(self, max_past_seconds: int = 86400 * 3) -> list[dict[str, Any]]:
         now = now_ts()
         cutoff_min = now - max_past_seconds
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT p.*, o.customer_email, o.public_id AS order_public_id, o.meta_json AS order_meta
@@ -3410,7 +3444,7 @@ class Store:
 
     def get_used_awg_client_ips(self, server_code: str = "nl") -> set[str]:
         srv_code = (server_code or "nl").strip().lower()
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             rows = conn.execute(
                 "SELECT client_ip FROM awg_slots WHERE server_code = ?",
                 (srv_code,),
@@ -3728,7 +3762,7 @@ class Store:
         profile_public_id: str,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT l.*, s.slot_label, s.slot_index
@@ -3747,7 +3781,7 @@ class Store:
         profile_public_id: str,
         since_ts: int | None = None,
     ) -> dict[str, Any]:
-        with self._connect() as conn:
+        with self.read_connection() as conn:
             if since_ts is not None:
                 row = conn.execute(
                     """

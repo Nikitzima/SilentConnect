@@ -87,7 +87,8 @@ def main() -> None:
         d_rx = max(rx - peer["last_rx"], 0)
         d_tx = max(tx - peer["last_tx"], 0)
         used = peer["bytes_used"] + d_rx + d_tx
-        awg_manager.set_counters(sub_id, rx, tx, server_code=server_code)
+        if rx != peer["last_rx"] or tx != peer["last_tx"]:
+            awg_manager.set_counters(sub_id, rx, tx, server_code=server_code)
 
         period_start = peer["period_start"]
         try:
@@ -127,8 +128,8 @@ def main() -> None:
                 awg_manager.set_period(sub_id, now_s, server_code=server_code)
                 log(f"[{server_code.upper()}] {sub_id}: новый период, счётчик трафика сброшен")
                 actions += 1
-
-            awg_manager.set_usage(sub_id, used, server_code=server_code)
+            elif d_rx > 0 or d_tx > 0:
+                awg_manager.set_usage(sub_id, used, server_code=server_code)
         except Exception as exc:
             log(f"[{server_code.upper()}] error reconciling peer {sub_id}: {exc}")
 

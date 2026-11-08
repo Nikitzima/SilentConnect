@@ -976,10 +976,18 @@ class WebCheckout:
                             self._platega_urls.pop(k, None)
                             self._platega_tx_ids.pop(k, None)
                             self._platega_order_locks.pop(k, None)
-                    # Persist meta in background thread to avoid blocking page render on Turso cloud sync (~0.8s)
+                    # Persist meta and external_id in background thread to avoid blocking page render on Turso cloud sync (~0.8s)
+                    def _persist_platega_meta(pub_id: str, meta_copy: dict[str, Any], ext_tx_id: str) -> None:
+                        try:
+                            self.store.update_order_meta(pub_id, meta_copy)
+                            if ext_tx_id:
+                                self.store.link_order_external_id(pub_id, ext_tx_id)
+                        except Exception:
+                            LOGGER.warning("Could not persist Platega metadata for %s", pub_id, exc_info=True)
+
                     threading.Thread(
-                        target=self.store.update_order_meta,
-                        args=(str(order["public_id"]), dict(meta)),
+                        target=_persist_platega_meta,
+                        args=(str(order["public_id"]), dict(meta), tx_id),
                         daemon=True,
                     ).start()
                     order["meta_json"] = meta

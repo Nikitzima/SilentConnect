@@ -678,9 +678,24 @@ def get_store_ro_db():
     return conn
 
 
-_sub_profile_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
+def close_store_ro_db(conn) -> None:
+    if conn is None:
+        return
+    try:
+        if os.environ.get("TURSO_DATABASE_URL"):
+            wc = get_shop_checkout()
+            if wc and getattr(wc, "store", None) and wc.store._replica_mgr is not None:
+                if conn is getattr(wc.store._replica_mgr._ro_local, "conn", None):
+                    return
+        conn.close()
+    except Exception:
+        pass
+
+
+_sub_profile_cache: collections.OrderedDict[str, tuple[float, dict[str, Any] | None]] = collections.OrderedDict()
 _sub_profile_cache_lock = threading.Lock()
 _PROFILE_CACHE_TTL = 30.0
+_PROFILE_CACHE_MAX_SIZE = 5000
 
 
 def find_profile_for_sub(wc, subscription_id: str) -> dict[str, Any] | None:
@@ -692,7 +707,9 @@ def find_profile_for_sub(wc, subscription_id: str) -> dict[str, Any] | None:
         if clean in _sub_profile_cache:
             ts, cached_val = _sub_profile_cache[clean]
             if now - ts < _PROFILE_CACHE_TTL:
+                _sub_profile_cache.move_to_end(clean)
                 return cached_val
+            del _sub_profile_cache[clean]
 
     prof = None
     if clean.startswith("prf_"):
@@ -711,6 +728,9 @@ def find_profile_for_sub(wc, subscription_id: str) -> dict[str, Any] | None:
 
     with _sub_profile_cache_lock:
         _sub_profile_cache[clean] = (now, prof)
+        _sub_profile_cache.move_to_end(clean)
+        while len(_sub_profile_cache) > _PROFILE_CACHE_MAX_SIZE:
+            _sub_profile_cache.popitem(last=False)
     return prof
 
 
@@ -798,6 +818,7 @@ def resolve_sub_profile_id(sub_id: str) -> str:
     clean = str(sub_id or "").strip()
     if clean.startswith("prf_"):
         return clean
+    ro_conn = None
     try:
         ro_conn = get_store_ro_db()
         row = ro_conn.execute("SELECT public_id FROM profiles WHERE xui_client_id = ? OR public_id = ?", (clean, clean)).fetchone()
@@ -805,6 +826,8 @@ def resolve_sub_profile_id(sub_id: str) -> str:
             return str(row["public_id"]).strip()
     except Exception:
         pass
+    finally:
+        close_store_ro_db(ro_conn)
     try:
         wc = get_shop_checkout()
         if wc:
@@ -820,15 +843,18 @@ def get_openflux_slot_state_dict(sub_id: str) -> dict[str, Any]:
     try:
         from vpn_shop import openflux_manager
         pid = resolve_sub_profile_id(sub_id)
-        ro_conn = get_store_ro_db()
+        ro_conn = None
         row = None
         try:
+            ro_conn = get_store_ro_db()
             row = ro_conn.execute(
                 "SELECT * FROM openflux_slots WHERE profile_public_id = ?",
                 (pid,),
             ).fetchone()
         except Exception:
             pass
+        finally:
+            close_store_ro_db(ro_conn)
 
         if not row:
             slot = {
@@ -1050,6 +1076,7 @@ def mask_email(e: str) -> str:
 
 
 def find_store_linked_email(sub_id: str) -> str:
+    ro_conn = None
     try:
         target_sub = sub_id.strip().split("~")[0]
         ro_conn = get_store_ro_db()
@@ -1080,6 +1107,8 @@ def find_store_linked_email(sub_id: str) -> str:
                 return str(ord_row["customer_email"]).strip()
     except Exception:
         pass
+    finally:
+        close_store_ro_db(ro_conn)
     return ""
 
 
@@ -1172,35 +1201,37 @@ def bind_subscription_email(
         is_first_bind = bool(not current_email)
 
         # Enforce rate limit: maximum 5 email changes per 24 hours per subscription profile
-        conn_shop.execute(
-            """
-            CREATE TABLE IF NOT EXISTS profile_email_changes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sub_id TEXT NOT NULL,
-                profile_id INTEGER NOT NULL,
-                old_email TEXT,
-                new_email TEXT NOT NULL,
-                changed_at INTEGER NOT NULL,
-                client_ip TEXT
-            );
-            """
-        )
-        conn_shop.execute(
-            "CREATE INDEX IF NOT EXISTS idx_email_changes_sub_time ON profile_email_changes(sub_id, changed_at);"
-        )
-        conn_shop.execute(
-            "CREATE INDEX IF NOT EXISTS idx_email_changes_prof_time ON profile_email_changes(profile_id, changed_at);"
-        )
-
         if is_email_change or is_first_bind:
             day_ago = now - 86400
-            cnt_row = conn_shop.execute(
-                """
-                SELECT COUNT(*) AS cnt FROM profile_email_changes
-                WHERE (sub_id = ? OR profile_id = ?) AND changed_at >= ?
-                """,
-                (target_sub, profile_id, day_ago),
-            ).fetchone()
+            try:
+                cnt_row = conn_shop.execute(
+                    """
+                    SELECT COUNT(*) AS cnt FROM profile_email_changes
+                    WHERE (sub_id = ? OR profile_id = ?) AND changed_at >= ?
+                    """,
+                    (target_sub, profile_id, day_ago),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                conn_shop.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS profile_email_changes (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        sub_id TEXT NOT NULL,
+                        profile_id INTEGER NOT NULL,
+                        old_email TEXT,
+                        new_email TEXT NOT NULL,
+                        changed_at INTEGER NOT NULL,
+                        client_ip TEXT
+                    );
+                    """
+                )
+                cnt_row = conn_shop.execute(
+                    """
+                    SELECT COUNT(*) AS cnt FROM profile_email_changes
+                    WHERE (sub_id = ? OR profile_id = ?) AND changed_at >= ?
+                    """,
+                    (target_sub, profile_id, day_ago),
+                ).fetchone()
             changes_today = int(cnt_row["cnt"] or 0) if cnt_row else 0
             if changes_today >= 5:
                 raise ValueError("Нельзя менять почту более 5 раз в день для одной подписки. Если вам требуется помощь, обратитесь в службу поддержки.")
@@ -1646,14 +1677,16 @@ def create_inline_renewal_order(
                 # Update xui db
                 xui_rw = sqlite3.connect(XUI_DB_PATH, timeout=30.0)
                 xui_rw.execute("PRAGMA busy_timeout = 30000;")
+                updated_cl = None
                 try:
                     inb = xui_rw.execute("SELECT settings FROM inbounds WHERE id = ?", (found_client["inbound_id"],)).fetchone()
                     if inb and inb[0]:
                         st = json.loads(inb[0])
                         for cl in st.get("clients") or []:
-                            if str(cl.get("subId") or "") == sub_id:
+                            if str(cl.get("subId") or "") in (sub_id, target_sub):
                                 cl["expiryTime"] = new_exp_ms
                                 cl["enable"] = True
+                                updated_cl = dict(cl)
                                 break
                         xui_rw.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(st), found_client["inbound_id"]))
                         try:
@@ -1675,6 +1708,16 @@ def create_inline_renewal_order(
                     xui_rw.close()
                     invalidate_inbounds_cache()
 
+                if updated_cl:
+                    try:
+                        wc = get_shop_checkout()
+                        if wc and getattr(wc, "provisioner", None) and getattr(wc.provisioner, "xui_api", None):
+                            client_key = str(updated_cl.get("id") or updated_cl.get("password") or updated_cl.get("email") or "")
+                            if client_key:
+                                wc.provisioner.xui_api.update_client(int(found_client["inbound_id"]), client_key, updated_cl)
+                    except Exception:
+                        pass
+
                 # Update profiles & orders in shop db
                 awg_quota_bytes = 250 * 1024 * 1024 * 1024
                 if device_limit == 6:
@@ -1686,7 +1729,8 @@ def create_inline_renewal_order(
                 conn_shop.execute(
                     """
                     UPDATE profiles
-                    SET expires_at = ?,
+                    SET status = 'active',
+                        expires_at = ?,
                         last_renewed_at = ?,
                         device_limit = ?,
                         awg_quota_bytes = ?,
@@ -1855,6 +1899,7 @@ def render_payment_notice_html(order_data: Any, status_override: str | None = No
 
 
 def check_pending_payment_card(sub_id: str) -> str:
+    ro_conn = None
     try:
         ro_conn = get_store_ro_db()
         target_sub = sub_id.strip().split("~")[0]
@@ -1967,6 +2012,8 @@ def check_pending_payment_card(sub_id: str) -> str:
                 return render_payment_notice_html(order_dict, is_profile_active=is_active)
     except Exception as e:
         LOGGER.debug("Error in check_pending_payment_card: %s", e)
+    finally:
+        close_store_ro_db(ro_conn)
     return ""
 
 
@@ -10404,8 +10451,22 @@ class RequestHandler(BaseHTTPRequestHandler):
                 oflux_action = f"switch_{path[5]}"
 
             if is_oflux_post:
+                xff = self.headers.get("X-Forwarded-For", "").strip()
+                client_ip = xff.split(",")[-1].strip() if xff else (self.client_address[0] if self.client_address else "unknown")
+                if not check_rate_limit(client_ip):
+                    self._send_json(HTTPStatus.TOO_MANY_REQUESTS, {"ok": False, "error": "rate_limited"}, True)
+                    return
+                wc = get_shop_checkout()
+                prof = find_profile_for_sub(wc, oflux_sub_id)
+                if not prof:
+                    self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "profile_not_found"}, True)
+                    return
+                prof_exp = int(prof.get("expires_at") or 0)
+                if prof.get("status") != "active" or (0 < prof_exp <= int(time.time())):
+                    self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "subscription_inactive"}, True)
+                    return
                 from vpn_shop import openflux_manager
-                pid = resolve_sub_profile_id(oflux_sub_id)
+                pid = str(prof["public_id"])
                 try:
                     raw_body = self._read_body(65_536) or b"{}"
                 except ValueError:
@@ -10912,7 +10973,21 @@ class RequestHandler(BaseHTTPRequestHandler):
                 oflux_country = path[4]
 
             if is_oflux_qr:
-                pid = resolve_sub_profile_id(oflux_sub_id)
+                xff = self.headers.get("X-Forwarded-For", "").strip()
+                client_ip = xff.split(",")[-1].strip() if xff else (self.client_address[0] if self.client_address else "unknown")
+                if not check_rate_limit(client_ip):
+                    self._send_json(HTTPStatus.TOO_MANY_REQUESTS, {"ok": False, "error": "rate_limited"}, include_body)
+                    return
+                wc = get_shop_checkout()
+                prof = find_profile_for_sub(wc, oflux_sub_id)
+                if not prof:
+                    self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "profile_not_found"}, include_body)
+                    return
+                prof_exp = int(prof.get("expires_at") or 0)
+                if prof.get("status") != "active" or (0 < prof_exp <= int(time.time())):
+                    self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "subscription_inactive"}, include_body)
+                    return
+                pid = str(prof["public_id"])
                 target = str(first_non_empty(query.get("target")) or "active").strip().lower()
                 country_override = str(first_non_empty(query.get("country")) or oflux_country or "").strip().lower()
 
@@ -11841,8 +11916,11 @@ class RequestHandler(BaseHTTPRequestHandler):
         for name, value in SECURITY_HEADERS:
             self.send_header(name, value)
         if subscription_id:
-            summary = subscription_summary(subscription_id)
-            user_info = f"upload=0; download=0; total={summary.get('traffic_total_bytes', 0)}; expire={int(time.time() + 86400 * 30)}"
+            try:
+                user_info = happ_subscription_userinfo(subscription_id)
+            except Exception:
+                summary = subscription_summary(subscription_id)
+                user_info = f"upload=0; download=0; total={summary.get('traffic_total_bytes', 0)}; expire={int(time.time() + 86400 * 30)}"
             self.send_header("Subscription-Userinfo", user_info)
             self.send_header("Profile-Update-Interval", "24")
             if profile_title:
@@ -11874,8 +11952,11 @@ class RequestHandler(BaseHTTPRequestHandler):
         for name, value in SECURITY_HEADERS:
             self.send_header(name, value)
         if subscription_id:
-            summary = subscription_summary(subscription_id)
-            user_info = f"upload=0; download=0; total={summary.get('traffic_total_bytes', 0)}; expire={int(time.time() + 86400 * 30)}"
+            try:
+                user_info = happ_subscription_userinfo(subscription_id)
+            except Exception:
+                summary = subscription_summary(subscription_id)
+                user_info = f"upload=0; download=0; total={summary.get('traffic_total_bytes', 0)}; expire={int(time.time() + 86400 * 30)}"
             self.send_header("Subscription-Userinfo", user_info)
             self.send_header("Profile-Update-Interval", "24")
             if profile_title:

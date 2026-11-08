@@ -849,6 +849,50 @@ class TestStage2WebSecurityAndRedesign(unittest.TestCase):
         self.assertIn("Возобновить доступ", text_exp)
         self.assertIn("подошёл к концу", text_exp)
 
+    def test_otvet14_safe_improvements_indexes_magic_link_dow_and_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            shop_db = tmp_path / "otvet14_shop.db"
+            store = Store(shop_db)
+            store.init()
+
+            # 1. Verify profile_email_changes table and new B-Tree indexes exist
+            with store.read_connection() as rconn:
+                tables = {r["name"] for r in rconn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+                indexes = {r["name"] for r in rconn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()}
+            self.assertIn("profile_email_changes", tables)
+            for expected_idx in (
+                "ix_profiles_status_awg_reset",
+                "ix_profiles_xui_sub_id",
+                "ix_profiles_xui_client_id",
+                "ix_orders_customer_email_lower",
+                "ix_orders_manager_msg",
+                "ix_referral_attributions_referrer",
+                "ix_referral_ledger_referrer_status",
+                "ix_referral_payouts_referrer",
+                "idx_email_changes_sub_time",
+                "idx_email_changes_prof_time",
+                "idx_email_changes_ip_time",
+            ):
+                self.assertIn(expected_idx, indexes)
+
+            # 2. Verify consume_magic_link does NOT open write transaction on invalid token
+            with patch.object(store, "transaction", wraps=store.transaction) as mock_tx:
+                res = store.consume_magic_link("forged_invalid_token_xyz")
+                self.assertIsNone(res)
+                self.assertEqual(mock_tx.call_count, 0)
+
+            # Valid magic link works for first and subsequent visits
+            store.create_magic_link(email="safe@example.com", token="valid_tok_123", ttl_seconds=600, request_ip="127.0.0.1")
+            self.assertEqual(store.consume_magic_link("valid_tok_123"), "safe@example.com")
+            with patch.object(store, "transaction", wraps=store.transaction) as mock_tx2:
+                self.assertEqual(store.consume_magic_link("valid_tok_123"), "safe@example.com")
+                self.assertEqual(mock_tx2.call_count, 0)
+
+            # 3. Verify _sub_profile_cache is bounded OrderedDict
+            self.assertIsInstance(subjson_app._sub_profile_cache, subjson_app.collections.OrderedDict)
+            self.assertEqual(subjson_app._PROFILE_CACHE_MAX_SIZE, 5000)
+
 
 if __name__ == "__main__":
     unittest.main()
