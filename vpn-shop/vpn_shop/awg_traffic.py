@@ -193,6 +193,8 @@ class CounterStateTracker:
         node_id: str = "local",
         collected_at: int | None = None,
         baseline_only: bool = False,
+        min_flush_bytes: int = 0,
+        max_flush_interval_sec: int = 1800,
     ) -> list[TrafficDelta]:
         """Расчет неотрицательных дельт между текущим замером и предыдущим состоянием."""
         ts = collected_at or now_ts()
@@ -205,9 +207,7 @@ class CounterStateTracker:
 
             if pubkey not in self.previous_counters:
                 # Первый замер для данного пира.
-                # Если в ядре уже накоплено > 10 ГБ (например, после потери/миграции state-файла),
-                # принимаем текущие счётчики за базовую точку отсчёта (baseline), чтобы не списать
-                # многомесячный кумулятивный счётчик ядра за один 60-секундный тик.
+                self.previous_counters[pubkey] = (curr_rx, curr_tx, ts)
                 if (curr_rx + curr_tx) > MAX_UNSEEN_PEER_FIRST_TICK_BYTES:
                     LOGGER.warning(
                         "Peer %s unseen in state tracker with large cumulative counter (%d bytes); baselining to 0 delta",
@@ -219,25 +219,42 @@ class CounterStateTracker:
                 else:
                     delta_rx = curr_rx
                     delta_tx = curr_tx
+                    if min_flush_bytes > 0 and (delta_rx + delta_tx) < min_flush_bytes:
+                        continue
             else:
-                prev_rx, prev_tx, _ = self.previous_counters[pubkey]
+                prev_rx, prev_tx, prev_ts = self.previous_counters[pubkey]
 
                 # Защита от сброса ядра/интерфейса: если curr < prev, счетчик сбросился
                 if curr_rx >= prev_rx:
                     delta_rx = curr_rx - prev_rx
                 else:
                     delta_rx = curr_rx
+                    prev_rx = 0
 
                 if curr_tx >= prev_tx:
                     delta_tx = curr_tx - prev_tx
                 else:
                     delta_tx = curr_tx
+                    prev_tx = 0
+
+                delta_rx = max(0, delta_rx)
+                delta_tx = max(0, delta_tx)
+                total_delta = delta_rx + delta_tx
+
+                if total_delta == 0:
+                    continue
+
+                if min_flush_bytes > 0 and total_delta < min_flush_bytes and (ts - prev_ts) < max_flush_interval_sec:
+                    # Буферизуем keepalive-пакеты локально, не создавая лишних записей в Turso.
+                    if curr_rx < prev_rx or curr_tx < prev_tx:
+                        self.previous_counters[pubkey] = (0, 0, prev_ts)
+                    continue
+
+                # Порог превышен или прошло 30 минут: обновляем baseline
+                self.previous_counters[pubkey] = (curr_rx, curr_tx, ts)
 
             delta_rx = max(0, delta_rx)
             delta_tx = max(0, delta_tx)
-
-            # Обновляем сохраненное состояние
-            self.previous_counters[pubkey] = (curr_rx, curr_tx, ts)
 
             # Фиксируем дельту, если был хоть какой-то обмен данными
             if delta_rx > 0 or delta_tx > 0:
@@ -255,6 +272,10 @@ class CounterStateTracker:
         return deltas
 
 
+DEFAULT_AWG_MIN_FLUSH_BYTES = 10 * 1024 * 1024  # 10 MB
+DEFAULT_AWG_MAX_FLUSH_INTERVAL_SEC = 1800       # 30 minutes
+
+
 class AwgTrafficCollector:
     """Сборщик трафика сетевых туннелей AmneziaWG на ноде."""
 
@@ -265,9 +286,13 @@ class AwgTrafficCollector:
         node_id: str = "nl-master",
         state_file: Path | str | None = None,
         command_runner: Callable[[str], str] | None = None,
+        min_flush_bytes: int = 0,
+        max_flush_interval_sec: int = DEFAULT_AWG_MAX_FLUSH_INTERVAL_SEC,
     ) -> None:
         self.interface = interface
         self.node_id = node_id
+        self.min_flush_bytes = min_flush_bytes
+        self.max_flush_interval_sec = max_flush_interval_sec
         self.tracker = CounterStateTracker(state_file)
         self.command_runner = command_runner or self._default_command_runner
 
@@ -290,7 +315,7 @@ class AwgTrafficCollector:
         cmd = f"awg show {self.interface} transfer"
         output = self.command_runner(cmd)
         counters = parse_awg_transfer(output)
-        return self.tracker.calculate_monotonic_deltas(counters, node_id=self.node_id)
+        return self.tracker.calculate_monotonic_deltas(counters, node_id=self.node_id, min_flush_bytes=self.min_flush_bytes, max_flush_interval_sec=self.max_flush_interval_sec)
 
     def initialize_baseline(self) -> None:
         """Инициализация базового состояния счетчиков без начисления дельт трафика."""

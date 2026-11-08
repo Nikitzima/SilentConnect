@@ -514,7 +514,7 @@ class Store:
                 local_replica_path=str(replica_path),
                 sync_url=self._turso_url,
                 auth_token=self._turso_token,
-                auto_sync_interval=float(os.environ.get("TURSO_SYNC_INTERVAL", "60.0")),
+                auto_sync_interval=float(os.environ.get("TURSO_SYNC_INTERVAL", "300.0")),
             )
 
     def init(self) -> None:
@@ -3857,6 +3857,14 @@ class Store:
         now = now_ts()
         expires = now + int(ttl_seconds)
         try:
+            with self.read_connection() as rconn:
+                cur_lease = rconn.execute(
+                    "SELECT holder_node, expires_at FROM cluster_leases WHERE lease_name = ?",
+                    (lease_name,),
+                ).fetchone()
+            if cur_lease and cur_lease["holder_node"] != holder_node and int(cur_lease["expires_at"] or 0) > now:
+                return False
+
             with self.transaction() as conn:
                 conn.execute(
                     """

@@ -12101,7 +12101,7 @@ def _start_turso_sync_daemon() -> None:
         except Exception as e:
             LOGGER.debug("Initial checkout pre-warm exception: %s", e)
         while True:
-            time.sleep(60.0)
+            time.sleep(300.0)
             try:
                 wc = get_shop_checkout()
                 if wc and getattr(wc, "store", None):

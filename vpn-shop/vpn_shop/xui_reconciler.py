@@ -569,6 +569,8 @@ class XuiReconciler:
                 interface="awg0",
                 node_id=local_node,
                 command_runner=lambda cmd: awg_manager._dex(cmd, server_code=local_node),
+                min_flush_bytes=int(os.environ.get("AWG_TRAFFIC_MIN_FLUSH_BYTES", 10 * 1024 * 1024)),
+                max_flush_interval_sec=int(os.environ.get("AWG_TRAFFIC_MAX_FLUSH_INTERVAL_SEC", 1800)),
             )
             deltas = collector.collect_node_deltas()
             if deltas:

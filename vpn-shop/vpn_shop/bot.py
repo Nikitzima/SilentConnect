@@ -29,7 +29,7 @@ from .xui_api import XuiApiError
 
 
 LOGGER = logging.getLogger("vpn-shop")
-TEST_PROFILE_CLEANUP_INTERVAL = 60
+TEST_PROFILE_CLEANUP_INTERVAL = 600
 ACTION_GUARD_KEY = "_action_guard"
 ACTION_GUARD_TTL_SECONDS = 120
 WAITING_PAYMENT_EXPIRY_SECONDS = 6 * 3600
@@ -2959,7 +2959,7 @@ class ShopBot:
 
     def _execute_periodic_tasks(self) -> None:
         holder_node = os.environ.get("CURRENT_SERVER_CODE") or os.environ.get("AWG_LOCAL_SERVER") or (os.uname().nodename if hasattr(os, "uname") else "localhost")
-        if not self.store.try_acquire_cluster_lease("periodic_tasks", str(holder_node), ttl_seconds=90):
+        if not self.store.try_acquire_cluster_lease("periodic_tasks", str(holder_node), ttl_seconds=660):
             LOGGER.debug("Skipping periodic tasks: cluster lease held by another node")
             return
         try:
