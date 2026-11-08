@@ -151,14 +151,10 @@ def verify_token(token: str, *, purpose: str) -> dict[str, Any] | None:
         return None
     effective_pepper = _get_effective_pepper()
     expected = hmac.new(effective_pepper, f"{purpose}\x00".encode("utf-8") + raw, hashlib.sha256).digest()
+    # Stateless tokens (30-minute magic links) never need the public DEFAULT_SERVER_PEPPER:
+    # accepting it would let anyone mint a validly-signed token offline.
     if not hmac.compare_digest(mac, expected):
-        legacy_pepper = DEFAULT_SERVER_PEPPER.encode("utf-8")
-        if effective_pepper != legacy_pepper:
-            expected_legacy = hmac.new(legacy_pepper, f"{purpose}\x00".encode("utf-8") + raw, hashlib.sha256).digest()
-            if not hmac.compare_digest(mac, expected_legacy):
-                return None
-        else:
-            return None
+        return None
     try:
         payload = json.loads(raw.decode("utf-8"))
     except Exception:
@@ -310,6 +306,22 @@ def safe_json_for_script(obj: Any) -> str:
         .replace("&", "\\u0026")
         .replace("'", "\\u0027")
     )
+
+
+def is_loopback_or_unknown_ip(ip: str | None) -> bool:
+    """True when ``ip`` cannot identify an individual visitor.
+
+    Behind xray-dokodemo-door -> Caddy the TCP peer is always 127.0.0.1, so every
+    visitor resolves to the same "IP". Such a value must never be used as a
+    per-client rate-limit key, otherwise one person throttles everybody.
+    """
+    value = (ip or "").strip()
+    if not value or value == "unknown":
+        return True
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return True
 
 
 def client_ip_from_headers(headers: Any, peer_ip: str | None) -> str:

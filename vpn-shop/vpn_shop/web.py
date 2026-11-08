@@ -24,7 +24,7 @@ from .platega import PlategaClient
 from .digiseller import DigisellerClient
 import hashlib
 from .provisioning import Provisioner
-from .security import client_ip_from_headers, hash_token, is_allowed_host, random_web_token, sign_token, verify_token,  now_ts
+from .security import client_ip_from_headers, hash_token, is_allowed_host, is_loopback_or_unknown_ip, random_web_token, sign_token, verify_token,  now_ts
 from .store import OrderStateError, Store
 from .telegram_api import TelegramBotClient, TelegramApiError
 
@@ -2357,8 +2357,12 @@ class WebCheckout:
             if not verify_cf_turnstile(self.settings.cf_turnstile_secret_key, turnstile_token, client_ip):
                 return {"ok": False, "message": "Пожалуйста, подтвердите, что вы человек (поставьте галочку Cloudflare)."}
 
+        # Behind dokodemo-door/Caddy every visitor looks like 127.0.0.1; a shared "IP" key would
+        # let one person lock the whole login form. Fall back to the per-email limit in that case.
+        limit_ip = None if is_loopback_or_unknown_ip(client_ip) else client_ip
+
         # Anti-spam burst protection (minimum 20 seconds between attempts)
-        recent_burst = self.store.count_recent_magic_links(email=clean_email, request_ip=client_ip, window_seconds=20)
+        recent_burst = self.store.count_recent_magic_links(email=clean_email, request_ip=limit_ip, window_seconds=20)
         if recent_burst >= 1:
             return {
                 "ok": False,
@@ -2366,7 +2370,7 @@ class WebCheckout:
             }
 
         # Rate limit: maximum 3 links per 30 minutes (1800s)
-        recent_30m = self.store.count_recent_magic_links(email=clean_email, request_ip=client_ip, window_seconds=1800)
+        recent_30m = self.store.count_recent_magic_links(email=clean_email, request_ip=limit_ip, window_seconds=1800)
         if recent_30m >= 3:
             return {
                 "ok": False,
@@ -3119,7 +3123,9 @@ class WebCheckout:
         
         # Softened rate limit: 12 attempts per 3 minutes (180s) instead of 5 attempts per 1 hour (3600s)
         window_sec = 180
-        max_attempts = 12
+        # Loopback = all visitors share one bucket (see request_cabinet_access_link): widen it so
+        # normal traffic is not throttled, while a single-code brute force is still bounded.
+        max_attempts = 120 if is_loopback_or_unknown_ip(client_ip) else 12
         with self._rate_limit_lock:
             history = [t for t in self._promo_check_limits.get(rate_key, []) if now - t < window_sec]
             if len(history) >= max_attempts:

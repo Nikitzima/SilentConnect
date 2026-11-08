@@ -405,6 +405,10 @@ CREATE INDEX IF NOT EXISTS ix_referral_payouts_referrer ON referral_payouts(refe
 CREATE INDEX IF NOT EXISTS idx_email_changes_sub_time ON profile_email_changes(sub_id, changed_at);
 CREATE INDEX IF NOT EXISTS idx_email_changes_prof_time ON profile_email_changes(profile_id, changed_at);
 CREATE INDEX IF NOT EXISTS idx_email_changes_ip_time ON profile_email_changes(client_ip, changed_at);
+CREATE INDEX IF NOT EXISTS ix_magic_links_email_expires ON magic_links(email, expires_at);
+CREATE INDEX IF NOT EXISTS ix_magic_links_created_ip ON magic_links(created_at, request_ip);
+CREATE INDEX IF NOT EXISTS ix_magic_links_expires ON magic_links(expires_at);
+CREATE INDEX IF NOT EXISTS ix_admin_actions_lookup ON admin_actions(action_type, target_type, target_public_id, created_at DESC);
 """
 
 IDEMPOTENT_SCHEMA_ENSURE = """
@@ -428,6 +432,10 @@ CREATE INDEX IF NOT EXISTS ix_referral_payouts_referrer ON referral_payouts(refe
 CREATE INDEX IF NOT EXISTS idx_email_changes_sub_time ON profile_email_changes(sub_id, changed_at);
 CREATE INDEX IF NOT EXISTS idx_email_changes_prof_time ON profile_email_changes(profile_id, changed_at);
 CREATE INDEX IF NOT EXISTS idx_email_changes_ip_time ON profile_email_changes(client_ip, changed_at);
+CREATE INDEX IF NOT EXISTS ix_magic_links_email_expires ON magic_links(email, expires_at);
+CREATE INDEX IF NOT EXISTS ix_magic_links_created_ip ON magic_links(created_at, request_ip);
+CREATE INDEX IF NOT EXISTS ix_magic_links_expires ON magic_links(expires_at);
+CREATE INDEX IF NOT EXISTS ix_admin_actions_lookup ON admin_actions(action_type, target_type, target_public_id, created_at DESC);
 """
 
 SCHEMA_VERSION = 3
@@ -2977,8 +2985,39 @@ class Store:
         return [self._row_to_dict(row) or {} for row in rows]
 
     def get_referral_balance(self, referrer_id: int) -> dict[str, Any] | None:
-        balances = [item for item in self.list_referral_balances() if int(item["id"]) == int(referrer_id)]
-        return balances[0] if balances else None
+        # Same columns/semantics as list_referral_balances(), but only for one referrer
+        # (no GROUP BY over every referrer on each bot click).
+        rid = int(referrer_id)
+        with self.read_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                  r.id, r.user_id, r.chat_id, r.code, r.commission_percent, r.status,
+                  u.username, u.first_name, u.last_name,
+                  COALESCE(le.total_earned, 0) AS total_earned_rub,
+                  COALESCE(lp.total_paid, 0) AS total_paid_rub,
+                  MAX(COALESCE(le.total_earned, 0) - COALESCE(lp.total_paid, 0), 0) AS balance_rub,
+                  COALESCE(le.pending_count, 0) AS pending_count,
+                  COALESCE(ac.referred_count, 0) AS referred_count
+                FROM referrers r
+                LEFT JOIN telegram_users u ON u.user_id = r.user_id
+                LEFT JOIN (
+                  SELECT referrer_id, SUM(amount_rub) AS total_earned, COUNT(*) AS pending_count
+                  FROM referral_ledger WHERE referrer_id = ? GROUP BY referrer_id
+                ) le ON le.referrer_id = r.id
+                LEFT JOIN (
+                  SELECT referrer_id, SUM(amount_rub) AS total_paid
+                  FROM referral_payouts WHERE referrer_id = ? GROUP BY referrer_id
+                ) lp ON lp.referrer_id = r.id
+                LEFT JOIN (
+                  SELECT referrer_id, COUNT(*) AS referred_count
+                  FROM referral_attributions WHERE referrer_id = ? GROUP BY referrer_id
+                ) ac ON ac.referrer_id = r.id
+                WHERE r.id = ?
+                """,
+                (rid, rid, rid, rid),
+            ).fetchone()
+        return self._row_to_dict(row)
 
     def create_referral_payout(
         self,

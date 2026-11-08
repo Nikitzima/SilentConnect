@@ -1175,8 +1175,12 @@ def reconcile_awg_peers(
     allow_empty: bool = False,
     force_mass_delete: bool = False,
     db_path: str | Path | None = None,
+    store: Any = None,
 ) -> dict[str, Any]:
     """Reconcile AmneziaWG peers on server_code with active database slots.
+
+    ``store`` lets a long-lived caller (XuiReconciler) reuse its already initialised Store;
+    without it every call builds a fresh Store + init() (extra DDL and Turso syncs per run).
 
     Guarantees:
     - Thread & process serialization via master_node_lock.
@@ -1196,6 +1200,7 @@ def reconcile_awg_peers(
                 allow_empty=allow_empty,
                 force_mass_delete=force_mass_delete,
                 db_path=db_path,
+                store=store,
             )
         return results
 
@@ -1204,10 +1209,10 @@ def reconcile_awg_peers(
         raise ValueError(f"Unknown server code: '{server_code}'. Available: {list(SERVERS.keys())}")
 
     with master_node_lock(code):
-        resolved_db = _resolve_db_path(db_path)
         from .store import Store, DatabaseQueryError
-        store = Store(resolved_db)
-        store.init()
+        if store is None:
+            store = Store(_resolve_db_path(db_path))
+            store.init()
 
         # 1. Query active slots from DB (fail-closed on db error)
         try:

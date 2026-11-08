@@ -184,7 +184,17 @@ class ShopBot:
     def _remember_user(self, chat_id: int | str | None, user: dict[str, Any]) -> None:
         if chat_id is None:
             return
+        # Every click/message used to rewrite telegram_users (a Turso write + sync). The row only
+        # carries profile fields and last_seen_at, so refreshing it every 10 minutes is enough.
+        seen = self.__dict__.setdefault("_user_upsert_at", {})
+        key = str(user.get("id") or chat_id)
+        now = time.monotonic()
+        if now - seen.get(key, -1e9) < 600:
+            return
         self.store.upsert_telegram_user(user=user, chat_id=chat_id)
+        seen[key] = now
+        if len(seen) > 20000:
+            seen.clear()
 
     @staticmethod
     def _subscription_id_from_url(subscription_url: str) -> str:

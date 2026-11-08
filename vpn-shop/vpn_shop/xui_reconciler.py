@@ -556,6 +556,7 @@ class XuiReconciler:
                 dry_run=False,
                 allow_empty=False,
                 db_path=self.settings.database_path,
+                store=self.store,
             )
         except awg_manager.ReconciliationAbortedError:
             pass

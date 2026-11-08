@@ -2385,6 +2385,14 @@ def _is_approved_import_url(url: str, request_headers: Any = None) -> bool:
         return False
 
 
+def _strip_import_source_query(raw_source: str) -> str:
+    """Drop query/fragment from an approved import URL so callers cannot bypass the Happ link cache."""
+    parsed = urllib.parse.urlsplit(raw_source)
+    if not parsed.scheme:
+        return raw_source
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+
+
 def parse_hybrid_subscription_id(subscription_id: str) -> tuple[str, str]:
     if "~" in subscription_id:
         parts = [part.strip() for part in subscription_id.split("~", 1)]
@@ -10930,8 +10938,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if not _is_approved_import_url(raw_source, self.headers):
                     source_url = public_subscription_url(self.headers, "json", sub_id)
                 else:
-                    parsed_source = urllib.parse.urlsplit(raw_source)
-                    source_url = urllib.parse.urlunsplit((parsed_source.scheme, parsed_source.netloc, parsed_source.path, "", "")) if parsed_source.scheme else raw_source
+                    source_url = _strip_import_source_query(raw_source)
 
                 qr_bytes = b""
                 try:
@@ -11664,8 +11671,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if not _is_approved_import_url(raw_source, self.headers):
                     source_url = public_subscription_url(self.headers, "json", sub_id)
                 else:
-                    parsed_source = urllib.parse.urlsplit(raw_source)
-                    source_url = urllib.parse.urlunsplit((parsed_source.scheme, parsed_source.netloc, parsed_source.path, "", "")) if parsed_source.scheme else raw_source
+                    source_url = _strip_import_source_query(raw_source)
                 quoted_sub_id = urllib.parse.quote(sub_id, safe="")
                 import_query = ""
                 pending_card = check_pending_payment_card(sub_id)
@@ -11689,7 +11695,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if not _is_approved_import_url(raw_source, self.headers):
                     source_url = public_subscription_url(self.headers, "json", sub_id)
                 else:
-                    source_url = raw_source
+                    source_url = _strip_import_source_query(raw_source)
                 if target == "happ":
                     encrypted = encrypt_happ_link(source_url)
                     if encrypted:
