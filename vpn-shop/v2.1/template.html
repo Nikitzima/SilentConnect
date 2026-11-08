@@ -773,8 +773,8 @@
           </div>
         </div>
         <div class="copy-row" style="margin-top:12px">
-          <input class="field" id="ofKeyInput" readonly value="openflux://v1/sc_live_88f29a1d-nl?srv=nl.edge.example.com:443#SilentConnect-OpenFlux-NL">
-          <a class="btn btn-primary btn-sm" id="ofTopDeeplinkBtn" href="openflux://v1/sc_live_88f29a1d-nl?srv=nl.edge.example.com:443#SilentConnect-OpenFlux-NL" style="min-height:42px"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> Подключить в OpenFlux</a>
+          <input class="field" id="ofKeyInput" readonly value="openflux://v1/sc_live_88f29a1d-nl?srv=nl.edge.silentconnect.net:443#SilentConnect-OpenFlux-NL">
+          <a class="btn btn-primary btn-sm" id="ofTopDeeplinkBtn" href="openflux://v1/sc_live_88f29a1d-nl?srv=nl.edge.silentconnect.net:443#SilentConnect-OpenFlux-NL" style="min-height:42px"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> Подключить в OpenFlux</a>
           <button type="button" class="btn btn-ghost btn-sm" id="ofTopCopyBtn" style="min-height:42px" data-toast="Ключ OpenFlux скопирован в буфер обмена"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Скопировать</button>
         </div>
       </div>
@@ -789,8 +789,8 @@
         </div>
         <p style="margin-top:6px;color:var(--mut);font-size:13.5px;line-height:1.55">Чтобы вы не потеряли доступ в условиях блокировки, старый сервер продолжает работать ещё 5 минут. Скопируйте новый ключ ниже, импортируйте его в приложение и только после этого нажмите «Подтвердить переход».</p>
         <div class="copy-row" style="margin-top:12px">
-          <input class="field" id="ofNewKeyInput" readonly value="openflux://v1/mig_sc_live_88f29a1d-de?srv=de.edge.example.com:443#SilentConnect-OpenFlux-DE">
-          <a class="btn btn-primary btn-sm" id="ofNewTopDeeplinkBtn" href="openflux://v1/mig_sc_live_88f29a1d-de?srv=de.edge.example.com:443#SilentConnect-OpenFlux-DE" style="min-height:42px"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> Подключить новый ключ</a>
+          <input class="field" id="ofNewKeyInput" readonly value="openflux://v1/mig_sc_live_88f29a1d-de?srv=de.edge.silentconnect.net:443#SilentConnect-OpenFlux-DE">
+          <a class="btn btn-primary btn-sm" id="ofNewTopDeeplinkBtn" href="openflux://v1/mig_sc_live_88f29a1d-de?srv=de.edge.silentconnect.net:443#SilentConnect-OpenFlux-DE" style="min-height:42px"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> Подключить новый ключ</a>
           <button type="button" class="btn btn-ghost btn-sm" id="ofNewTopCopyBtn" style="min-height:42px" data-toast="Новый ключ OpenFlux скопирован"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Скопировать</button>
         </div>
         <div style="margin-top:14px;display:flex;flex-wrap:wrap;gap:8px">
@@ -959,6 +959,7 @@
     <button type="button" class="modal-x" data-close aria-label="Закрыть"><svg class="ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     <h2 id="cabTitle" style="font-size:24px;font-weight:600;letter-spacing:-.035em" class="metal">Вход в кабинет</h2>
     <p style="margin-top:8px;color:var(--mut);font-size:14px;line-height:1.55">Укажите Email, на который оформляли подписку. Мы отправим одноразовую ссылку для входа на 30 минут: пароль не нужен.</p>
+    <div id="cabinetAlert" class="modal-alert modal-alert-warn" style="display:none"></div>
     <form id="cabinetForm" style="margin-top:18px;display:grid;gap:12px">
       <input class="field" id="cabinetEmail" name="email" type="email" required placeholder="name@example.com" autocomplete="email">
       <div class="cf-widget" data-checked="true" role="checkbox" aria-checked="true" tabindex="0">

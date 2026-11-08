@@ -948,5 +948,35 @@ class TestStage2WebSecurityAndRedesign(unittest.TestCase):
             self.assertEqual(subjson_app._PROFILE_CACHE_MAX_SIZE, 5000)
 
 
+
+    def test_toast_redesign_and_modal_alert_contracts(self):
+        """Verify toast notification snack redesign and inline cabinet modal alert."""
+        v2_css = (VPN_SHOP_DIR / "v2.1" / "v2.css").read_text(encoding="utf-8")
+        tpl = (VPN_SHOP_DIR / "v2.1" / "template.html").read_text(encoding="utf-8")
+        app_js = (VPN_SHOP_DIR / "v2.1" / "app.js").read_text(encoding="utf-8")
+
+        # 1. Toast styling: top-floating card, modern radius, high z-index
+        self.assertIn("top: max(18px, env(safe-area-inset-top));", v2_css)
+        self.assertIn("z-index: 10005;", v2_css)
+        self.assertIn("border-radius: 14px;", v2_css)
+        self.assertNotIn("#toast{bottom:92px}", v2_css)
+
+        # 2. Template: cabinet alert and toast container
+        self.assertIn('id="cabinetAlert"', tpl)
+        self.assertIn('id="toast"', tpl)
+
+        # 3. JS: hideToast, setCabinetAlert, dynamic duration
+        self.assertIn("function hideToast()", app_js)
+        self.assertIn("function setCabinetAlert(", app_js)
+        self.assertIn("cleanText.length * 38", app_js)
+
+        # 4. Parity with subjson-service
+        sub_css = (SUBJSON_DIR / "v2.1" / "v2.css").read_text(encoding="utf-8")
+        sub_tpl = (SUBJSON_DIR / "v2.1" / "template.html").read_text(encoding="utf-8")
+        sub_js = (SUBJSON_DIR / "v2.1" / "app.js").read_text(encoding="utf-8")
+        self.assertEqual(v2_css, sub_css)
+        self.assertEqual(tpl, sub_tpl)
+        self.assertEqual(app_js, sub_js)
+
 if __name__ == "__main__":
     unittest.main()

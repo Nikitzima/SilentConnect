@@ -25,15 +25,101 @@ const importUrlFor = app => APP_IMPORT_URLS[app] || (SUB_ID ? `${IMPORT_BASE}/${
 
 /* ---------- Всплывающие уведомления (Toast) ---------- */
 let toastTimer = null;
-function toast(msg, duration = 3000) {
+
+function hideToast() {
   const t = $('#toast');
   if (!t) return;
-  t.textContent = msg;
-  t.classList.add('show');
+  t.classList.remove('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), duration);
+}
+
+function toast(msg, durationOrOptions = 3000) {
+  const t = $('#toast');
+  if (!t || !msg) return;
+
+  let duration = typeof durationOrOptions === 'number' ? durationOrOptions : 3000;
+  let customType = null;
+  if (typeof durationOrOptions === 'object' && durationOrOptions !== null) {
+    if (durationOrOptions.duration) duration = durationOrOptions.duration;
+    if (durationOrOptions.type) customType = durationOrOptions.type;
+  }
+
+  const rawText = String(msg).trim();
+  let type = customType || 'info';
+  let cleanText = rawText;
+
+  if (!customType) {
+    if (rawText.startsWith('✓') || /(успешно|применён|применен|активирован|скачан|обновлена)/i.test(rawText)) {
+      type = 'success';
+      cleanText = rawText.replace(/^✓\s*/, '');
+    } else if (/(недействительн|устарел|ошибк|не удалось|не найден|отменён|отменен|истекло|робот|некорректн)/i.test(rawText)) {
+      type = 'warn';
+    } else if (/(измеряем|подготавливаем|отправляем|переключаем|создание)/i.test(rawText)) {
+      type = 'info';
+    }
+  }
+
+  const icons = {
+    success: '<svg class="toast-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m8.5 12.5 2.5 2.5 5-5"/></svg>',
+    warn: '<svg class="toast-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>',
+    error: '<svg class="toast-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+    info: '<svg class="toast-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
+  };
+
+  t.className = `toast-${type}`;
+  t.innerHTML = `
+    ${icons[type] || icons.info}
+    <div class="toast-body"></div>
+    <button type="button" class="toast-x" aria-label="Закрыть">
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  `;
+  const bodyEl = t.querySelector('.toast-body');
+  if (bodyEl) bodyEl.textContent = cleanText;
+
+  // Динамический расчет комфортного времени чтения
+  const effDuration = (duration && duration !== 3000)
+    ? duration
+    : Math.max(2800, Math.min(7500, 2200 + cleanText.length * 38));
+
+  t.onclick = (e) => {
+    e.stopPropagation();
+    hideToast();
+  };
+  t.onmouseenter = () => clearTimeout(toastTimer);
+  t.onmouseleave = () => {
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(hideToast, 1200);
+  };
+
+  clearTimeout(toastTimer);
+  requestAnimationFrame(() => {
+    t.classList.add('show');
+    toastTimer = setTimeout(hideToast, effDuration);
+  });
 }
 window.toast = toast;
+window.hideToast = hideToast;
+
+function setCabinetAlert(msg, type = 'warn') {
+  const alertBox = $('#cabinetAlert');
+  if (!alertBox) return;
+  if (!msg) {
+    alertBox.style.display = 'none';
+    alertBox.innerHTML = '';
+    return;
+  }
+  const typeClass = type === 'ok' ? 'modal-alert-ok' : (type === 'err' ? 'modal-alert-err' : 'modal-alert-warn');
+  const iconSvg = type === 'ok'
+    ? '<svg class="ico" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m8.5 12.5 2.5 2.5 5-5"/></svg>'
+    : '<svg class="ico ico-warn" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+  alertBox.className = `modal-alert ${typeClass}`;
+  alertBox.innerHTML = `${iconSvg}<span></span>`;
+  const span = alertBox.querySelector('span');
+  if (span) span.textContent = msg;
+  alertBox.style.display = 'flex';
+}
+window.setCabinetAlert = setCabinetAlert;
 
 /* ---------- Уведомления об оплате и логика закрытия (dismiss) ---------- */
 window.dismissPaymentNotice = function(orderId) {
@@ -1591,7 +1677,7 @@ H4 = 4
 
 [Peer]
 PublicKey = xT9q...SERVER_PUB_KEY...=
-Endpoint = ${slot.server}.edge.example.com:38421
+Endpoint = ${slot.server}.edge.silentconnect.net:38421
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25`;
 }
@@ -1905,10 +1991,10 @@ function setOfState(state) {
   if (targetCountryEl) targetCountryEl.innerHTML = `${targetSrv.flag} ${targetSrv.name} (${targetSrv.city})`;
 
   const keyInput = $('#ofKeyInput');
-  if (keyInput) keyInput.value = S.ofKeyUri || (SUB_ID ? `openflux://v1/${SUB_ID}-${srv.code}?doc=mailru_shared_doc_88f29&srv=${srv.code}.edge.example.com:443#SilentConnect-OpenFlux-${srv.code.toUpperCase()}` : '');
+  if (keyInput) keyInput.value = S.ofKeyUri || (SUB_ID ? `openflux://v1/${SUB_ID}-${srv.code}?doc=mailru_shared_doc_88f29&srv=${srv.code}.edge.silentconnect.net:443#SilentConnect-OpenFlux-${srv.code.toUpperCase()}` : '');
 
   const newKeyInput = $('#ofNewKeyInput');
-  if (newKeyInput) newKeyInput.value = S.ofNewKeyUri || (SUB_ID ? `openflux://v1/mig_${SUB_ID}-${targetSrv.code}?doc=mailru_shared_doc_88f29&srv=${targetSrv.code}.edge.example.com:443#SilentConnect-OpenFlux-${targetSrv.code.toUpperCase()}` : '');
+  if (newKeyInput) newKeyInput.value = S.ofNewKeyUri || (SUB_ID ? `openflux://v1/mig_${SUB_ID}-${targetSrv.code}?doc=mailru_shared_doc_88f29&srv=${targetSrv.code}.edge.silentconnect.net:443#SilentConnect-OpenFlux-${targetSrv.code.toUpperCase()}` : '');
 
   const ofImportBtn = $('#ofImportBtn');
   if (ofImportBtn && keyInput) ofImportBtn.href = keyInput.value;
@@ -2548,7 +2634,7 @@ const LEGAL_DOCS = {
         <li><strong style="color:#fff">Поддержка любых устройств:</strong> Готовые мастера установки под iOS (Happ, INCY, Streisand), Android (Happ, INCY, V2RayTun), Windows, macOS, Linux, Android TV и Apple TV.</li>
       </ul>
 
-      <p style="margin-top:24px;color:var(--mut)">Техническая поддержка: <a href="mailto:support@example.com" style="color:var(--em-t);text-decoration:underline">support@example.com</a></p>`
+      <p style="margin-top:24px;color:var(--mut)">Техническая поддержка: <a href="mailto:support@silentconnect.net" style="color:var(--em-t);text-decoration:underline">support@silentconnect.net</a></p>`
   },
   contact: {
     title: 'Контакты & Поддержка',
@@ -2560,7 +2646,7 @@ const LEGAL_DOCS = {
         <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:18px">
           <h3 style="color:var(--em-t);margin-top:0;font-size:17px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-3px;margin-right:6px;color:var(--em-t)"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>Электронная почта</h3>
           <p style="font-size:13.5px;color:var(--mut);margin-bottom:10px">Вопросы по заказам, чекам, возвратам и корпоративным подпискам:</p>
-          <a href="mailto:support@example.com" style="color:#fff;font-weight:600;font-size:15px;text-decoration:underline">support@example.com</a>
+          <a href="mailto:support@silentconnect.net" style="color:#fff;font-weight:600;font-size:15px;text-decoration:underline">support@silentconnect.net</a>
         </div>
 
         <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:18px">
@@ -2621,7 +2707,7 @@ const LEGAL_DOCS = {
       <h3 style="color:#fff;font-size:17px;margin-top:22px">7. Изменение условий и контакты</h3>
       <p style="color:var(--mut)">7.1. Исполнитель вправе в одностороннем порядке вносить изменения в настоящую Оферту. Новая редакция вступает в силу с момента ее публикации на данной странице.</p>
       <p style="color:var(--mut);margin-top:10px">
-        Электронная почта: <a href="mailto:support@example.com" style="color:var(--em-t);text-decoration:underline">support@example.com</a><br>
+        Электронная почта: <a href="mailto:support@silentconnect.net" style="color:var(--em-t);text-decoration:underline">support@silentconnect.net</a><br>
         Telegram-бот поддержки: <a href="https://t.me/SilentConnectSupport" style="color:var(--em-t);text-decoration:underline" target="_blank" rel="noopener">@SilentConnectSupport</a>
       </p>`
   },
@@ -2659,11 +2745,11 @@ const LEGAL_DOCS = {
       <p style="color:var(--mut)">Мы соблюдаем применимое законодательство. Однако, в силу технической архитектуры Платформы и строгого соблюдения Zero-Logs Policy, мы физически не ведем и не накапливаем журналы сетевой активности и сопоставления трафика с конкретными пользователями. Сервис не имеет технической возможности раскрыть то, чем он не владеет.</p>
 
       <h3 style="color:#fff;font-size:17px;margin-top:22px">5. Права субъекта персональных данных</h3>
-      <p style="color:var(--mut)">Пользователь вправе в любой момент отозвать свое согласие на обработку контактных данных и запросить полное удаление своей учетной записи и истории заказов, направив письменное заявление по официальному адресу <a href="mailto:support@example.com" style="color:var(--em-t);text-decoration:underline">support@example.com</a>. Данные удаляются в течение 72 часов с момента подтверждения запроса.</p>
+      <p style="color:var(--mut)">Пользователь вправе в любой момент отозвать свое согласие на обработку контактных данных и запросить полное удаление своей учетной записи и истории заказов, направив письменное заявление по официальному адресу <a href="mailto:support@silentconnect.net" style="color:var(--em-t);text-decoration:underline">support@silentconnect.net</a>. Данные удаляются в течение 72 часов с момента подтверждения запроса.</p>
 
       <h3 style="color:#fff;font-size:17px;margin-top:22px">6. Контакты службы поддержки</h3>
       <p style="color:var(--mut)">
-        Электронная почта: <a href="mailto:support@example.com" style="color:var(--em-t);text-decoration:underline">support@example.com</a><br>
+        Электронная почта: <a href="mailto:support@silentconnect.net" style="color:var(--em-t);text-decoration:underline">support@silentconnect.net</a><br>
         Telegram-бот поддержки: <a href="https://t.me/SilentConnectSupport" style="color:var(--em-t);text-decoration:underline" target="_blank" rel="noopener">@SilentConnectSupport</a>
       </p>`
   },
@@ -2689,7 +2775,7 @@ const LEGAL_DOCS = {
       </ul>
 
       <h3 style="color:#fff;font-size:17px;margin-top:22px">3. Регламент и процедура оформления возврата</h3>
-      <p style="color:var(--mut)">3.1. Для оформления возврата направьте запрос по официальному адресу <a href="mailto:support@example.com" style="color:var(--em-t);text-decoration:underline">support@example.com</a> либо через верифицированный <a href="https://t.me/SilentConnectSupport" style="color:var(--em-t);text-decoration:underline" target="_blank" rel="noopener">Telegram-бот поддержки</a>.</p>
+      <p style="color:var(--mut)">3.1. Для оформления возврата направьте запрос по официальному адресу <a href="mailto:support@silentconnect.net" style="color:var(--em-t);text-decoration:underline">support@silentconnect.net</a> либо через верифицированный <a href="https://t.me/SilentConnectSupport" style="color:var(--em-t);text-decoration:underline" target="_blank" rel="noopener">Telegram-бот поддержки</a>.</p>
       <p style="color:var(--mut)">3.2. В обращении необходимо указать:</p>
       <ul style="padding-left:20px;line-height:1.8;color:var(--mut)">
         <li>Номер заказа (#ord_...) и контактный Email или Telegram ID;</li>
@@ -2702,7 +2788,7 @@ const LEGAL_DOCS = {
 
       <h3 style="color:#fff;font-size:17px;margin-top:22px">4. Контакты службы поддержки</h3>
       <p style="color:var(--mut)">
-        Электронная почта: <a href="mailto:support@example.com" style="color:var(--em-t);text-decoration:underline">support@example.com</a><br>
+        Электронная почта: <a href="mailto:support@silentconnect.net" style="color:var(--em-t);text-decoration:underline">support@silentconnect.net</a><br>
         Telegram-бот поддержки: <a href="https://t.me/SilentConnectSupport" style="color:var(--em-t);text-decoration:underline" target="_blank" rel="noopener">@SilentConnectSupport</a>
       </p>`
   }
@@ -2917,7 +3003,7 @@ if (window.SC_PROD) {
     }
   }
 
-  const shopBase = (P.publicBaseUrl || P.shopBaseUrl || 'https://example.com').replace(/\/$/, '');
+  const shopBase = (P.publicBaseUrl || P.shopBaseUrl || 'https://silentconnect.net').replace(/\/$/, '');
   $$('.brand').forEach(b => {
     b.href = (P.view === 'landing') ? '#top' : `${shopBase}/`;
   });
@@ -2931,7 +3017,7 @@ if (window.SC_PROD) {
       e.stopImmediatePropagation();
       const href = el.getAttribute('href') || '';
       const scroll = el.dataset.scroll || (href.startsWith('#') && href !== '#top' ? href : '');
-      const base = P.publicBaseUrl || P.shopBaseUrl || 'https://example.com';
+      const base = P.publicBaseUrl || P.shopBaseUrl || 'https://silentconnect.net';
       const cleanBase = base.replace(/\/$/, '');
       window.location.href = scroll ? `${cleanBase}/${scroll}` : `${cleanBase}/`;
     }
@@ -3030,12 +3116,17 @@ if (window.SC_PROD) {
 
   // 7. Real Cabinet Magic Link request (POST /api/cabinet/request-link)
   if (cabinetForm) {
+    const cabEmailInput = $('#cabinetEmail') || cabinetForm.querySelector('input[type="email"]');
+    if (cabEmailInput) {
+      cabEmailInput.addEventListener('input', () => setCabinetAlert(null));
+    }
     cabinetForm.addEventListener('submit', async e => {
       e.preventDefault();
       e.stopImmediatePropagation();
       const emailEl = $('#cabinetEmail') || $('#cabinetForm input[type="email"]');
       const email = (emailEl ? emailEl.value : '').trim();
       if (!email || !email.includes('@')) {
+        setCabinetAlert('Укажите корректный Email', 'warn');
         toast('Укажите корректный Email');
         return;
       }
@@ -3053,12 +3144,16 @@ if (window.SC_PROD) {
         });
         const data = await resp.json().catch(() => ({}));
         if (resp.ok && data.ok !== false) {
+          setCabinetAlert(null);
           closeAllModals();
           toast(data.message || '✓ Ссылка для входа отправлена на вашу почту!');
         } else {
-          toast((data && (data.error || data.message)) || 'Не удалось отправить ссылку');
+          const errMsg = (data && (data.error || data.message)) || 'Не удалось отправить ссылку';
+          setCabinetAlert(errMsg, 'err');
+          toast(errMsg);
         }
       } catch (_) {
+        setCabinetAlert('Ошибка соединения с сервером', 'err');
         toast('Ошибка соединения с сервером');
       }
     }, true);
@@ -3181,6 +3276,9 @@ if (window.SC_PROD) {
   }
 
   if (P.errorMessage) {
+    if (P.openCabinetModal) {
+      setCabinetAlert(P.errorMessage, 'warn');
+    }
     setTimeout(() => toast(P.errorMessage), 150);
   }
 

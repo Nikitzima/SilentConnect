@@ -623,10 +623,130 @@ h1, h2, h3, .hero h1, .sec-head h2, .bcard h3 {
 .cmd-item:hover{background:rgba(16,185,129,.14);color:var(--hi)}
 .cmd-item small{font-size:11.5px;color:var(--dim)}
 
-#toast{position:fixed;left:50%;bottom:26px;z-index:95;transform:translate(-50%,24px);opacity:0;pointer-events:none;padding:12px 20px;border-radius:99px;
-  font-size:13.5px;max-width:92vw;background:rgba(18,22,21,.94);border:1px solid var(--line-2);box-shadow:0 16px 36px -12px rgba(0,0,0,.85);
-  transition:transform .4s var(--spring),opacity .25s}
-#toast.show{transform:translate(-50%,0);opacity:1}
+/* ---------- Уведомления (Toasts / Notification Snacks) ---------- */
+#toast {
+  position: fixed;
+  left: 50%;
+  top: max(18px, env(safe-area-inset-top));
+  bottom: auto;
+  z-index: 10005;
+  transform: translate(-50%, -24px) scale(0.96);
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  width: max-content;
+  max-width: min(480px, calc(100vw - 32px));
+  padding: 12px 16px;
+  border-radius: 14px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--hi);
+  text-align: left;
+  background: rgba(18, 23, 21, 0.96);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 16px 38px -8px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform .32s cubic-bezier(0.16, 1, 0.3, 1), opacity .22s ease, visibility .22s ease;
+}
+
+#toast.show {
+  transform: translate(-50%, 0) scale(1);
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+}
+
+#toast.toast-success {
+  border-color: rgba(16, 185, 129, 0.4);
+  box-shadow: 0 16px 38px -8px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(16, 185, 129, 0.25), 0 0 24px -4px rgba(16, 185, 129, 0.15);
+}
+
+#toast.toast-warn {
+  border-color: rgba(245, 158, 11, 0.45);
+  box-shadow: 0 16px 38px -8px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(245, 158, 11, 0.25), 0 0 24px -4px rgba(245, 158, 11, 0.12);
+}
+
+#toast.toast-error {
+  border-color: rgba(239, 68, 68, 0.5);
+  box-shadow: 0 16px 38px -8px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(239, 68, 68, 0.3), 0 0 24px -4px rgba(239, 68, 68, 0.15);
+}
+
+.toast-ico {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+}
+.toast-success .toast-ico { color: #10b981; }
+.toast-warn .toast-ico { color: #f59e0b; }
+.toast-error .toast-ico { color: #ef4444; }
+.toast-info .toast-ico { color: #34d399; }
+
+.toast-body {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+  color: #f1f5f9;
+}
+
+.toast-x {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 1px -2px 0 2px;
+  color: var(--dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color .15s ease;
+}
+.toast-x:hover {
+  color: var(--hi);
+}
+
+/* Внутримодальные плашки ошибок и предупреждений */
+.modal-alert {
+  margin-top: 14px;
+  padding: 11px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  text-align: left;
+}
+.modal-alert svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+}
+.modal-alert-warn {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.32);
+  color: #fde68a;
+}
+.modal-alert-err {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.32);
+  color: #fca5a5;
+}
+.modal-alert-ok {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.32);
+  color: #a7f3d0;
+}
 
 .mbar{display:none}
 
@@ -754,7 +874,6 @@ h1, h2, h3, .hero h1, .sec-head h2, .bcard h3 {
   html.has-js .mbar.hide-bar{transform:translateY(130%);opacity:0;pointer-events:none}
   .mbar small{display:block;font-size:11.5px;color:var(--mut);line-height:1.2}
   .mbar b{font-size:18px;letter-spacing:-.025em;font-weight:600}
-  #toast{bottom:92px}
 }
 
 @media (max-width:640px){
