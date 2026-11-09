@@ -10920,6 +10920,17 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, {"ok": True, "service": "subjson-service"}, include_body)
                 return
 
+            if path == ["robots.txt"]:
+                r_body = b"User-agent: *\nDisallow: /my-secret-sub/\nDisallow: /sub/\nDisallow: /api/\n"
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(r_body)))
+                self.send_header("X-Robots-Tag", "noindex, nofollow, noarchive")
+                self.end_headers()
+                if include_body:
+                    self.wfile.write(r_body)
+                return
+
             if len(path) == 3 and path[0] == "volga":
                 server_target = path[1].lower()
                 sub_token = path[2].strip()

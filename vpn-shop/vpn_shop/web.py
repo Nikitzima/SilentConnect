@@ -304,7 +304,6 @@ SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
     ("X-Frame-Options", "DENY"),
     ("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload"),
     ("Permissions-Policy", "camera=(), microphone=(), geolocation=()"),
-    ("Cross-Origin-Opener-Policy", "same-origin"),
     (
         "Content-Security-Policy",
         "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; "
@@ -5809,6 +5808,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             if path == ["healthz"]:
                 self._send_json(HTTPStatus.OK, b'{"status":"ok"}')
+                return
+            if path == ["robots.txt"]:
+                robots_body = b"User-agent: *\nAllow: /\n"
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(robots_body)))
+                self.end_headers()
+                self.wfile.write(robots_body)
                 return
             if path == ["boost"] or path == ["api", "boost"]:
                 self.send_response(HTTPStatus.FOUND)
