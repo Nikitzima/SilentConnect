@@ -1684,8 +1684,8 @@ class Store:
             pid = str(public_id_value or "").strip()
             if PUBLIC_ID_RE.match(pid):
                 now_m = time.monotonic()
-                last_sync = self._miss_sync_at.get(pid, 0.0)
-                if now_m - last_sync >= 60.0:
+                last_sync = self._miss_sync_at.get(pid)
+                if last_sync is None or (now_m - last_sync >= 60.0):
                     self._miss_sync_at[pid] = now_m
                     self._replica_mgr.force_sync(min_interval=2.0)
                     with self.read_connection() as conn:
@@ -2026,8 +2026,8 @@ class Store:
             if dict_row is not None or PUBLIC_ID_RE.match(pid):
                 key = f"prf:{pid}"
                 now_m = time.monotonic()
-                last_sync = self._miss_sync_at.get(key, 0.0)
-                if now_m - last_sync >= 60.0:
+                last_sync = self._miss_sync_at.get(key)
+                if last_sync is None or (now_m - last_sync >= 60.0):
                     self._miss_sync_at[key] = now_m
                     self._replica_mgr.force_sync(min_interval=2.0)
                     with self.read_connection() as conn:
@@ -2051,8 +2051,8 @@ class Store:
             if raw_email:
                 email_key = f"xui:{raw_email}"
                 now_m = time.monotonic()
-                last_sync = self._miss_sync_at.get(email_key, 0.0)
-                if now_m - last_sync >= 60.0:
+                last_sync = self._miss_sync_at.get(email_key)
+                if last_sync is None or (now_m - last_sync >= 60.0):
                     self._miss_sync_at[email_key] = now_m
                     self._replica_mgr.force_sync(min_interval=2.0)
                     with self.read_connection() as conn:

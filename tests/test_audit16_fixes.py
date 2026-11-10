@@ -253,6 +253,47 @@ class TestAudit16Fixes(unittest.TestCase):
                 app.bind_subscription_email("sub_test_123", "attacker_new@mail.ru", client_ip="127.0.0.1")
             self.assertIn("уже привязана почта", str(ctx.exception))
 
+    def test_08_cooldowns_work_when_monotonic_clock_near_zero(self):
+        import contextlib
+        import sqlite3
+        import app
+
+        mock_replica = MagicMock()
+
+        @contextlib.contextmanager
+        def ro_mock():
+            conn = sqlite3.connect(self.db_path, timeout=5.0, isolation_level=None)
+            conn.row_factory = sqlite3.Row
+            try:
+                yield conn
+            finally:
+                conn.close()
+
+        mock_replica.ro_connection = ro_mock
+        self.store._replica_mgr = mock_replica
+
+        with patch("time.monotonic", return_value=5.0):
+            # First miss on newly booted OS (monotonic < 60s) must still sync
+            self.store.get_order("ord_boot123456")
+            self.assertEqual(mock_replica.force_sync.call_count, 1)
+            # Immediate repeat within cooldown must not sync again
+            self.store.get_order("ord_boot123456")
+            self.assertEqual(mock_replica.force_sync.call_count, 1)
+
+            self.store.get_profile("prf_boot123456")
+            self.assertEqual(mock_replica.force_sync.call_count, 2)
+            self.store.get_profile("prf_boot123456")
+            self.assertEqual(mock_replica.force_sync.call_count, 2)
+
+            self.store.get_profile_by_xui_email("boot_test@example.com")
+            self.assertEqual(mock_replica.force_sync.call_count, 3)
+            self.store.get_profile_by_xui_email("boot_test@example.com")
+            self.assertEqual(mock_replica.force_sync.call_count, 3)
+
+            # Slot switch cooldown under low uptime (monotonic < 15s) must allow first call
+            self.assertTrue(app.check_slot_switch_cooldown("boot_slot_key", cooldown_seconds=15.0))
+            self.assertFalse(app.check_slot_switch_cooldown("boot_slot_key", cooldown_seconds=15.0))
+
 
 if __name__ == "__main__":
     unittest.main()

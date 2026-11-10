@@ -316,8 +316,8 @@ def check_slot_switch_cooldown(key: str, cooldown_seconds: float = 15.0) -> bool
     """Return True if switch action is allowed, False if within cooldown period."""
     now_m = time.monotonic()
     with _slot_switch_lock:
-        last_ts = _slot_switch_cooldown.get(key, 0.0)
-        if now_m - last_ts < cooldown_seconds:
+        last_ts = _slot_switch_cooldown.get(key)
+        if last_ts is not None and (now_m - last_ts < cooldown_seconds):
             return False
         _slot_switch_cooldown[key] = now_m
         if len(_slot_switch_cooldown) > 10000:

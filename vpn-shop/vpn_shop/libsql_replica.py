@@ -114,7 +114,7 @@ class LibsqlReplicaManager:
         self._sync_lock = threading.Lock()
         self._exec_lock = threading.RLock()
         self._lock = self._exec_lock
-        self._last_sync_at = 0.0
+        self._last_sync_at = -1e9
         self._ro_local = threading.local()
         self._ro_pool: queue.LifoQueue[sqlite3.Connection] = queue.LifoQueue(maxsize=32)
         self._connect_replica()
