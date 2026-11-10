@@ -300,6 +300,100 @@ class TestOpenFluxManager(unittest.TestCase):
         remaining = self.conn.execute("SELECT profile_public_id, attempts FROM openflux_cleanup_queue").fetchall()
         self.assertEqual([(r["profile_public_id"], r["attempts"]) for r in remaining], [("prf_test_user_1", 10)])
 
+    def test_confirm_vs_cancel_cas_unique_container_legacy_doc_and_whitespace_watchdog(self):
+        import time
+
+        openflux_manager.init_openflux_db(self.conn)
+        now = int(time.time())
+        expired_at = now - (openflux_manager.MIGRATION_TIMEOUT_SECONDS + 30)
+
+        # 1. Start switch uses generation-unique pending container and preserves legacy doc cleanup in outbox
+        self.conn.execute(
+            """
+            INSERT INTO openflux_slots (
+                profile_public_id, slot_label, status,
+                active_server, active_doc_name, active_doc_url, active_container_name,
+                created_at, updated_at
+            ) VALUES (
+                'prf_test_user_1', 'Белые списки (OpenFlux)', 'active',
+                'nl', 'cups_act_race', 'https://interview.cups.online/live-coding/?room=act_race', 'openflux-worker-prf_test_user_1',
+                ?, ?
+            )
+            """,
+            (now - 500, now - 500),
+        )
+        # Existing pending legacy doc cleanup for 'de' from an earlier failure
+        self.conn.execute(
+            """
+            INSERT INTO openflux_cleanup_queue (
+                profile_public_id, server_code, container_name, doc_name, created_at, attempts
+            ) VALUES ('prf_test_user_1', 'de', 'openflux-worker-prf_test_user_1-pending', 'legacy_old.docx', ?, 1)
+            """,
+            (now - 100,),
+        )
+        self.conn.commit()
+
+        with patch("vpn_shop.openflux_manager.create_cups_room", return_value=("11111111-2222-3333-4444-555555555555", "https://interview.cups.online/live-coding/?room=11111111-2222-3333-4444-555555555555")), \
+             patch("vpn_shop.openflux_manager.start_openflux_worker", return_value=True):
+            sw = openflux_manager.start_server_switch(self.conn, "prf_test_user_1", "de")
+        self.assertEqual(sw["status"], "migrating")
+        self.assertIn("-pend-", sw["pending_container_name"])
+
+        # Legacy doc outbox entry was NOT deleted by start_server_switch, and draining outbox deletes legacy doc without stopping new worker!
+        stopped = []
+        deleted_docs = []
+        with patch("vpn_shop.openflux_manager.stop_openflux_worker", side_effect=lambda s, c: stopped.append((s, c)) or True), \
+             patch("vpn_shop.openflux_manager.rclone_delete_user_doc", side_effect=lambda d: deleted_docs.append(d) or True):
+            openflux_manager.process_pending_openflux_cleanups(self.conn)
+        self.assertEqual(deleted_docs, ["legacy_old.docx"])
+        self.assertNotIn(("de", sw["pending_container_name"]), stopped)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM openflux_cleanup_queue").fetchone()[0], 0)
+
+        # 2. Confirm after cancel returns cancelled slot cleanly without resurrecting stopped pending worker
+        with patch("vpn_shop.openflux_manager.stop_openflux_worker", return_value=True):
+            openflux_manager.cancel_server_switch(self.conn, "prf_test_user_1")
+        post_cancel = openflux_manager.confirm_server_switch(self.conn, "prf_test_user_1", async_cleanup=False)
+        self.assertEqual(post_cancel["active_server"], "nl")
+        self.assertIsNone(post_cancel["pending_server"])
+
+        # 3. Cancel after confirm does NOT stop newly promoted server
+        with patch("vpn_shop.openflux_manager.create_cups_room", return_value=("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "https://interview.cups.online/live-coding/?room=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")), \
+             patch("vpn_shop.openflux_manager.start_openflux_worker", return_value=True):
+            openflux_manager.start_server_switch(self.conn, "prf_test_user_1", "de")
+        with patch("vpn_shop.openflux_manager.stop_openflux_worker", return_value=True), \
+             patch("vpn_shop.openflux_manager.rename_openflux_worker", return_value=True):
+            confirmed = openflux_manager.confirm_server_switch(self.conn, "prf_test_user_1", async_cleanup=False)
+        self.assertEqual(confirmed["active_server"], "de")
+
+        with patch("vpn_shop.openflux_manager.stop_openflux_worker") as mock_stop_after_confirm:
+            won_late, _ = openflux_manager.cancel_expired_migration_if_due(self.conn, "prf_test_user_1")
+        self.assertFalse(won_late)
+        mock_stop_after_confirm.assert_not_called()
+
+        # 4. Watchdog catches whitespace-only malformed migrating rows (Finding #8)
+        self.conn.execute(
+            """
+            INSERT INTO openflux_slots (
+                profile_public_id, slot_label, status,
+                active_server, active_doc_name, active_doc_url, active_container_name,
+                pending_server, pending_doc_name, pending_doc_url, pending_container_name,
+                pending_started_at, created_at, updated_at
+            ) VALUES (
+                'prf_test_user_2', 'Белые списки (OpenFlux)', 'migrating',
+                'nl', 'cups_act_ws', 'https://interview.cups.online/live-coding/?room=act_ws', 'openflux-worker-prf_test_user_2',
+                '   ', 'cups_ws', '   ', NULL,
+                ?, ?, ?
+            )
+            """,
+            (now + 999, expired_at, expired_at),
+        )
+        self.conn.commit()
+        cleaned = openflux_manager.cleanup_expired_migrations(self.conn)
+        self.assertEqual(cleaned, 1)
+        repaired = openflux_manager.get_or_create_openflux_slot(self.conn, "prf_test_user_2")
+        self.assertEqual(repaired["status"], "active")
+        self.assertEqual(repaired["active_server"], "nl")
+
 
 if __name__ == "__main__":
     unittest.main()

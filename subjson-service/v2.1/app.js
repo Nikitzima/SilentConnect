@@ -2154,7 +2154,7 @@ function verifyOfActionCommitted(action, statePayload, prevCtx = {}) {
   const tgt = normOfSrv(prevCtx.targetCountry);
   const prevSrv = normOfSrv(prevCtx.prevCountry);
   if (action === 'activate') {
-    return st === 'active' && Boolean(slot.active_link || statePayload.active_link);
+    return st === 'active' && Boolean(slot.active_link || statePayload.active_link) && (!tgt || actSrv === tgt);
   }
   if (action === 'switch_prepare') {
     return st === 'migrating' && (!tgt || pendSrv === tgt);
@@ -3895,7 +3895,7 @@ if (window.SC_PROD) {
             );
             closeAllModals();
             if (res.ok) {
-              const srv = AWG_SERVERS[S.ofCountry || targetCode] || AWG_SERVERS.nl;
+              const srv = AWG_SERVERS[wasInactive ? (S.ofCountry || targetCode) : (S.ofTargetCountry || targetCode)] || AWG_SERVERS[targetCode] || AWG_SERVERS.nl;
               if (wasInactive) {
                 toast(`✓ Слот OpenFlux активирован (${srv.name})! Скопируйте ключ или нажмите «Подключить в OpenFlux».`);
               } else {

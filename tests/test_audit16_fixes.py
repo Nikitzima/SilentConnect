@@ -432,7 +432,7 @@ class TestAudit16Fixes(unittest.TestCase):
         self.assertEqual(stored["meta_json"], {"payment_provider": "yoomoney"})
         self.assertNotIn("web_token", stored["meta_json"])
 
-    def test_12_miss_sync_global_rate_limit_and_lru_eviction(self):
+    def test_12_miss_sync_lru_cooldown_without_starving_fresh_orders(self):
         import contextlib
         import sqlite3
 
@@ -448,24 +448,57 @@ class TestAudit16Fixes(unittest.TestCase):
                 conn.close()
 
         mock_mgr.ro_connection = ro_mock
+
+        now = int(time.time())
+        expired_subs = []
+        for idx in range(25):
+            prof = self.store.create_profile(
+                xui_inbound_id=1,
+                transport="tcp",
+                profile_mode="personal",
+                family_label=None,
+                xui_email=f"exp_poll_{idx}@example.com",
+                xui_client_id=f"00000000-0000-4000-8000-{idx:012d}",
+                xui_sub_id=f"sub_exp_poll_{idx}",
+                expires_at=now - 60,
+            )
+            with self.store.transaction() as wconn:
+                wconn.execute("UPDATE profiles SET status = 'expired' WHERE public_id = ?", (prof["public_id"],))
+            expired_subs.append(prof["public_id"])
+
         self.store._replica_mgr = mock_mgr
 
         with patch("time.monotonic", return_value=100.0):
             # Repeat same ID within 60s -> only 1 sync
+            mock_mgr.force_sync.reset_mock()
             for _ in range(5):
                 self.store.get_order("ord_same_cooldown")
             self.assertEqual(mock_mgr.force_sync.call_count, 1)
 
-            # Storm of 30 distinct missing IDs -> capped globally at 20 syncs per 60s
+            # 25 expired profile polls must NOT starve a newly paid order lookup
             mock_mgr.force_sync.reset_mock()
-            for idx in range(30):
-                self.store.get_order(f"ord_storm_{idx}")
-            self.assertEqual(mock_mgr.force_sync.call_count, 19)  # 1 prior + 19 = 20 total in window
+            for pid in expired_subs:
+                self.store.get_profile(pid)
+            prior_calls = mock_mgr.force_sync.call_count
+            self.assertEqual(prior_calls, 25)
+            self.store.get_order("ord_fresh_paid_999")
+            self.assertEqual(mock_mgr.force_sync.call_count, prior_calls + 1)
 
-        # Window expires (+61s) -> sync allowed again
+            # LRU eviction stays bounded under flood of distinct keys
+            from vpn_shop import store as store_mod
+            orig_max = store_mod._MISS_SYNC_MAX_ENTRIES
+            store_mod._MISS_SYNC_MAX_ENTRIES = 10
+            try:
+                for idx in range(20):
+                    self.store.get_order(f"ord_lru_{idx}")
+                self.assertLessEqual(len(self.store._miss_sync_at), 10)
+            finally:
+                store_mod._MISS_SYNC_MAX_ENTRIES = orig_max
+
+        # Window expires (+61s) -> sync allowed again for previously cooled-down key
         with patch("time.monotonic", return_value=161.5):
             mock_mgr.force_sync.reset_mock()
-            self.store.get_order("ord_after_window")
+            self.store.get_order("ord_same_cooldown")
             self.assertEqual(mock_mgr.force_sync.call_count, 1)
 
 

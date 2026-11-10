@@ -328,6 +328,24 @@ RekeyAfterTime = 120
         with self.assertRaises(awg_manager.ReconciliationAbortedError):
             awg_manager.reconcile_awg_peers("fi", dry_run=True, allow_empty=False, store=store)
 
+        # Case A2: ONLY historical expired/inactive profile exists -> STILL aborted (must not wipe active peers)
+        store._replica_mgr = None
+        hist_prof = store.create_profile(
+            xui_inbound_id=1,
+            transport="tcp",
+            profile_mode="personal",
+            family_label=None,
+            xui_email="fi-expired-hist@example.com",
+            xui_client_id="33333333-3333-3333-3333-333333333333",
+            xui_sub_id="sub_fi_expired_hist",
+            expires_at=now - 3600,
+        )
+        with store.transaction() as wconn:
+            wconn.execute("UPDATE profiles SET status = 'expired' WHERE public_id = ?", (hist_prof["public_id"],))
+        store._replica_mgr = mock_mgr
+        with self.assertRaises(awg_manager.ReconciliationAbortedError):
+            awg_manager.reconcile_awg_peers("fi", dry_run=True, allow_empty=False, store=store)
+
         # Detach mock replica temporarily while seeding active profile on real primary DB
         store._replica_mgr = None
         store.create_profile(

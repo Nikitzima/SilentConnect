@@ -1171,6 +1171,23 @@ let fetchCalls = [];
 let mockFetchImpl = async () => ({{ ok: true, status: 200, json: async () => ({{ ok: true }}) }});
 let scheduledTimeouts = [];
 let fakeTimeouts = 0;
+const capturedToasts = [];
+const pickBtnCaptureHandlers = [];
+
+const toastBodyEl = {{
+  set textContent(v) {{ capturedToasts.push(String(v || '')); }},
+  get textContent() {{ return capturedToasts[capturedToasts.length - 1] || ''; }}
+}};
+const toastEl = makeEl('toast');
+toastEl.querySelector = (sel) => (sel === '.toast-body' ? toastBodyEl : null);
+
+const wlPickBtnEl = makeEl('wlConfirmPickBtn');
+wlPickBtnEl.addEventListener = (ev, fn, cap) => {{
+  if (ev === 'click' && cap) pickBtnCaptureHandlers.push(fn);
+}};
+
+const radioCheckedEl = makeEl('wl_radio');
+radioCheckedEl.value = 'de';
 
 const context = {{
   console,
@@ -1224,7 +1241,12 @@ const context = {{
     readyState: 'complete',
     createElement: (tag) => makeEl(tag),
     createTextNode: (t) => ({{ textContent: String(t || '') }}),
-    querySelector: () => makeEl('q'),
+    querySelector: (sel) => {{
+      if (sel === '#toast') return toastEl;
+      if (sel === '#wlConfirmPickBtn') return wlPickBtnEl;
+      if (sel === 'input[name="wl_country"]:checked') return radioCheckedEl;
+      return makeEl(sel || 'q');
+    }},
     querySelectorAll: () => [],
     getElementById: () => makeEl('g'),
     addEventListener() {{}},
@@ -1340,6 +1362,42 @@ vm.runInContext(code, context);
   assert.strictEqual(rFail.ok, false);
   assert.strictEqual(rFail.recovered, false);
   assert.strictEqual(fetchCalls.length, 2);
+
+  // 6. Qodo #5: activate recovery rejects wrong active_server mismatch
+  assert.strictEqual(
+    internals.verifyOfActionCommitted(
+      'activate',
+      {{ ok: true, status: 'active', active_server: 'nl', active_link: 'openflux://v1/nl' }},
+      {{ targetCountry: 'de' }}
+    ),
+    false,
+    'activate recovery must reject wrong active server'
+  );
+  assert.strictEqual(
+    internals.verifyOfActionCommitted(
+      'activate',
+      {{ ok: true, status: 'active', active_server: 'de', active_link: 'openflux://v1/de' }},
+      {{ targetCountry: 'de' }}
+    ),
+    true
+  );
+
+  // 7. Qodo #4: switch_prepare toast names target server (Германия), not old active server (Нидерланды)
+  assert.strictEqual(pickBtnCaptureHandlers.length, 1);
+  internals.applyOfSlotPayload({{ ok: true, status: 'active', active_server: 'nl', active_link: 'openflux://v1/nl' }});
+  await flushMicrotasks();
+  capturedToasts.length = 0;
+  radioCheckedEl.value = 'de';
+  mockFetchImpl = async () => ({{
+    ok: true,
+    status: 200,
+    json: async () => ({{ ok: true, status: 'migrating', active_server: 'nl', pending_server: 'de', pending_remaining_seconds: 300, pending_link: 'openflux://v1/de_pend' }})
+  }});
+  await pickBtnCaptureHandlers[0]({{ preventDefault() {{}}, stopImmediatePropagation() {{}} }});
+  const prepToast = capturedToasts.find(m => m.includes('подготовлен')) || '';
+  assert.ok(prepToast.includes('Германия'), 'switch_prepare toast must mention target server Германия: ' + prepToast);
+  assert.ok(!prepToast.includes('Нидерланды'), 'switch_prepare toast must NOT name old server Нидерланды: ' + prepToast);
+
   console.log('NODE_V8_OPENFLUX_OK');
 }})().catch(err => {{
   console.error(err);

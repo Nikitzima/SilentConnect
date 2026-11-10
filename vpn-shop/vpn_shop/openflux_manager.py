@@ -590,17 +590,18 @@ def start_server_switch(conn: sqlite3.Connection, profile_id: str, target_server
         raise ValueError("Слот должен быть активен для запуска смены сервера")
 
     clean_uid = re.sub(r"[^\w\-]", "", profile_id)
-    pending_container = f"openflux-worker-{clean_uid}-pending"
 
     # Step 1: Create parallel room on cups.online
     pending_room_uuid, pending_public_url = create_cups_room()
     pending_doc_name = f"cups_{pending_room_uuid}"
+    short_gen = re.sub(r"[^\w\-]", "", pending_room_uuid.split("-")[0])[:8] or "gen"
+    pending_container = f"openflux-worker-{clean_uid}-pend-{int(time.time())}-{short_gen}"
 
     # Step 2: Start parallel Docker worker on target server
     if not start_openflux_worker(target_srv, pending_container, pending_public_url):
         raise RuntimeError(f"Не удалось запустить новый воркер на сервере {target_srv.upper()}")
 
-    # Step 3: Record pending migration state and prune superseded queued cleanups for same target container
+    # Step 3: Record pending migration state atomically
     now = int(time.time())
     conn.execute(
         """
@@ -616,15 +617,6 @@ def start_server_switch(conn: sqlite3.Connection, profile_id: str, target_server
         """,
         (target_srv, pending_doc_name, pending_public_url, pending_container, now, now, profile_id),
     )
-    conn.execute(
-        """
-        DELETE FROM openflux_cleanup_queue
-        WHERE profile_public_id = ?
-          AND LOWER(COALESCE(server_code, '')) = ?
-          AND (container_name IS NULL OR container_name = '' OR container_name = ?)
-        """,
-        (profile_id, target_srv, pending_container),
-    )
     conn.commit()
 
     return get_or_create_openflux_slot(conn, profile_id)
@@ -634,51 +626,75 @@ def confirm_server_switch(conn: sqlite3.Connection, profile_id: str, async_clean
     """
     Phase 2 of Two-Phase Handover:
     - User confirmed they imported the new config.
-    - Idempotent: if already active on target, returns current active slot.
-    - Promotes pending to active immediately in DB.
+    - Idempotent: if already active on target (or confirmed), returns current active slot.
+    - Atomically validates 'migrating' + promotes pending -> active inside BEGIN IMMEDIATE (CAS).
     - Decommissions old server (stops old worker, deletes old .docx, renames container) asynchronously.
     """
-    slot = get_or_create_openflux_slot(conn, profile_id)
-    if slot["status"] == "active" and not slot.get("pending_server"):
-        # Already confirmed and active! Idempotent return.
-        return slot
-
-    if slot["status"] != "migrating" or not slot.get("pending_server"):
-        raise ValueError("Нет активной процедуры смены сервера для подтверждения")
-
-    old_srv = slot.get("active_server")
-    old_container = slot.get("active_container_name")
-    old_doc = slot.get("active_doc_name")
-
-    new_srv = slot["pending_server"]
-    new_doc = slot["pending_doc_name"]
-    new_url = slot["pending_doc_url"]
-    new_container = slot["pending_container_name"]
+    init_openflux_db(conn)
+    get_or_create_openflux_slot(conn, profile_id)
     clean_uid = re.sub(r"[^\w\-]", "", profile_id)
     canonical_container = f"openflux-worker-{clean_uid}"
-
-    # 1. Finalize slot state immediately in DB!
     now = int(time.time())
-    conn.execute(
-        """
-        UPDATE openflux_slots
-        SET status = 'active',
-            active_server = ?,
-            active_doc_name = ?,
-            active_doc_url = ?,
-            active_container_name = ?,
-            pending_server = NULL,
-            pending_doc_name = NULL,
-            pending_doc_url = NULL,
-            pending_container_name = NULL,
-            pending_started_at = NULL,
-            updated_at = ?
-        WHERE profile_public_id = ?
-        """,
-        (new_srv, new_doc, new_url, canonical_container, now, profile_id),
-    )
-    conn.commit()
 
+    def _tx(c: sqlite3.Connection):
+        row = c.execute(
+            "SELECT * FROM openflux_slots WHERE profile_public_id = ?",
+            (profile_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError("Нет активной процедуры смены сервера для подтверждения")
+        slot_dict = dict(row)
+        if slot_dict["status"] == "active" and not slot_dict.get("pending_server"):
+            return False, None, slot_dict
+        if slot_dict["status"] != "migrating" or not slot_dict.get("pending_server"):
+            raise ValueError("Нет активной процедуры смены сервера для подтверждения")
+
+        old_srv = slot_dict.get("active_server")
+        old_container = slot_dict.get("active_container_name")
+        old_doc = slot_dict.get("active_doc_name")
+        new_srv = slot_dict["pending_server"]
+        new_doc = slot_dict["pending_doc_name"]
+        new_url = slot_dict["pending_doc_url"]
+        new_container = slot_dict["pending_container_name"]
+
+        upd = c.execute(
+            """
+            UPDATE openflux_slots
+            SET status = 'active',
+                active_server = ?,
+                active_doc_name = ?,
+                active_doc_url = ?,
+                active_container_name = ?,
+                pending_server = NULL,
+                pending_doc_name = NULL,
+                pending_doc_url = NULL,
+                pending_container_name = NULL,
+                pending_started_at = NULL,
+                updated_at = ?
+            WHERE profile_public_id = ? AND status = 'migrating'
+            RETURNING id
+            """,
+            (new_srv, new_doc, new_url, canonical_container, now, profile_id),
+        )
+        if upd.fetchone() is None:
+            fresh = c.execute(
+                "SELECT * FROM openflux_slots WHERE profile_public_id = ?",
+                (profile_id,),
+            ).fetchone()
+            return False, None, (dict(fresh) if fresh else slot_dict)
+
+        fresh = c.execute(
+            "SELECT * FROM openflux_slots WHERE profile_public_id = ?",
+            (profile_id,),
+        ).fetchone()
+        info = (old_srv, old_container, old_doc, new_srv, new_container)
+        return True, info, (dict(fresh) if fresh else slot_dict)
+
+    won_cas, info, slot_after = _exec_in_tx(conn, _tx)
+    if not won_cas or info is None:
+        return slot_after
+
+    old_srv, old_container, old_doc, new_srv, new_container = info
     LOGGER.info("Confirmed server switch for %s: migrated to %s", profile_id, new_srv)
 
     # 2. Decommission old resources & rename worker
@@ -687,9 +703,9 @@ def confirm_server_switch(conn: sqlite3.Connection, profile_id: str, async_clean
             # Grace period so the client's HTTP response is fully flushed over the tunnel before container manipulation
             time.sleep(2.5)
             if old_srv:
-                if old_container:
+                if old_container and (old_srv != new_srv or old_container != new_container):
                     stop_openflux_worker(old_srv, old_container)
-                if old_container != canonical_container:
+                if old_container != canonical_container and (old_srv != new_srv or new_container != canonical_container):
                     stop_openflux_worker(old_srv, canonical_container)
             if old_doc and not old_doc.startswith("cups_"):
                 rclone_delete_user_doc(old_doc)
@@ -706,7 +722,7 @@ def confirm_server_switch(conn: sqlite3.Connection, profile_id: str, async_clean
     else:
         _do_cleanup()
 
-    return get_or_create_openflux_slot(conn, profile_id)
+    return slot_after
 
 
 def _exec_in_tx(conn: sqlite3.Connection, fn):
@@ -732,23 +748,17 @@ def _cleanup_pending_openflux_resources(
     pending_container: Optional[str],
     pending_doc: Optional[str],
 ) -> tuple[bool, str]:
-    """Stop pending container(s) and remove legacy Mail.ru doc. Returns (ok, err_msg)."""
+    """Stop pending container (unique or legacy fallback) and remove legacy Mail.ru doc. Returns (ok, err_msg)."""
     errors: list[str] = []
     clean_uid = re.sub(r"[^\w\-]", "", profile_id)
     if pending_srv:
-        containers: list[str] = []
-        if pending_container:
-            containers.append(pending_container)
-        default_pending = f"openflux-worker-{clean_uid}-pending"
-        if default_pending not in containers:
-            containers.append(default_pending)
-        for cname in containers:
-            try:
-                res = stop_openflux_worker(pending_srv, cname)
-                if res is False:
-                    errors.append(f"stop_openflux_worker({pending_srv}, {cname}) returned False")
-            except Exception as exc:
-                errors.append(f"stop_openflux_worker({pending_srv}, {cname}): {exc}")
+        target_container = (pending_container or "").strip() or f"openflux-worker-{clean_uid}-pending"
+        try:
+            res = stop_openflux_worker(pending_srv, target_container)
+            if res is False:
+                errors.append(f"stop_openflux_worker({pending_srv}, {target_container}) returned False")
+        except Exception as exc:
+            errors.append(f"stop_openflux_worker({pending_srv}, {target_container}): {exc}")
 
     if pending_doc and not str(pending_doc).startswith("cups_"):
         try:
@@ -818,7 +828,7 @@ def _cancel_migration_cas(
         if slot_dict.get("status") != "migrating":
             return False, None, None, None, None, slot_dict
 
-        pending_srv = slot_dict.get("pending_server")
+        pending_srv = (slot_dict.get("pending_server") or "").strip() or None
         pending_container = slot_dict.get("pending_container_name")
         pending_doc = slot_dict.get("pending_doc_name")
         pending_doc_url = (slot_dict.get("pending_doc_url") or "").strip()
@@ -907,16 +917,17 @@ def _is_cleanup_item_live_in_slot(conn: sqlite3.Connection, item: dict[str, Any]
     active_default = f"openflux-worker-{clean_uid}"
 
     status = str(slot.get("status") or "")
+    target_cname = item_container or pending_default
     if status == "migrating":
         pend_srv = (slot.get("pending_server") or "").strip().lower()
         pend_cname = (slot.get("pending_container_name") or "").strip() or pending_default
-        if pend_srv == item_srv and (not item_container or item_container == pend_cname or item_container == pending_default):
+        if pend_srv == item_srv and target_cname == pend_cname:
             return True
 
     if status in ("active", "migrating"):
         act_srv = (slot.get("active_server") or "").strip().lower()
         act_cname = (slot.get("active_container_name") or "").strip() or active_default
-        if act_srv == item_srv and item_container and (item_container == act_cname or item_container == active_default):
+        if act_srv == item_srv and item_container and item_container == act_cname:
             return True
 
     return False
@@ -1003,9 +1014,8 @@ def cleanup_expired_migrations(conn: sqlite3.Connection, timeout_seconds: int = 
           AND (
               pending_started_at IS NULL
               OR pending_started_at <= ?
-              OR pending_server IS NULL
-              OR pending_doc_url IS NULL
-              OR pending_doc_url = ''
+              OR TRIM(COALESCE(pending_server, '')) = ''
+              OR TRIM(COALESCE(pending_doc_url, '')) = ''
           )
         """,
         (deadline,),

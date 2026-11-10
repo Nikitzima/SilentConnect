@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import OrderedDict, deque
+from collections import OrderedDict
 from contextlib import contextmanager
 import json
 import logging
@@ -36,8 +36,6 @@ except ImportError:
 
 PUBLIC_ID_RE = re.compile(r"^(ord|prf)_[a-z0-9_-]{6,36}$")
 _MISS_SYNC_MAX_ENTRIES = 5_000
-_MISS_SYNC_GLOBAL_CAP = 20
-_MISS_SYNC_WINDOW_SEC = 60.0
 
 
 SCHEMA = """
@@ -505,7 +503,6 @@ class Store:
         self._replica_mgr: LibsqlReplicaManager | None = None
         self._miss_sync_at: OrderedDict[str, float] = OrderedDict()
         self._miss_sync_lock = threading.Lock()
-        self._miss_sync_window: deque[float] = deque()
         if replica_enabled and self._turso_url and self._turso_token and HAS_LIBSQL and LibsqlReplicaManager is not None:
             r_name = (replica_name or os.environ.get("TURSO_REPLICA_NAME", "")).strip()
             if not r_name:
@@ -1133,15 +1130,11 @@ class Store:
             conn.execute("DELETE FROM magic_links WHERE expires_at < ?", (now - 86400,))
 
     def _should_miss_sync(self, key: str, cooldown: float = 60.0) -> bool:
-        """Bounded LRU+TTL cooldown and global burst cap for miss-triggered replica syncs."""
+        """Bounded LRU+TTL cooldown for miss-triggered replica syncs (global cadence guarded by force_sync)."""
         now_m = time.monotonic()
         with self._miss_sync_lock:
             last_sync = self._miss_sync_at.get(key)
             if last_sync is not None and (now_m - last_sync < cooldown):
-                return False
-            while self._miss_sync_window and (now_m - self._miss_sync_window[0] >= _MISS_SYNC_WINDOW_SEC):
-                self._miss_sync_window.popleft()
-            if len(self._miss_sync_window) >= _MISS_SYNC_GLOBAL_CAP:
                 return False
             if key in self._miss_sync_at:
                 self._miss_sync_at.move_to_end(key)
@@ -1154,7 +1147,6 @@ class Store:
                 while len(self._miss_sync_at) >= _MISS_SYNC_MAX_ENTRIES:
                     self._miss_sync_at.popitem(last=False)
             self._miss_sync_at[key] = now_m
-            self._miss_sync_window.append(now_m)
             return True
 
     def consume_magic_link(self, token: str, *, single_use: bool = False, authoritative: bool = False) -> str | None:
@@ -3514,7 +3506,10 @@ class Store:
             now = now_ts()
             code = server_code.lower().strip()
             with self.read_connection() as conn:
-                has_profiles = conn.execute("SELECT 1 FROM profiles LIMIT 1").fetchone()
+                has_profiles = conn.execute(
+                    "SELECT 1 FROM profiles WHERE status = 'active' AND (expires_at <= 0 OR expires_at > ?) LIMIT 1",
+                    (now,),
+                ).fetchone()
                 if not has_profiles:
                     return False
                 row = conn.execute(
