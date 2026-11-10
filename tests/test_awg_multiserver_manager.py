@@ -8,6 +8,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -20,6 +21,7 @@ if str(VPN_SHOP_DIR / "vpn_shop") not in sys.path:
     sys.path.insert(0, str(VPN_SHOP_DIR / "vpn_shop"))
 
 from vpn_shop import awg_manager
+from vpn_shop.store import Store
 try:
     from vpn_shop import awg_reconcile
 except ImportError:
@@ -299,6 +301,58 @@ RekeyAfterTime = 120
         """Verify 500 GB quota in reconcile."""
         self.assertEqual(awg_reconcile.QUOTA_GB, 500)
         self.assertEqual(awg_reconcile.QUOTA_BYTES, 500 * (1024 ** 3))
+
+    @patch.object(awg_manager, "_server_conf", return_value="[Interface]\nPrivateKey = fake\n")
+    @patch.object(awg_manager, "_get_server", return_value={"code": "fi", "reserved_ips": set()})
+    def test_zero_active_slots_fail_closed_vs_verified_empty_sync(self, _mock_srv, _mock_conf):
+        """Empty slots require verified replica sync + active profiles in DB; sync failures must abort."""
+        import contextlib
+
+        store = Store(self.db_path)
+        store.init()
+        now = int(time.time())
+
+        @contextlib.contextmanager
+        def ro_conn():
+            conn = sqlite3.connect(self.db_path, timeout=5.0, isolation_level=None)
+            conn.row_factory = sqlite3.Row
+            try:
+                yield conn
+            finally:
+                conn.close()
+
+        # Case A: 0 active profiles + 0 active slots -> aborted (safety circuit breaker)
+        mock_mgr = MagicMock()
+        mock_mgr.ro_connection = ro_conn
+        store._replica_mgr = mock_mgr
+        with self.assertRaises(awg_manager.ReconciliationAbortedError):
+            awg_manager.reconcile_awg_peers("fi", dry_run=True, allow_empty=False, store=store)
+
+        # Detach mock replica temporarily while seeding active profile on real primary DB
+        store._replica_mgr = None
+        store.create_profile(
+            xui_inbound_id=1,
+            transport="tcp",
+            profile_mode="personal",
+            family_label=None,
+            xui_email="fi-empty-check@example.com",
+            xui_client_id="44444444-4444-4444-4444-444444444444",
+            xui_sub_id="sub_fi_empty",
+            expires_at=now + 86400,
+        )
+        store._replica_mgr = mock_mgr
+
+        # Case B: verify_sync fails -> fail-closed ReconciliationAbortedError
+        mock_mgr.verify_sync.side_effect = RuntimeError("turso timeout")
+        with self.assertRaises(awg_manager.ReconciliationAbortedError):
+            awg_manager.reconcile_awg_peers("fi", dry_run=True, allow_empty=False, store=store)
+
+        # Case C: verify_sync succeeds AND active profiles exist -> proceeds instead of raising
+        mock_mgr.verify_sync.side_effect = None
+        res = awg_manager.reconcile_awg_peers("fi", dry_run=True, allow_empty=False, store=store)
+        self.assertEqual(res.get("server_code"), "fi")
+        self.assertEqual(res.get("active_slots_db"), 0)
+        mock_mgr.verify_sync.assert_called()
 
 
 if __name__ == "__main__":

@@ -253,6 +253,110 @@ class StoreReplicaReadRetryTests(unittest.TestCase):
             mock_replica.force_sync.assert_called_once()
             self.assertEqual(call_count, 2)
 
+    def test_begin_failure_clears_tx_state_and_releases_lock(self) -> None:
+        mgr = MagicMock()
+        mgr._exec_lock = threading.Lock()
+        mgr._lock = mgr._exec_lock
+        mgr._conn = MagicMock()
+        mgr._conn.execute.side_effect = RuntimeError("database is locked")
+
+        proxy = LibsqlConnectionProxy(mgr)
+        with self.assertRaises(sqlite3.OperationalError):
+            proxy.execute("BEGIN IMMEDIATE")
+
+        self.assertFalse(proxy.in_transaction)
+        self.assertFalse(proxy._tx_lock_held)
+        acquired = mgr._exec_lock.acquire(blocking=False)
+        self.assertTrue(acquired, "Lock must be released when BEGIN fails")
+        if acquired:
+            mgr._exec_lock.release()
+
+    def test_begin_stream_lost_releases_lock_before_reconnect_and_retries(self) -> None:
+        mgr = MagicMock()
+        mgr._exec_lock = threading.Lock()
+        mgr._lock = mgr._exec_lock
+        mgr._conn = MagicMock()
+        begin_cur = MagicMock()
+        begin_cur.description = None
+        begin_cur.rowcount = 0
+        begin_cur.lastrowid = None
+
+        reconnect_saw_unlocked = []
+
+        def check_unlocked_reconnect():
+            acquired = mgr._exec_lock.acquire(blocking=False)
+            reconnect_saw_unlocked.append(acquired)
+            if acquired:
+                mgr._exec_lock.release()
+
+        mgr.reconnect.side_effect = check_unlocked_reconnect
+        mgr._conn.execute.side_effect = [RuntimeError("Hrana: stream not found"), begin_cur]
+
+        proxy = LibsqlConnectionProxy(mgr)
+        proxy.execute("BEGIN IMMEDIATE")
+
+        self.assertTrue(proxy.in_transaction)
+        self.assertTrue(proxy._tx_lock_held)
+        self.assertEqual(reconnect_saw_unlocked, [True])
+        mgr.reconnect.assert_called_once()
+        proxy.rollback()
+        self.assertFalse(proxy._tx_lock_held)
+
+    def test_stream_lost_retry_on_execute_and_commit(self) -> None:
+        mgr = MagicMock()
+        mgr._exec_lock = threading.Lock()
+        mgr._lock = mgr._exec_lock
+        mgr._conn = MagicMock()
+        ok_cur = MagicMock()
+        ok_cur.description = [("val",)]
+        ok_cur.fetchone.return_value = (42,)
+        ok_cur.fetchall.return_value = [(42,)]
+        mgr._conn.execute.side_effect = [RuntimeError("Connection reset by peer"), ok_cur]
+
+        proxy = LibsqlConnectionProxy(mgr)
+        res = proxy.execute("SELECT 42").fetchone()
+        self.assertEqual(res[0], 42)
+        mgr.reconnect.assert_called_once()
+
+        mgr.reconnect.reset_mock()
+        mgr._conn.commit.side_effect = [RuntimeError("stream not found"), None]
+        proxy._wrote = True
+        proxy.commit()
+        mgr.reconnect.assert_called_once()
+        mgr.force_sync.assert_called_once()
+
+    def test_verify_sync_propagates_network_error(self) -> None:
+        mgr = LibsqlReplicaManager.__new__(LibsqlReplicaManager)
+        mgr._sync_lock = threading.Lock()
+        mgr._exec_lock = threading.Lock()
+        mgr._ro_pool = __import__("queue").Queue(maxsize=4)
+        mgr._last_sync_at = 0.0
+        mgr._conn = MagicMock()
+        mgr._conn.sync.side_effect = RuntimeError("network unreachable")
+
+        with self.assertRaises(RuntimeError):
+            mgr.verify_sync()
+
+    def test_verify_sync_closes_old_conn_before_reconnect(self) -> None:
+        mgr = LibsqlReplicaManager.__new__(LibsqlReplicaManager)
+        mgr._sync_lock = threading.Lock()
+        mgr._exec_lock = threading.Lock()
+        mgr._ro_pool = __import__("queue").Queue(maxsize=4)
+        mgr._last_sync_at = 0.0
+        old_conn = MagicMock()
+        old_conn.sync.side_effect = RuntimeError("Hrana: stream not found")
+        new_conn = MagicMock()
+        mgr._conn = old_conn
+
+        def fake_connect():
+            mgr._conn = new_conn
+
+        with patch.object(mgr, "_connect_replica", side_effect=fake_connect):
+            mgr.verify_sync()
+
+        old_conn.close.assert_called_once()
+        new_conn.sync.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5931,7 +5931,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             if len(path) == 2 and path[0] == "cabinet":
                 token = path[1]
                 payload = verify_token(token, purpose="magic_link")
-                email = self.checkout.store.consume_magic_link(token, single_use=False) if payload else None
+                email = self.checkout.store.consume_magic_link(token, single_use=False, authoritative=True) if payload else None
                 if not payload or not email or email != str(payload.get("email") or ""):
                     compat_body = (
                         '<section class="section"><h2>Ссылка недействительна или устарела</h2>'

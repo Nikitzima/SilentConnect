@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections import OrderedDict, deque
 from contextlib import contextmanager
 import json
 import logging
 import os
 import re
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any, Iterable, Iterator
@@ -33,6 +35,9 @@ except ImportError:
     HAS_LIBSQL = False
 
 PUBLIC_ID_RE = re.compile(r"^(ord|prf)_[a-z0-9_-]{6,36}$")
+_MISS_SYNC_MAX_ENTRIES = 5_000
+_MISS_SYNC_GLOBAL_CAP = 20
+_MISS_SYNC_WINDOW_SEC = 60.0
 
 
 SCHEMA = """
@@ -498,7 +503,9 @@ class Store:
         )
         replica_enabled = os.environ.get("TURSO_REPLICA_ENABLED", "true").strip().strip('"\'').lower() in ("1", "true", "yes")
         self._replica_mgr: LibsqlReplicaManager | None = None
-        self._miss_sync_at: dict[str, float] = {}
+        self._miss_sync_at: OrderedDict[str, float] = OrderedDict()
+        self._miss_sync_lock = threading.Lock()
+        self._miss_sync_window: deque[float] = deque()
         if replica_enabled and self._turso_url and self._turso_token and HAS_LIBSQL and LibsqlReplicaManager is not None:
             r_name = (replica_name or os.environ.get("TURSO_REPLICA_NAME", "")).strip()
             if not r_name:
@@ -1125,12 +1132,39 @@ class Store:
             # Housekeeping: drop expired links older than a day.
             conn.execute("DELETE FROM magic_links WHERE expires_at < ?", (now - 86400,))
 
-    def consume_magic_link(self, token: str, *, single_use: bool = False) -> str | None:
+    def _should_miss_sync(self, key: str, cooldown: float = 60.0) -> bool:
+        """Bounded LRU+TTL cooldown and global burst cap for miss-triggered replica syncs."""
+        now_m = time.monotonic()
+        with self._miss_sync_lock:
+            last_sync = self._miss_sync_at.get(key)
+            if last_sync is not None and (now_m - last_sync < cooldown):
+                return False
+            while self._miss_sync_window and (now_m - self._miss_sync_window[0] >= _MISS_SYNC_WINDOW_SEC):
+                self._miss_sync_window.popleft()
+            if len(self._miss_sync_window) >= _MISS_SYNC_GLOBAL_CAP:
+                return False
+            if key in self._miss_sync_at:
+                self._miss_sync_at.move_to_end(key)
+            elif len(self._miss_sync_at) >= _MISS_SYNC_MAX_ENTRIES:
+                while self._miss_sync_at:
+                    _, oldest_ts = next(iter(self._miss_sync_at.items()))
+                    if now_m - oldest_ts < cooldown:
+                        break
+                    self._miss_sync_at.popitem(last=False)
+                while len(self._miss_sync_at) >= _MISS_SYNC_MAX_ENTRIES:
+                    self._miss_sync_at.popitem(last=False)
+            self._miss_sync_at[key] = now_m
+            self._miss_sync_window.append(now_m)
+            return True
+
+    def consume_magic_link(self, token: str, *, single_use: bool = False, authoritative: bool = False) -> str | None:
         """
         Validates magic link.
         If single_use is True, burns the link immediately (single-use).
         If single_use is False (default), allows multiple visits within the active TTL window
         (recording used_at on first visit for audit/logging), expiring only after expires_at.
+        When authoritative is True (after external HMAC verification), replica lag or sync
+        cooldowns fall through to the primary write transaction instead of rejecting valid links.
         """
         now = now_ts()
         tok_cands = hash_token_candidates(token, purpose="magic_link")
@@ -1144,7 +1178,7 @@ class Store:
             ).fetchone()
         if not ro_row and self._replica_mgr is not None:
             try:
-                self._replica_mgr.force_sync(min_interval=5.0)
+                self._replica_mgr.force_sync(min_interval=0.0 if authoritative else 5.0)
                 with self.read_connection() as rconn:
                     ro_row = rconn.execute(
                         f"SELECT email, used_at, expires_at FROM magic_links WHERE token_hash IN ({tok_placeholders}) AND expires_at >= ? LIMIT 1",
@@ -1152,12 +1186,13 @@ class Store:
                     ).fetchone()
             except Exception:
                 pass
-        if not ro_row:
+        if not ro_row and not authoritative:
             return None
-        if single_use and ro_row["used_at"] is not None:
-            return None
-        if not single_use and ro_row["used_at"] is not None:
-            return str(ro_row["email"])
+        if ro_row:
+            if single_use and ro_row["used_at"] is not None:
+                return None
+            if not single_use and ro_row["used_at"] is not None:
+                return str(ro_row["email"])
 
         with self.transaction() as conn:
             if single_use:
@@ -1682,14 +1717,10 @@ class Store:
             row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
         if row is None and self._replica_mgr is not None:
             pid = str(public_id_value or "").strip()
-            if PUBLIC_ID_RE.match(pid):
-                now_m = time.monotonic()
-                last_sync = self._miss_sync_at.get(pid)
-                if last_sync is None or (now_m - last_sync >= 60.0):
-                    self._miss_sync_at[pid] = now_m
-                    self._replica_mgr.force_sync(min_interval=2.0)
-                    with self.read_connection() as conn:
-                        row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
+            if PUBLIC_ID_RE.match(pid) and self._should_miss_sync(pid, cooldown=60.0):
+                self._replica_mgr.force_sync(min_interval=2.0)
+                with self.read_connection() as conn:
+                    row = conn.execute("SELECT * FROM orders WHERE public_id = ?", (public_id_value,)).fetchone()
         return self._row_to_dict(row)
 
     def get_order_by_platega_tx_id(self, tx_id: str, _retried: bool = False) -> dict[str, Any] | None:
@@ -1789,8 +1820,11 @@ class Store:
             return row is not None
 
     def update_order_meta_and_external_id(self, public_id_value: str, meta: dict[str, Any], external_id: str | None = None) -> None:
-        """Atomically updates order metadata and external_id in a single write transaction."""
-        payload = json.dumps(meta, ensure_ascii=False)
+        """Atomically updates order metadata and external_id in a single SQL UPDATE."""
+        meta = dict(meta)
+        # Never persist the plaintext web bearer token (kept in-memory only).
+        meta.pop("web_token", None)
+        payload = json.dumps(meta, ensure_ascii=False, separators=(",", ":"))
         now = now_ts()
         with self._connect() as conn:
             if external_id:
@@ -2023,16 +2057,11 @@ class Store:
         if (dict_row is None or is_stale_or_expired) and sync_on_miss and self._replica_mgr is not None:
             pid = str(public_id_value or "").strip()
             # If row is absent, validate format; if row is expired, allow renewal check with 60s cooldown
-            if dict_row is not None or PUBLIC_ID_RE.match(pid):
-                key = f"prf:{pid}"
-                now_m = time.monotonic()
-                last_sync = self._miss_sync_at.get(key)
-                if last_sync is None or (now_m - last_sync >= 60.0):
-                    self._miss_sync_at[key] = now_m
-                    self._replica_mgr.force_sync(min_interval=2.0)
-                    with self.read_connection() as conn:
-                        row = conn.execute("SELECT * FROM profiles WHERE public_id = ?", (public_id_value,)).fetchone()
-                    dict_row = self._row_to_dict(row)
+            if (dict_row is not None or PUBLIC_ID_RE.match(pid)) and self._should_miss_sync(f"prf:{pid}", cooldown=60.0):
+                self._replica_mgr.force_sync(min_interval=2.0)
+                with self.read_connection() as conn:
+                    row = conn.execute("SELECT * FROM profiles WHERE public_id = ?", (public_id_value,)).fetchone()
+                dict_row = self._row_to_dict(row)
         return dict_row
 
     def get_profile_by_xui_email(self, xui_email: str, sync_on_miss: bool = True) -> dict[str, Any] | None:
@@ -2048,19 +2077,14 @@ class Store:
         )
         if (dict_row is None or is_stale_or_expired) and sync_on_miss and self._replica_mgr is not None:
             raw_email = str(xui_email or "").strip().lower()
-            if raw_email:
-                email_key = f"xui:{raw_email}"
-                now_m = time.monotonic()
-                last_sync = self._miss_sync_at.get(email_key)
-                if last_sync is None or (now_m - last_sync >= 60.0):
-                    self._miss_sync_at[email_key] = now_m
-                    self._replica_mgr.force_sync(min_interval=2.0)
-                    with self.read_connection() as conn:
-                        row = conn.execute(
-                            "SELECT * FROM profiles WHERE xui_email = ? ORDER BY id DESC LIMIT 1",
-                            (xui_email,),
-                        ).fetchone()
-                    dict_row = self._row_to_dict(row)
+            if raw_email and self._should_miss_sync(f"xui:{raw_email}", cooldown=60.0):
+                self._replica_mgr.force_sync(min_interval=2.0)
+                with self.read_connection() as conn:
+                    row = conn.execute(
+                        "SELECT * FROM profiles WHERE xui_email = ? ORDER BY id DESC LIMIT 1",
+                        (xui_email,),
+                    ).fetchone()
+                dict_row = self._row_to_dict(row)
         return dict_row
 
     def get_profile_owner(self, profile_public_id: str) -> dict[str, Any] | None:
@@ -2404,28 +2428,42 @@ class Store:
         cutoff = now_ts() if now is None else int(now)
         # Fast read-only check first to prevent opening idle write transactions
         with self.read_connection() as rconn:
-            rows = rconn.execute(
+            has_due = rconn.execute(
                 """
-                SELECT p.*, po.chat_id AS owner_chat_id
-                FROM profiles p
-                LEFT JOIN profile_owners po ON po.profile_public_id = p.public_id
-                WHERE p.status = 'active' AND p.expires_at > 0 AND p.expires_at <= ?
-                ORDER BY p.expires_at ASC, p.id ASC
+                SELECT 1
+                FROM profiles
+                WHERE status = 'active' AND expires_at > 0 AND expires_at <= ?
+                LIMIT 1
                 """,
                 (cutoff,),
-            ).fetchall()
-        if not rows:
+            ).fetchone()
+        if not has_due:
             return []
-        with self._connect() as conn:
-            conn.execute(
+        with self.transaction() as conn:
+            updated = conn.execute(
                 """
                 UPDATE profiles
                 SET status = 'expired'
                 WHERE status = 'active' AND expires_at > 0 AND expires_at <= ?
+                RETURNING id
                 """,
                 (cutoff,),
-            )
-        return [self._row_to_dict(row) or {} for row in rows]
+            ).fetchall()
+            if not updated:
+                return []
+            updated_ids = [int(r["id"]) for r in updated]
+            placeholders = ", ".join("?" for _ in updated_ids)
+            rows = conn.execute(
+                f"""
+                SELECT p.*, po.chat_id AS owner_chat_id
+                FROM profiles p
+                LEFT JOIN profile_owners po ON po.profile_public_id = p.public_id
+                WHERE p.id IN ({placeholders})
+                ORDER BY p.expires_at ASC, p.id ASC
+                """,
+                updated_ids,
+            ).fetchall()
+            return [self._row_to_dict(row) or {} for row in rows]
 
     def mark_profile_expired(self, public_id_value: str) -> None:
         with self._connect() as conn:
@@ -3459,6 +3497,42 @@ class Store:
             return [self._row_to_dict(r) for r in rows if r]
         except Exception as exc:
             raise DatabaseQueryError(f"Database query failed in list_active_awg_slots: {exc}") from exc
+
+    def has_verified_fresh_empty_awg_slots(self, server_code: str) -> bool:
+        """Verify replica freshness (if configured) and confirm profiles exist while server_code has 0 active slots."""
+        if self._replica_mgr is not None:
+            verify_fn = getattr(self._replica_mgr, "verify_sync", None)
+            if not callable(verify_fn):
+                return False
+            try:
+                verify_fn()
+            except Exception as exc:
+                LOGGER.warning("Freshness verification failed before empty AWG reconcile on %s: %s", server_code, exc)
+                return False
+
+        try:
+            now = now_ts()
+            code = server_code.lower().strip()
+            with self.read_connection() as conn:
+                has_profiles = conn.execute("SELECT 1 FROM profiles LIMIT 1").fetchone()
+                if not has_profiles:
+                    return False
+                row = conn.execute(
+                    """
+                    SELECT 1 FROM awg_slots s
+                    JOIN profiles p ON p.public_id = s.profile_public_id
+                    WHERE s.enabled = 1
+                      AND LOWER(s.server_code) = ?
+                      AND p.status = 'active'
+                      AND (p.expires_at <= 0 OR p.expires_at > ?)
+                    LIMIT 1
+                    """,
+                    (code, now),
+                ).fetchone()
+            return row is None
+        except Exception as exc:
+            LOGGER.warning("Authoritative empty-slot check failed for %s: %s", server_code, exc)
+            return False
 
     def list_all_awg_slot_configs(self, profile_public_id: str) -> list[dict[str, Any]]:
         with self.read_connection() as conn:

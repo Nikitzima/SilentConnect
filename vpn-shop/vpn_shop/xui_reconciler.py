@@ -532,19 +532,30 @@ class XuiReconciler:
 
         # 0. Автоматическая проверка и сброс 30-дневного цикла квот AmneziaWG
         try:
+            from .quota import get_quota_cycle_info
+
             now_check = int(time.time())
             with self.store.read_connection() as conn:
                 active_profs = conn.execute(
                     """
-                    SELECT public_id FROM profiles
+                    SELECT public_id, created_at, expires_at, awg_reset_at
+                    FROM profiles
                     WHERE status = 'active'
-                      AND (awg_reset_at IS NULL OR awg_reset_at <= ? OR awg_reset_at > ? + 86400 * 35)
                     """,
-                    (now_check, now_check),
                 ).fetchall()
             for r in active_profs:
                 pid = str(r["public_id"] or "")
-                if pid:
+                if not pid:
+                    continue
+                cur_reset_at = int(r["awg_reset_at"] or 0)
+                cycle = get_quota_cycle_info(
+                    {"created_at": r["created_at"], "expires_at": r["expires_at"]},
+                    now_ts=now_check,
+                )
+                next_reset_utc = int(cycle["next_reset_utc"])
+                if cur_reset_at <= now_check or (
+                    cur_reset_at != next_reset_utc and cur_reset_at > next_reset_utc + 86400
+                ):
                     self.store.ensure_awg_cycle_up_to_date(pid)
         except Exception as exc:
             LOGGER.debug("AWG cycle check skipped on %s: %s", local_node, exc)

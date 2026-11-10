@@ -497,6 +497,71 @@ class TestAwgTrafficAccounting(unittest.TestCase):
         self.assertEqual(len(deltas_next), 1)
         self.assertEqual(deltas_next[0].total_bytes, 10 * 1024**2)
 
+    def test_12_first_tick_small_traffic_preserved_across_restart(self):
+        """Unseen peer < min_flush_bytes must keep baseline (0,0) on disk so first traffic is never lost."""
+        state_file = Path(self.temp_dir.name) / "first_tick_state.json"
+        tracker = CounterStateTracker(state_file=state_file)
+        pubkey = "first_tick_pubkey_12345678901234567890="
+
+        d1 = tracker.calculate_monotonic_deltas(
+            {pubkey: (400, 600)},
+            min_flush_bytes=10 * 1024 * 1024,
+            max_flush_interval_sec=1800,
+            collected_at=1000,
+        )
+        self.assertEqual(d1, [])
+        self.assertEqual(tracker.previous_counters[pubkey], (0, 0, 1000))
+
+        # Reload tracker from disk (simulating process restart) and advance past 1800s
+        reloaded = CounterStateTracker(state_file=state_file)
+        d2 = reloaded.calculate_monotonic_deltas(
+            {pubkey: (500, 700)},
+            min_flush_bytes=10 * 1024 * 1024,
+            max_flush_interval_sec=1800,
+            collected_at=2860,
+        )
+        self.assertEqual(len(d2), 1)
+        self.assertEqual(d2[0].delta_rx_bytes, 500)
+        self.assertEqual(d2[0].delta_tx_bytes, 700)
+
+    def test_13_single_counter_reset_and_zero_delta_reset_preserved_across_restart(self):
+        """Single-side counter reset and (0,0) reset while buffering must not double-count or lose data."""
+        state_file = Path(self.temp_dir.name) / "reset_state.json"
+        tracker = CounterStateTracker(state_file=state_file)
+        pk_partial = "partial_reset_pubkey_123456789012345="
+        pk_zero = "zero_reset_pubkey_123456789012345678="
+
+        tracker.calculate_monotonic_deltas(
+            {pk_partial: (1000, 500), pk_zero: (1000, 0)},
+            baseline_only=True,
+            collected_at=1000,
+        )
+
+        # Tick 2: pk_partial has RX reset (200 < 1000) while TX stays 500; pk_zero drops cleanly to (0, 0)
+        held = tracker.calculate_monotonic_deltas(
+            {pk_partial: (200, 500), pk_zero: (0, 0)},
+            min_flush_bytes=10 * 1024 * 1024,
+            max_flush_interval_sec=1800,
+            collected_at=1060,
+        )
+        self.assertEqual(held, [])
+        self.assertEqual(tracker.previous_counters[pk_partial], (0, 500, 1000))
+        self.assertEqual(tracker.previous_counters[pk_zero], (0, 0, 1000))
+
+        # Tick 3 after daemon reload and 31 minutes: verify exact deltas without TX double-count or RX loss
+        reloaded = CounterStateTracker(state_file=state_file)
+        flushed = reloaded.calculate_monotonic_deltas(
+            {pk_partial: (300, 600), pk_zero: (1200, 0)},
+            min_flush_bytes=10 * 1024 * 1024,
+            max_flush_interval_sec=1800,
+            collected_at=2900,
+        )
+        by_pk = {d.public_key: d for d in flushed}
+        self.assertEqual(by_pk[pk_partial].delta_rx_bytes, 300)
+        self.assertEqual(by_pk[pk_partial].delta_tx_bytes, 100)
+        self.assertEqual(by_pk[pk_zero].delta_rx_bytes, 1200)
+        self.assertEqual(by_pk[pk_zero].delta_tx_bytes, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

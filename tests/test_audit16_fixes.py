@@ -294,6 +294,180 @@ class TestAudit16Fixes(unittest.TestCase):
             self.assertTrue(app.check_slot_switch_cooldown("boot_slot_key", cooldown_seconds=15.0))
             self.assertFalse(app.check_slot_switch_cooldown("boot_slot_key", cooldown_seconds=15.0))
 
+    def test_09_expire_past_due_profiles_handles_stale_ro_and_idle_active(self):
+        import contextlib
+        import sqlite3
+
+        now = int(time.time())
+        p1 = self.store.create_profile(
+            xui_inbound_id=1,
+            transport="tcp",
+            profile_mode="personal",
+            family_label=None,
+            xui_email="p1@example.com",
+            xui_client_id="11111111-1111-1111-1111-111111111111",
+            xui_sub_id="sub_p1_exp",
+            expires_at=now + 86400,
+        )
+        p2 = self.store.create_profile(
+            xui_inbound_id=1,
+            transport="tcp",
+            profile_mode="personal",
+            family_label=None,
+            xui_email="p2@example.com",
+            xui_client_id="22222222-2222-2222-2222-222222222222",
+            xui_sub_id="sub_p2_exp",
+            expires_at=now + 86400,
+        )
+
+        # Case A: Active non-expired -> no write transaction opened at all
+        with patch.object(self.store, "transaction", wraps=self.store.transaction) as tx_spy:
+            self.assertEqual(self.store.expire_past_due_profiles(now=now), [])
+            self.assertEqual(tx_spy.call_count, 0)
+
+        # Separate stale RO sqlite DB to simulate Turso RO lag
+        ro_db_path = Path(self.temp_dir.name) / "ro_stale.db"
+        ro_src = sqlite3.connect(self.db_path)
+        ro_dst = sqlite3.connect(ro_db_path)
+        ro_src.backup(ro_dst)
+        ro_src.close()
+        ro_dst.close()
+
+        @contextlib.contextmanager
+        def stale_ro_conn():
+            conn = sqlite3.connect(ro_db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                yield conn
+            finally:
+                conn.close()
+
+        # Case B: Stale RO sees P1 as expired, while primary already renewed P1
+        ro_conn_mut = sqlite3.connect(ro_db_path)
+        ro_conn_mut.execute("UPDATE profiles SET expires_at = ? WHERE public_id = ?", (now - 100, p1["public_id"]))
+        ro_conn_mut.commit()
+        ro_conn_mut.close()
+
+        with patch.object(self.store, "read_connection", side_effect=stale_ro_conn):
+            expired_res = self.store.expire_past_due_profiles(now=now)
+        self.assertEqual(expired_res, [])
+        self.assertEqual(self.store.get_profile(p1["public_id"])["status"], "active")
+
+        # Case C: Primary expires BOTH P1 and P2, while RO only sees P1 due -> primary RETURNING updates & returns BOTH
+        with self.store.transaction() as wconn:
+            wconn.execute("UPDATE profiles SET expires_at = ? WHERE public_id IN (?, ?)", (now - 50, p1["public_id"], p2["public_id"]))
+        with patch.object(self.store, "read_connection", side_effect=stale_ro_conn):
+            expired_both = self.store.expire_past_due_profiles(now=now)
+        returned_pids = {row["public_id"] for row in expired_both}
+        self.assertEqual(returned_pids, {p1["public_id"], p2["public_id"]})
+        self.assertEqual(self.store.get_profile(p1["public_id"])["status"], "expired")
+        self.assertEqual(self.store.get_profile(p2["public_id"])["status"], "expired")
+
+    def test_10_consume_magic_link_authoritative_bypasses_stale_ro(self):
+        import contextlib
+        import sqlite3
+
+        # Snapshot DB BEFORE minting magic link to simulate lagging RO replica
+        stale_ro_path = Path(self.temp_dir.name) / "ro_before_magic.db"
+        src = sqlite3.connect(self.db_path)
+        dst = sqlite3.connect(stale_ro_path)
+        src.backup(dst)
+        src.close()
+        dst.close()
+
+        raw_token = "magic-lag-token-xyz-123456"
+        self.store.create_magic_link(email="cabinet-user@example.com", token=raw_token, ttl_seconds=900, request_ip="203.0.113.5")
+
+        @contextlib.contextmanager
+        def lagging_ro():
+            conn = sqlite3.connect(stale_ro_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                yield conn
+            finally:
+                conn.close()
+
+        mock_mgr = MagicMock()
+
+        def open_primary():
+            conn = sqlite3.connect(self.db_path, timeout=5.0, isolation_level=None)
+            conn.row_factory = sqlite3.Row
+            return conn
+
+        mock_mgr.connect.side_effect = open_primary
+        mock_mgr.ro_connection = lagging_ro
+        self.store._replica_mgr = mock_mgr
+        # Default read path sees stale RO and misses link
+        self.assertIsNone(self.store.consume_magic_link(raw_token, single_use=False))
+        # Authoritative path bypasses stale RO and reads primary DB directly
+        email = self.store.consume_magic_link(raw_token, single_use=False, authoritative=True)
+        self.assertEqual(email, "cabinet-user@example.com")
+
+    def test_11_update_order_meta_and_external_id_strips_web_token(self):
+        order = self.store.create_order(
+            kind="primary",
+            status="waiting_payment",
+            transport="tcp",
+            duration_days=30,
+            profile_mode="anonymous",
+            family_label=None,
+            base_price_rub=149,
+            final_price_rub=149,
+            promo_id=None,
+            invite_id=None,
+            customer_chat_id=None,
+            privacy_ack=True,
+            loss_policy_ack=True,
+            terms_version="2.0",
+        )
+        pub_id = order["public_id"]
+        self.store.update_order_meta_and_external_id(
+            pub_id,
+            {"payment_provider": "yoomoney", "web_token": "secret-plaintext-token"},
+            "ext_stripped_1",
+        )
+        stored = self.store.get_order(pub_id)
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["external_id"], "ext_stripped_1")
+        self.assertEqual(stored["meta_json"], {"payment_provider": "yoomoney"})
+        self.assertNotIn("web_token", stored["meta_json"])
+
+    def test_12_miss_sync_global_rate_limit_and_lru_eviction(self):
+        import contextlib
+        import sqlite3
+
+        mock_mgr = MagicMock()
+
+        @contextlib.contextmanager
+        def ro_mock():
+            conn = sqlite3.connect(self.db_path, timeout=5.0, isolation_level=None)
+            conn.row_factory = sqlite3.Row
+            try:
+                yield conn
+            finally:
+                conn.close()
+
+        mock_mgr.ro_connection = ro_mock
+        self.store._replica_mgr = mock_mgr
+
+        with patch("time.monotonic", return_value=100.0):
+            # Repeat same ID within 60s -> only 1 sync
+            for _ in range(5):
+                self.store.get_order("ord_same_cooldown")
+            self.assertEqual(mock_mgr.force_sync.call_count, 1)
+
+            # Storm of 30 distinct missing IDs -> capped globally at 20 syncs per 60s
+            mock_mgr.force_sync.reset_mock()
+            for idx in range(30):
+                self.store.get_order(f"ord_storm_{idx}")
+            self.assertEqual(mock_mgr.force_sync.call_count, 19)  # 1 prior + 19 = 20 total in window
+
+        # Window expires (+61s) -> sync allowed again
+        with patch("time.monotonic", return_value=161.5):
+            mock_mgr.force_sync.reset_mock()
+            self.store.get_order("ord_after_window")
+            self.assertEqual(mock_mgr.force_sync.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

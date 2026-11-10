@@ -231,6 +231,43 @@ class TestXuiReconciler(unittest.TestCase):
         self.assertEqual(res["deleted"], 1)
         self.assertEqual(rec.xui_api.delete_client.call_count, 2)
 
+    def test_05_quota_cycle_check_skips_aligned_profiles_after_sync(self) -> None:
+        from unittest.mock import patch
+        from vpn_shop import awg_manager
+        from vpn_shop.awg_traffic import process_cluster_traffic_sync
+
+        now = int(time.time())
+        prof = self.store.create_profile(
+            xui_inbound_id=1,
+            transport="tcp",
+            profile_mode="personal",
+            family_label=None,
+            xui_email="cycle-check@example.com",
+            xui_client_id="55555555-6666-7777-8888-999999999999",
+            xui_sub_id="sub_cycle_check",
+            expires_at=now + 120 * 86400,
+        )
+        # Set awg_reset_at > 35 days out so tick 1 aligns it to next_reset_utc (~30 days out)
+        with self.store.transaction() as conn:
+            conn.execute(
+                "UPDATE profiles SET awg_reset_at = ?, created_at = ? WHERE public_id = ?",
+                (now + 40 * 86400, now - 5 * 86400, prof["public_id"]),
+            )
+
+        rec = XuiReconciler(self.settings, self.store)
+        with patch.object(awg_manager, "get_current_node_code", return_value="nl"), \
+             patch.object(awg_manager, "reconcile_awg_peers", return_value={"applied": False}), \
+             patch("vpn_shop.awg_traffic.AwgTrafficCollector.collect_node_deltas", return_value=[]), \
+             patch("vpn_shop.awg_traffic.process_cluster_traffic_sync", return_value={}), \
+             patch.object(self.store, "ensure_awg_cycle_up_to_date", wraps=self.store.ensure_awg_cycle_up_to_date) as spy:
+            rec._reconcile_local_awg_and_traffic()
+            self.assertEqual(spy.call_count, 1)
+
+            # On the next tick, awg_reset_at is already aligned -> must NOT re-trigger ensure_awg_cycle_up_to_date
+            spy.reset_mock()
+            rec._reconcile_local_awg_and_traffic()
+            self.assertEqual(spy.call_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

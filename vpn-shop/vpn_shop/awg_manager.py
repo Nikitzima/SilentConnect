@@ -1226,9 +1226,25 @@ def reconcile_awg_peers(
 
         # 2. Check for empty database
         if len(active_slots) == 0 and not allow_empty:
-            msg = f"Zero active slots returned for {code.upper()} and allow_empty is False"
-            LOGGER.warning("[%s] %s", code.upper(), msg)
-            raise ReconciliationAbortedError(msg)
+            verify_empty_fn = getattr(store, "has_verified_fresh_empty_awg_slots", None)
+            is_verified_empty = False
+            if callable(verify_empty_fn):
+                try:
+                    res = verify_empty_fn(code)
+                    is_verified_empty = isinstance(res, bool) and res is True
+                except Exception as exc:
+                    LOGGER.warning("[%s] Empty-slot sync verification failed: %s", code.upper(), exc)
+                    raise ReconciliationAbortedError(
+                        f"Zero active slots returned for {code.upper()} and sync verification failed: {exc}"
+                    ) from exc
+            if not is_verified_empty:
+                msg = f"Zero active slots returned for {code.upper()} and allow_empty is False"
+                LOGGER.warning("[%s] %s", code.upper(), msg)
+                raise ReconciliationAbortedError(msg)
+            LOGGER.info(
+                "[%s] Proceeding with empty-slot reconciliation after verified Turso sync & active profile presence check",
+                code.upper(),
+            )
 
         # 3. Read current conf from node
         current_conf = _server_conf(code)

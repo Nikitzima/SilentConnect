@@ -85,11 +85,14 @@ _openflux_init_lock = threading.Lock()
 
 
 def init_openflux_db(conn: sqlite3.Connection) -> None:
-    """Create openflux_slots table if not exists."""
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='openflux_slots' LIMIT 1"
-    ).fetchone()
-    if row is not None:
+    """Create openflux_slots and openflux_cleanup_queue tables if not exist."""
+    tables = {
+        str(r[0])
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('openflux_slots', 'openflux_cleanup_queue')"
+        ).fetchall()
+    }
+    if "openflux_slots" in tables and "openflux_cleanup_queue" in tables:
         return
     with _openflux_init_lock:
         conn.execute(
@@ -119,6 +122,23 @@ def init_openflux_db(conn: sqlite3.Connection) -> None:
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS ix_openflux_slots_status ON openflux_slots(status);"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS openflux_cleanup_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_public_id TEXT NOT NULL,
+                server_code TEXT DEFAULT NULL,
+                container_name TEXT DEFAULT NULL,
+                doc_name TEXT DEFAULT NULL,
+                created_at INTEGER NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT DEFAULT NULL
+            );
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_openflux_cleanup_created ON openflux_cleanup_queue(created_at);"
         )
         conn.commit()
 
@@ -580,7 +600,7 @@ def start_server_switch(conn: sqlite3.Connection, profile_id: str, target_server
     if not start_openflux_worker(target_srv, pending_container, pending_public_url):
         raise RuntimeError(f"Не удалось запустить новый воркер на сервере {target_srv.upper()}")
 
-    # Step 3: Record pending migration state
+    # Step 3: Record pending migration state and prune superseded queued cleanups for same target container
     now = int(time.time())
     conn.execute(
         """
@@ -595,6 +615,15 @@ def start_server_switch(conn: sqlite3.Connection, profile_id: str, target_server
         WHERE profile_public_id = ?
         """,
         (target_srv, pending_doc_name, pending_public_url, pending_container, now, now, profile_id),
+    )
+    conn.execute(
+        """
+        DELETE FROM openflux_cleanup_queue
+        WHERE profile_public_id = ?
+          AND LOWER(COALESCE(server_code, '')) = ?
+          AND (container_name IS NULL OR container_name = '' OR container_name = ?)
+        """,
+        (profile_id, target_srv, pending_container),
     )
     conn.commit()
 
@@ -680,53 +709,288 @@ def confirm_server_switch(conn: sqlite3.Connection, profile_id: str, async_clean
     return get_or_create_openflux_slot(conn, profile_id)
 
 
+def _exec_in_tx(conn: sqlite3.Connection, fn):
+    """Run fn(conn) inside BEGIN IMMEDIATE ... COMMIT if not already in a transaction."""
+    if getattr(conn, "in_transaction", False):
+        return fn(conn)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        result = fn(conn)
+        conn.commit()
+        return result
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+
+def _cleanup_pending_openflux_resources(
+    profile_id: str,
+    pending_srv: Optional[str],
+    pending_container: Optional[str],
+    pending_doc: Optional[str],
+) -> tuple[bool, str]:
+    """Stop pending container(s) and remove legacy Mail.ru doc. Returns (ok, err_msg)."""
+    errors: list[str] = []
+    clean_uid = re.sub(r"[^\w\-]", "", profile_id)
+    if pending_srv:
+        containers: list[str] = []
+        if pending_container:
+            containers.append(pending_container)
+        default_pending = f"openflux-worker-{clean_uid}-pending"
+        if default_pending not in containers:
+            containers.append(default_pending)
+        for cname in containers:
+            try:
+                res = stop_openflux_worker(pending_srv, cname)
+                if res is False:
+                    errors.append(f"stop_openflux_worker({pending_srv}, {cname}) returned False")
+            except Exception as exc:
+                errors.append(f"stop_openflux_worker({pending_srv}, {cname}): {exc}")
+
+    if pending_doc and not str(pending_doc).startswith("cups_"):
+        try:
+            res = rclone_delete_user_doc(pending_doc)
+            if res is False:
+                errors.append(f"rclone_delete_user_doc({pending_doc}) returned False")
+        except Exception as exc:
+            errors.append(f"rclone_delete_user_doc({pending_doc}): {exc}")
+
+    return (len(errors) == 0, "; ".join(errors))
+
+
+def _execute_outbox_cleanup(
+    conn: sqlite3.Connection,
+    cleanup_id: Optional[int],
+    profile_id: str,
+    pending_srv: Optional[str],
+    pending_container: Optional[str],
+    pending_doc: Optional[str],
+) -> bool:
+    ok, err_msg = _cleanup_pending_openflux_resources(profile_id, pending_srv, pending_container, pending_doc)
+    if cleanup_id is None:
+        return ok
+    try:
+        if ok:
+            def _delete_item(c):
+                c.execute("DELETE FROM openflux_cleanup_queue WHERE id = ?", (cleanup_id,))
+            _exec_in_tx(conn, _delete_item)
+        else:
+            LOGGER.warning("OpenFlux cleanup deferred in outbox id=%s for %s: %s", cleanup_id, profile_id, err_msg)
+            def _mark_failed(c):
+                c.execute(
+                    "UPDATE openflux_cleanup_queue SET attempts = attempts + 1, last_error = ? WHERE id = ?",
+                    (err_msg[:500], cleanup_id),
+                )
+            _exec_in_tx(conn, _mark_failed)
+    except Exception as exc:
+        LOGGER.warning("Failed updating openflux_cleanup_queue id=%s: %s", cleanup_id, exc)
+    return ok
+
+
+def _cancel_migration_cas(
+    conn: sqlite3.Connection,
+    profile_id: str,
+    *,
+    timeout_seconds: Optional[int] = None,
+) -> tuple[bool, dict[str, Any]]:
+    """
+    Atomically cancel a 'migrating' slot via CAS inside a transaction and enqueue
+    external worker/doc cleanup into openflux_cleanup_queue before performing slow SSH work.
+    """
+    init_openflux_db(conn)
+    get_or_create_openflux_slot(conn, profile_id)
+    now = int(time.time())
+
+    def _tx(c: sqlite3.Connection):
+        row = c.execute(
+            """
+            SELECT * FROM openflux_slots
+            WHERE profile_public_id = ?
+            """,
+            (profile_id,),
+        ).fetchone()
+        if not row:
+            return False, None, None, None, None, None
+        slot_dict = dict(row)
+        if slot_dict.get("status") != "migrating":
+            return False, None, None, None, None, slot_dict
+
+        pending_srv = slot_dict.get("pending_server")
+        pending_container = slot_dict.get("pending_container_name")
+        pending_doc = slot_dict.get("pending_doc_name")
+        pending_doc_url = (slot_dict.get("pending_doc_url") or "").strip()
+        started_at = int(slot_dict.get("pending_started_at") or 0)
+        is_broken = not (pending_srv and pending_doc_url)
+
+        if timeout_seconds is not None and not is_broken:
+            if started_at > 0 and (now - started_at) < int(timeout_seconds):
+                return False, None, None, None, None, slot_dict
+
+        cur = c.execute(
+            """
+            UPDATE openflux_slots
+            SET status = 'active',
+                pending_server = NULL,
+                pending_doc_name = NULL,
+                pending_doc_url = NULL,
+                pending_container_name = NULL,
+                pending_started_at = NULL,
+                updated_at = ?
+            WHERE profile_public_id = ? AND status = 'migrating'
+            RETURNING id
+            """,
+            (now, profile_id),
+        )
+        won_row = cur.fetchone()
+        if won_row is None:
+            fresh = c.execute(
+                "SELECT * FROM openflux_slots WHERE profile_public_id = ?",
+                (profile_id,),
+            ).fetchone()
+            return False, None, None, None, None, (dict(fresh) if fresh else slot_dict)
+
+        cleanup_id = None
+        if pending_srv or (pending_doc and not str(pending_doc).startswith("cups_")):
+            out_cur = c.execute(
+                """
+                INSERT INTO openflux_cleanup_queue (
+                    profile_public_id, server_code, container_name, doc_name, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                RETURNING id
+                """,
+                (profile_id, pending_srv, pending_container, pending_doc, now),
+            )
+            out_row = out_cur.fetchone()
+            cleanup_id = int(out_row[0]) if out_row is not None else getattr(out_cur, "lastrowid", None)
+
+        fresh = c.execute(
+            "SELECT * FROM openflux_slots WHERE profile_public_id = ?",
+            (profile_id,),
+        ).fetchone()
+        return True, cleanup_id, pending_srv, pending_container, pending_doc, (dict(fresh) if fresh else slot_dict)
+
+    won_cas, cleanup_id, pending_srv, pending_container, pending_doc, slot_after = _exec_in_tx(conn, _tx)
+    if not won_cas:
+        return False, (slot_after if slot_after is not None else get_or_create_openflux_slot(conn, profile_id))
+
+    _execute_outbox_cleanup(conn, cleanup_id, profile_id, pending_srv, pending_container, pending_doc)
+    LOGGER.info(
+        "Cancelled server switch for %s; old server %s preserved",
+        profile_id,
+        slot_after.get("active_server") if isinstance(slot_after, dict) else None,
+    )
+    return True, (slot_after if isinstance(slot_after, dict) else get_or_create_openflux_slot(conn, profile_id))
+
+
+def _is_cleanup_item_live_in_slot(conn: sqlite3.Connection, item: dict[str, Any]) -> bool:
+    """Return True if queued container cleanup matches an active or currently migrating slot container."""
+    item_srv = (item.get("server_code") or "").strip().lower()
+    if not item_srv:
+        return False
+    row = conn.execute(
+        """
+        SELECT status, active_server, active_container_name, pending_server, pending_container_name
+        FROM openflux_slots
+        WHERE profile_public_id = ?
+        """,
+        (str(item["profile_public_id"]),),
+    ).fetchone()
+    if not row:
+        return False
+    slot = dict(row)
+    item_container = (item.get("container_name") or "").strip()
+    clean_uid = re.sub(r"[^\w\-]", "", str(item["profile_public_id"]))
+    pending_default = f"openflux-worker-{clean_uid}-pending"
+    active_default = f"openflux-worker-{clean_uid}"
+
+    status = str(slot.get("status") or "")
+    if status == "migrating":
+        pend_srv = (slot.get("pending_server") or "").strip().lower()
+        pend_cname = (slot.get("pending_container_name") or "").strip() or pending_default
+        if pend_srv == item_srv and (not item_container or item_container == pend_cname or item_container == pending_default):
+            return True
+
+    if status in ("active", "migrating"):
+        act_srv = (slot.get("active_server") or "").strip().lower()
+        act_cname = (slot.get("active_container_name") or "").strip() or active_default
+        if act_srv == item_srv and item_container and (item_container == act_cname or item_container == active_default):
+            return True
+
+    return False
+
+
+def process_pending_openflux_cleanups(
+    conn: sqlite3.Connection,
+    limit: int = 20,
+    max_attempts: int = 10,
+) -> int:
+    """Retry bounded pending OpenFlux cleanup items persisted in openflux_cleanup_queue."""
+    init_openflux_db(conn)
+    rows = conn.execute(
+        """
+        SELECT id, profile_public_id, server_code, container_name, doc_name, attempts
+        FROM openflux_cleanup_queue
+        WHERE attempts < ?
+        ORDER BY id ASC
+        LIMIT ?
+        """,
+        (int(max_attempts), int(limit)),
+    ).fetchall()
+    processed = 0
+    for r in rows:
+        item = dict(r) if hasattr(r, "keys") else {
+            "id": r[0],
+            "profile_public_id": r[1],
+            "server_code": r[2],
+            "container_name": r[3],
+            "doc_name": r[4],
+        }
+        item_id = int(item["id"])
+        if _is_cleanup_item_live_in_slot(conn, item):
+            LOGGER.info(
+                "Skipping superseded OpenFlux cleanup id=%d for live slot %s",
+                item_id,
+                item.get("profile_public_id"),
+            )
+            _exec_in_tx(conn, lambda c, cid=item_id: c.execute("DELETE FROM openflux_cleanup_queue WHERE id = ?", (cid,)))
+            continue
+        if _execute_outbox_cleanup(
+            conn,
+            item_id,
+            str(item["profile_public_id"]),
+            item.get("server_code"),
+            item.get("container_name"),
+            item.get("doc_name"),
+        ):
+            processed += 1
+    return processed
+
+
+def cancel_expired_migration_if_due(
+    conn: sqlite3.Connection,
+    profile_id: str,
+    timeout_seconds: int = MIGRATION_TIMEOUT_SECONDS,
+) -> tuple[bool, dict[str, Any]]:
+    """CAS-guarded lazy cancellation of an expired or malformed 'migrating' OpenFlux slot."""
+    return _cancel_migration_cas(conn, profile_id, timeout_seconds=timeout_seconds)
+
+
 def cancel_server_switch(conn: sqlite3.Connection, profile_id: str) -> dict[str, Any]:
     """
     Cancel switch or handle 5-minute timeout:
-    - Stops pending worker and deletes pending .docx.
+    - Atomically commits CAS slot reset + durable cleanup queue entry first.
+    - Stops pending worker and deletes pending .docx (best-effort, retried by outbox on failure).
     - Leaves old server completely intact!
     """
-    slot = get_or_create_openflux_slot(conn, profile_id)
-    if slot["status"] != "migrating":
-        return slot
-
-    pending_srv = slot.get("pending_server")
-    pending_container = slot.get("pending_container_name")
-    pending_doc = slot.get("pending_doc_name")
-
-    clean_uid = re.sub(r"[^\w\-]", "", profile_id)
-    if pending_srv:
-        if pending_container:
-            stop_openflux_worker(pending_srv, pending_container)
-        if pending_container != f"openflux-worker-{clean_uid}-pending":
-            stop_openflux_worker(pending_srv, f"openflux-worker-{clean_uid}-pending")
-
-    if pending_doc and not pending_doc.startswith("cups_"):
-        rclone_delete_user_doc(pending_doc)
-
-    now = int(time.time())
-    conn.execute(
-        """
-        UPDATE openflux_slots
-        SET status = 'active',
-            pending_server = NULL,
-            pending_doc_name = NULL,
-            pending_doc_url = NULL,
-            pending_container_name = NULL,
-            pending_started_at = NULL,
-            updated_at = ?
-        WHERE profile_public_id = ?
-        """,
-        (now, profile_id),
-    )
-    conn.commit()
-
-    LOGGER.info("Cancelled server switch for %s; old server %s preserved", profile_id, slot.get("active_server"))
-    return get_or_create_openflux_slot(conn, profile_id)
+    _, slot = _cancel_migration_cas(conn, profile_id, timeout_seconds=None)
+    return slot
 
 
 def cleanup_expired_migrations(conn: sqlite3.Connection, timeout_seconds: int = MIGRATION_TIMEOUT_SECONDS) -> int:
-    """Watchdog janitor: Automatically cancel abandoned migrations older than timeout."""
+    """Watchdog janitor: Automatically cancel abandoned migrations older than timeout and drain cleanup outbox."""
     init_openflux_db(conn)
     now = int(time.time())
     deadline = now - timeout_seconds
@@ -735,7 +999,14 @@ def cleanup_expired_migrations(conn: sqlite3.Connection, timeout_seconds: int = 
         """
         SELECT profile_public_id
         FROM openflux_slots
-        WHERE status = 'migrating' AND pending_started_at IS NOT NULL AND pending_started_at < ?
+        WHERE status = 'migrating'
+          AND (
+              pending_started_at IS NULL
+              OR pending_started_at <= ?
+              OR pending_server IS NULL
+              OR pending_doc_url IS NULL
+              OR pending_doc_url = ''
+          )
         """,
         (deadline,),
     ).fetchall()
@@ -744,10 +1015,18 @@ def cleanup_expired_migrations(conn: sqlite3.Connection, timeout_seconds: int = 
     for r in rows:
         pid = str(r[0])
         try:
-            cancel_server_switch(conn, pid)
-            cleaned += 1
+            won, _ = cancel_expired_migration_if_due(conn, pid, timeout_seconds=timeout_seconds)
+            if won:
+                cleaned += 1
         except Exception as exc:
             LOGGER.warning("Watchdog failed to cancel expired migration for %s: %s", pid, exc)
+
+    try:
+        retried = process_pending_openflux_cleanups(conn)
+        if retried > 0:
+            LOGGER.info("Drained %d pending OpenFlux cleanup item(s) from outbox", retried)
+    except Exception as exc:
+        LOGGER.warning("Watchdog failed draining openflux_cleanup_queue: %s", exc)
 
     if cleaned > 0:
         LOGGER.info("Watchdog cleaned up %d expired OpenFlux migrations", cleaned)

@@ -81,10 +81,10 @@ for _env_cand in (
         except Exception:
             pass
 
+LOGGER = logging.getLogger("subjson-service")
+
 try:
     from vpn_shop.catalog import calculate_renewal_price, quote_price
-    from vpn_shop.security import hash_secret, hash_secret_candidates, hash_token, hash_token_candidates
-    from vpn_shop.web import subscription_setup_url, verify_cf_turnstile
 except ImportError:
     def quote_price(device_limit: int = 3, duration_days: int = 30, settings: Any = None) -> int:
         prices = {3: 149, 6: 199, 9: 235}
@@ -103,6 +103,19 @@ except ImportError:
         return max(((raw + 5) // 10) * 10 - 1, 9)
 
     calculate_renewal_price = quote_price
+
+try:
+    from vpn_shop.security import (
+        client_ip_from_headers,
+        hash_secret,
+        hash_secret_candidates,
+        hash_token,
+        hash_token_candidates,
+    )
+except ImportError:
+    def client_ip_from_headers(headers: Any, peer_ip: str | None) -> str:
+        # Strict fallback: never parse unverified X-Forwarded-For without trusted-proxy resolver.
+        return str(peer_ip or "unknown").strip() or "unknown"
 
     def hash_secret(value: str) -> str:
         effective_pepper = os.environ.get("SERVER_PEPPER", "silentconnect-pepper-secret-v1").encode("utf-8")
@@ -124,14 +137,31 @@ except ImportError:
         legacy = hmac.new(b"silentconnect-pepper-secret-v1", msg, hashlib.sha256).hexdigest()
         return (primary,) if primary == legacy else (primary, legacy)
 
+try:
+    from vpn_shop.web import subscription_setup_url, verify_cf_turnstile
+except ImportError:
     def subscription_setup_url(subscription_url: str) -> str:
         return subscription_url.replace("/sub/json/", "/my-secret-sub/import/")
 
     def verify_cf_turnstile(secret_key: str, response_token: str, client_ip: str = "") -> bool:
+        LOGGER.error("Fail-closed Turnstile rejection: vpn_shop.web unavailable")
+        return False
+
+
+def _verify_turnstile_strict(secret_key: str, response_token: str, client_ip: str = "") -> bool:
+    """Fail-closed Turnstile verification helper across all request handlers."""
+    secret = (secret_key or "").strip()
+    if not secret:
         return True
-
-
-LOGGER = logging.getLogger("subjson-service")
+    try:
+        from vpn_shop.web import verify_cf_turnstile as _web_verify
+        return bool(_web_verify(secret, response_token, client_ip))
+    except ImportError:
+        LOGGER.error("Fail-closed Turnstile rejection: vpn_shop.web unavailable")
+        return False
+    except Exception as exc:
+        LOGGER.warning("Turnstile verification error (fail-closed): %s", exc)
+        return False
 
 
 def get_env(name: str, default: str | None = None) -> str:
@@ -914,6 +944,29 @@ def get_openflux_slot_state_dict(sub_id: str) -> dict[str, Any]:
                 except Exception as heal_exc:
                     LOGGER.warning("Could not self-heal openflux slot for %s: %s", pid, heal_exc)
 
+        if status == "migrating":
+            raw_pending_srv = (slot.get("pending_server") or "").lower() or None
+            raw_pending_doc_url = (slot.get("pending_doc_url") or "").strip()
+            started_at = int(slot.get("pending_started_at") or 0)
+            elapsed = int(time.time()) - started_at
+            rem_sec = max(0, openflux_manager.MIGRATION_TIMEOUT_SECONDS - elapsed)
+            if not (raw_pending_srv and raw_pending_doc_url) or started_at <= 0 or rem_sec == 0:
+                try:
+                    rw_conn = get_store_db()
+                    try:
+                        _, slot = openflux_manager.cancel_expired_migration_if_due(rw_conn, pid)
+                    finally:
+                        rw_conn.close()
+                    status = slot.get("status") or "active"
+                    active_srv = (slot.get("active_server") or active_srv).lower()
+                    if active_srv == "pl":
+                        active_srv = "de"
+                    elif active_srv == "fi":
+                        active_srv = "nl"
+                    active_doc_url = slot.get("active_doc_url") or active_doc_url
+                except Exception as cancel_exc:
+                    LOGGER.warning("Lazy expired migration cleanup failed for %s: %s", pid, cancel_exc)
+
         active_link = ""
         if status in {"active", "migrating"} and active_doc_url:
             active_link = openflux_manager.build_openflux_stream_link(active_doc_url, active_srv)
@@ -1154,12 +1207,8 @@ def bind_subscription_email(
         turnstile_secret = getattr(shop_settings, "cf_turnstile_secret_key", "").strip()
 
     if turnstile_secret:
-        try:
-            from vpn_shop.web import verify_cf_turnstile
-            if not verify_cf_turnstile(turnstile_secret, turnstile_token, client_ip):
-                raise ValueError("Пожалуйста, подтвердите проверку защиты от роботов (Cloudflare).")
-        except ImportError:
-            pass
+        if not _verify_turnstile_strict(turnstile_secret, turnstile_token, client_ip):
+            raise ValueError("Пожалуйста, подтвердите проверку защиты от роботов (Cloudflare).")
 
     target_sub = sub_id.strip().split("~")[0]
     found_client = None
@@ -5776,6 +5825,16 @@ def happ_subscription_userinfo(subscription_id: str) -> str:
     return f"upload={upload}; download={download}; total={total}; expire={expire}"
 
 
+def _safe_happ_subscription_userinfo(subscription_id: str) -> str | None:
+    try:
+        return happ_subscription_userinfo(subscription_id)
+    except Exception:
+        sub = str(subscription_id or "")
+        masked = f"{sub[:4]}…" if sub else "<empty>"
+        LOGGER.warning("Unable to build Happ subscription-userinfo for %s", masked, exc_info=True)
+        return None
+
+
 def build_expired_dummy_profile(email: str) -> list[dict[str, Any]]:
     meta: dict[str, Any] = {}
     if HAPP_SERVER_DESCRIPTION:
@@ -9947,10 +10006,9 @@ def build_happ_response_headers(
     if HAPP_PROFILE_UPDATE_INTERVAL:
         headers["profile-update-interval"] = HAPP_PROFILE_UPDATE_INTERVAL
     if subscription_id:
-        try:
-            headers["subscription-userinfo"] = happ_subscription_userinfo(subscription_id)
-        except Exception:
-            LOGGER.warning("Unable to build Happ subscription-userinfo for %s", subscription_id, exc_info=True)
+        user_info = _safe_happ_subscription_userinfo(subscription_id)
+        if user_info is not None:
+            headers["subscription-userinfo"] = user_info
     if HAPP_SUPPORT_URL:
         headers["support-url"] = HAPP_SUPPORT_URL
     web_page_url = profile_web_page_url or HAPP_WEB_PAGE_URL
@@ -10495,8 +10553,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 oflux_action = f"switch_{path[5]}"
 
             if is_oflux_post:
-                xff = self.headers.get("X-Forwarded-For", "").strip()
-                client_ip = xff.split(",")[-1].strip() if xff else (self.client_address[0] if self.client_address else "unknown")
+                client_ip = self._client_ip()
                 if not check_rate_limit(client_ip):
                     self._send_json(HTTPStatus.TOO_MANY_REQUESTS, {"ok": False, "error": "rate_limited"}, True)
                     return
@@ -10577,11 +10634,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     customer_email = form.get("customer_email", "").strip()
                     email_reminders = form.get("email_reminders") != "0"
                     turnstile_token = form.get("cf-turnstile-response", "").strip()
-                    xff = self.headers.get("X-Forwarded-For")
-                    if xff:
-                        client_ip = xff.split(",")[-1].strip()
-                    else:
-                        client_ip = self.headers.get("CF-Connecting-IP") or (self.client_address[0] if self.client_address else "unknown")
+                    client_ip = self._client_ip()
 
                     res = bind_subscription_email(
                         sub_id=sub_id,
@@ -10637,11 +10690,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 email_reminders = form.get("email_reminders") != "0"
 
                 turnstile_token = form.get("cf-turnstile-response", "").strip()
-                xff = self.headers.get("X-Forwarded-For")
-                if xff:
-                    client_ip = xff.split(",")[-1].strip()
-                else:
-                    client_ip = self.headers.get("CF-Connecting-IP") or (self.client_address[0] if self.client_address else "unknown")
+                client_ip = self._client_ip()
 
                 if not check_bind_email_rate_limit(client_ip):
                     raise ValueError("Слишком много запросов на продление. Пожалуйста, подождите несколько минут.")
@@ -10652,12 +10701,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                     turnstile_secret = getattr(shop_settings, "cf_turnstile_secret_key", "").strip()
 
                 if turnstile_secret:
-                    try:
-                        from vpn_shop.web import verify_cf_turnstile
-                        if not verify_cf_turnstile(turnstile_secret, turnstile_token, client_ip):
-                            raise ValueError("Пожалуйста, подтвердите проверку защиты от роботов (Cloudflare Turnstile).")
-                    except ImportError:
-                        pass
+                    if not _verify_turnstile_strict(turnstile_secret, turnstile_token, client_ip):
+                        raise ValueError("Пожалуйста, подтвердите проверку защиты от роботов (Cloudflare Turnstile).")
 
                 res = create_inline_renewal_order(
                     sub_id=sub_id,
@@ -10900,6 +10945,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
         return True
 
+    def _client_ip(self) -> str:
+        peer = self.client_address[0] if self.client_address else None
+        return client_ip_from_headers(self.headers, peer)
+
     def _handle_request(self, include_body: bool) -> None:
         try:
             parsed_url = urllib.parse.urlsplit(self.path)
@@ -10907,11 +10956,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             query = urllib.parse.parse_qs(parsed_url.query)
             # Rate limit subscription endpoints (audit #10); healthz/internal exempt.
             if len(path) >= 2 and path[0] in {SECRET_SEGMENT, "my-secret-sub"} and not path[1].startswith("internal"):
-                xff = self.headers.get("X-Forwarded-For", "").strip()
-                if xff:
-                    client_ip = xff.split(",")[-1].strip()
-                else:
-                    client_ip = self.client_address[0] if self.client_address else "unknown"
+                client_ip = self._client_ip()
                 if not check_rate_limit(client_ip):
                     self._send_json(HTTPStatus.TOO_MANY_REQUESTS, {"error": "rate_limited", "detail": "too many requests, retry in a minute"}, include_body)
                     return
@@ -11037,8 +11082,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 oflux_country = path[4]
 
             if is_oflux_qr:
-                xff = self.headers.get("X-Forwarded-For", "").strip()
-                client_ip = xff.split(",")[-1].strip() if xff else (self.client_address[0] if self.client_address else "unknown")
+                client_ip = self._client_ip()
                 if not check_rate_limit(client_ip):
                     self._send_json(HTTPStatus.TOO_MANY_REQUESTS, {"ok": False, "error": "rate_limited"}, include_body)
                     return
@@ -11979,12 +12023,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         for name, value in SECURITY_HEADERS:
             self.send_header(name, value)
         if subscription_id:
-            try:
-                user_info = happ_subscription_userinfo(subscription_id)
-            except Exception:
-                summary = subscription_summary(subscription_id)
-                user_info = f"upload=0; download=0; total={summary.get('traffic_total_bytes', 0)}; expire={int(time.time() + 86400 * 30)}"
-            self.send_header("Subscription-Userinfo", user_info)
+            user_info = _safe_happ_subscription_userinfo(subscription_id)
+            if user_info is not None:
+                self.send_header("Subscription-Userinfo", user_info)
             self.send_header("Profile-Update-Interval", "24")
             if profile_title:
                 self.send_header("Profile-Title", profile_title)
@@ -12015,12 +12056,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         for name, value in SECURITY_HEADERS:
             self.send_header(name, value)
         if subscription_id:
-            try:
-                user_info = happ_subscription_userinfo(subscription_id)
-            except Exception:
-                summary = subscription_summary(subscription_id)
-                user_info = f"upload=0; download=0; total={summary.get('traffic_total_bytes', 0)}; expire={int(time.time() + 86400 * 30)}"
-            self.send_header("Subscription-Userinfo", user_info)
+            user_info = _safe_happ_subscription_userinfo(subscription_id)
+            if user_info is not None:
+                self.send_header("Subscription-Userinfo", user_info)
             self.send_header("Profile-Update-Interval", "24")
             if profile_title:
                 self.send_header("Profile-Title", profile_title)

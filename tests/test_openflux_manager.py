@@ -139,6 +139,167 @@ class TestOpenFluxManager(unittest.TestCase):
             "https://interview.cups.online/live-coding/?room=uuid_healed_99",
         )
 
+    def test_concurrent_state_lazy_expiry_cas_single_stop_and_outbox_crash_recovery(self):
+        import tempfile
+        import threading
+        import time
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "of_cas.db"
+            c0 = sqlite3.connect(db_path)
+            c0.row_factory = sqlite3.Row
+            c0.execute(
+                """
+                CREATE TABLE profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    public_id TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    expires_at INTEGER NOT NULL DEFAULT 0
+                );
+                """
+            )
+            c0.execute("INSERT INTO profiles (public_id) VALUES ('prf_cas_1')")
+            openflux_manager.init_openflux_db(c0)
+            expired_at = int(time.time()) - (openflux_manager.MIGRATION_TIMEOUT_SECONDS + 120)
+            c0.execute(
+                """
+                INSERT INTO openflux_slots (
+                    profile_public_id, slot_label, status,
+                    active_server, active_doc_name, active_doc_url, active_container_name,
+                    pending_server, pending_doc_name, pending_doc_url, pending_container_name,
+                    pending_started_at, created_at, updated_at
+                ) VALUES (
+                    'prf_cas_1', 'Белые списки (OpenFlux)', 'migrating',
+                    'nl', 'cups_act_1', 'https://interview.cups.online/live-coding/?room=act_1', 'openflux-worker-prf_cas_1',
+                    'de', 'cups_pend_1', 'https://interview.cups.online/live-coding/?room=pend_1', 'openflux-worker-prf_cas_1-pending',
+                    ?, ?, ?
+                )
+                """,
+                (expired_at, expired_at, expired_at),
+            )
+            c0.commit()
+            c0.close()
+
+            # A. 5 concurrent /state lazy expiry checks -> CAS ensures single stop_openflux_worker invocation
+            stop_calls = []
+            barrier = threading.Barrier(5)
+
+            def mock_stop_ok(srv, cname):
+                stop_calls.append((srv, cname))
+                return True
+
+            with patch("vpn_shop.openflux_manager.stop_openflux_worker", side_effect=mock_stop_ok):
+                results = []
+                errors = []
+
+                def worker():
+                    conn = sqlite3.connect(db_path, timeout=10.0)
+                    conn.row_factory = sqlite3.Row
+                    try:
+                        barrier.wait(timeout=5.0)
+                        won, slot = openflux_manager.cancel_expired_migration_if_due(conn, "prf_cas_1")
+                        results.append((won, slot["status"], slot.get("active_server"), slot.get("pending_server")))
+                    except Exception as exc:
+                        errors.append(exc)
+                    finally:
+                        conn.close()
+
+                threads = [threading.Thread(target=worker) for _ in range(5)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join(timeout=10.0)
+
+            self.assertEqual(errors, [])
+            self.assertEqual(sum(1 for won, *_ in results if won), 1)
+            self.assertTrue(all(st == "active" and act == "nl" and pend is None for _, st, act, pend in results))
+            self.assertEqual(stop_calls, [("de", "openflux-worker-prf_cas_1-pending")])
+
+            # B. Crash simulation: stop_openflux_worker fails once -> DB still flips to 'active' and outbox keeps item until watchdog retries
+            c1 = sqlite3.connect(db_path)
+            c1.row_factory = sqlite3.Row
+            c1.execute(
+                """
+                UPDATE openflux_slots
+                SET status = 'migrating',
+                    pending_server = 'de',
+                    pending_doc_name = 'cups_pend_2',
+                    pending_doc_url = 'https://interview.cups.online/live-coding/?room=pend_2',
+                    pending_container_name = 'openflux-worker-prf_cas_1-pending',
+                    pending_started_at = ?
+                WHERE profile_public_id = 'prf_cas_1'
+                """,
+                (expired_at,),
+            )
+            c1.commit()
+
+            with patch("vpn_shop.openflux_manager.stop_openflux_worker", side_effect=RuntimeError("ssh timeout")):
+                won2, slot2 = openflux_manager.cancel_expired_migration_if_due(c1, "prf_cas_1")
+            self.assertTrue(won2)
+            self.assertEqual(slot2["status"], "active")
+            self.assertIsNone(slot2["pending_server"])
+            out_rows = c1.execute("SELECT attempts, last_error FROM openflux_cleanup_queue").fetchall()
+            self.assertEqual(len(out_rows), 1)
+            self.assertEqual(out_rows[0]["attempts"], 1)
+
+            # Now watchdog drains outbox cleanly once SSH recovers
+            retry_calls = []
+            with patch("vpn_shop.openflux_manager.stop_openflux_worker", side_effect=lambda s, c: retry_calls.append((s, c)) or True):
+                openflux_manager.cleanup_expired_migrations(c1)
+            self.assertEqual(retry_calls, [("de", "openflux-worker-prf_cas_1-pending")])
+            self.assertEqual(c1.execute("SELECT COUNT(*) FROM openflux_cleanup_queue").fetchone()[0], 0)
+            c1.close()
+
+    def test_outbox_skips_superseded_live_container_and_bounds_attempts(self):
+        import time
+
+        openflux_manager.init_openflux_db(self.conn)
+        now = int(time.time())
+        self.conn.execute(
+            """
+            INSERT INTO openflux_slots (
+                profile_public_id, slot_label, status,
+                active_server, active_doc_name, active_doc_url, active_container_name,
+                pending_server, pending_doc_name, pending_doc_url, pending_container_name,
+                pending_started_at, created_at, updated_at
+            ) VALUES (
+                'prf_test_user_2', 'Белые списки (OpenFlux)', 'migrating',
+                'nl', 'cups_act_2', 'https://interview.cups.online/live-coding/?room=act_2', 'openflux-worker-prf_test_user_2',
+                'de', 'cups_pend_live', 'https://interview.cups.online/live-coding/?room=pend_live', 'openflux-worker-prf_test_user_2-pending',
+                ?, ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        # 1. Stale queued cleanup for exact same live pending container -> must be deleted WITHOUT calling stop
+        self.conn.execute(
+            """
+            INSERT INTO openflux_cleanup_queue (
+                profile_public_id, server_code, container_name, doc_name, created_at, attempts
+            ) VALUES ('prf_test_user_2', 'de', 'openflux-worker-prf_test_user_2-pending', 'cups_old', ?, 1)
+            """,
+            (now - 60,),
+        )
+        # 2. Exhausted retry row (attempts = 10) -> must NOT trigger stop on unreachable server
+        self.conn.execute(
+            """
+            INSERT INTO openflux_cleanup_queue (
+                profile_public_id, server_code, container_name, doc_name, created_at, attempts
+            ) VALUES ('prf_test_user_1', 'de', 'openflux-worker-prf_test_user_1-pending', 'cups_dead', ?, 10)
+            """,
+            (now - 600,),
+        )
+        self.conn.commit()
+
+        stop_calls = []
+        with patch("vpn_shop.openflux_manager.stop_openflux_worker", side_effect=lambda s, c: stop_calls.append((s, c)) or True):
+            openflux_manager.process_pending_openflux_cleanups(self.conn)
+
+        self.assertEqual(stop_calls, [])
+        # Superseded row deleted, exhausted row preserved at attempts=10
+        remaining = self.conn.execute("SELECT profile_public_id, attempts FROM openflux_cleanup_queue").fetchall()
+        self.assertEqual([(r["profile_public_id"], r["attempts"]) for r in remaining], [("prf_test_user_1", 10)])
+
 
 if __name__ == "__main__":
     unittest.main()

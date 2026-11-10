@@ -978,5 +978,378 @@ class TestStage2WebSecurityAndRedesign(unittest.TestCase):
         self.assertEqual(tpl, sub_tpl)
         self.assertEqual(app_js, sub_js)
 
+    def test_subjson_fail_closed_turnstile_over_real_http_when_web_import_blocked(self) -> None:
+        """Real HTTP POST to bind-email and renew must fail closed when vpn_shop.web raises ImportError."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            shop_db = tmp_path / "turnstile_shop.db"
+            xui_db = tmp_path / "turnstile_xui.db"
+            sub_id = "subturnstile001"
+            now = int(time.time())
+            _init_mock_xui_db(xui_db, sub_id, (now + 30 * 86400) * 1000)
+
+            base_settings = load_settings(tmp_path)
+            settings = replace(
+                base_settings,
+                database_path=shop_db,
+                xui_db_path=xui_db,
+                cf_turnstile_secret_key="test-turnstile-secret",  # PLACEHOLDER
+                web_public_base_url="https://example.com",
+                subscription_base_url="https://sub.example.com/my-secret-sub",
+            )
+            store = Store(shop_db)
+            store.init()
+            store.create_profile(
+                xui_inbound_id=1,
+                transport="tcp",
+                profile_mode="personal",
+                family_label=None,
+                xui_email="turnstile@example.com",
+                xui_client_id="66666666-6666-6666-6666-666666666666",
+                xui_sub_id=sub_id,
+                expires_at=now + 30 * 86400,
+            )
+            checkout = WebCheckout(settings, store)
+
+            sub_srv = subjson_app.BoundedThreadingHTTPServer(("127.0.0.1", 0), subjson_app.RequestHandler, max_workers=4)
+            sub_port = sub_srv.server_address[1]
+            threading.Thread(target=sub_srv.serve_forever, daemon=True).start()
+            try:
+                with patch.dict(os.environ, {"CF_TURNSTILE_SECRET_KEY": "test-turnstile-secret"}), \
+                     patch.dict(sys.modules, {"vpn_shop.web": None}), \
+                     patch.object(subjson_app, "XUI_DB_PATH", str(xui_db)), \
+                     patch.object(subjson_app, "get_shop_checkout", return_value=checkout), \
+                     patch.object(subjson_app, "create_inline_renewal_order") as mock_renew:
+                    # Also verify fallback function itself returns False
+                    self.assertFalse(subjson_app._verify_turnstile_strict("test-turnstile-secret", "any-tok", "198.51.100.5"))
+
+                    conn = http.client.HTTPConnection("127.0.0.1", sub_port, timeout=5)
+                    # 1. POST bind-email with ImportError on vpn_shop.web -> HTTP 400 fail-closed
+                    conn.request(
+                        "POST",
+                        f"/{subjson_app.SECRET_SEGMENT}/bind-email/{sub_id}",
+                        body="customer_email=user%40example.com&cf-turnstile-response=fake".encode("utf-8"),
+                        headers={
+                            "Host": "sub.example.com",
+                            "Content-Type": "application/x-www-form-urlencoded",
+                            "X-Requested-With": "XMLHttpRequest",
+                        },
+                    )
+                    r_bind = conn.getresponse()
+                    bind_json = json.loads(r_bind.read().decode("utf-8"))
+                    self.assertEqual(r_bind.status, 400)
+                    self.assertFalse(bind_json.get("ok"))
+
+                    # 2. POST renew with ImportError on vpn_shop.web -> HTTP 400 fail-closed & order NOT created
+                    conn.request(
+                        "POST",
+                        f"/{subjson_app.SECRET_SEGMENT}/renew/{sub_id}",
+                        body="duration_days=30&device_limit=3&customer_email=user%40example.com&cf-turnstile-response=fake".encode("utf-8"),
+                        headers={
+                            "Host": "sub.example.com",
+                            "Content-Type": "application/x-www-form-urlencoded",
+                            "X-Requested-With": "XMLHttpRequest",
+                        },
+                    )
+                    r_ren = conn.getresponse()
+                    ren_json = json.loads(r_ren.read().decode("utf-8"))
+                    self.assertEqual(r_ren.status, 400)
+                    self.assertFalse(ren_json.get("ok"))
+                    mock_renew.assert_not_called()
+                    conn.close()
+            finally:
+                sub_srv.shutdown()
+                sub_srv.server_close()
+
+    def test_subjson_strict_xff_and_userinfo_omit_on_error(self) -> None:
+        """Spoofed XFF from untrusted peer is ignored and failed userinfo lookup omits header instead of fabricating 0/30d."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            shop_db = tmp_path / "xff_shop.db"
+            xui_db = tmp_path / "xff_xui.db"
+            sub_id = "subxffui001"
+            now = int(time.time())
+            _init_mock_xui_db(xui_db, sub_id, (now + 30 * 86400) * 1000)
+
+            sub_srv = subjson_app.BoundedThreadingHTTPServer(("127.0.0.1", 0), subjson_app.RequestHandler, max_workers=4)
+            sub_port = sub_srv.server_address[1]
+            threading.Thread(target=sub_srv.serve_forever, daemon=True).start()
+            captured_ips: list[str] = []
+            try:
+                def spy_rate_limit(ip: str) -> bool:
+                    captured_ips.append(ip)
+                    return True
+
+                with patch.dict(os.environ, {"TRUSTED_PROXY_CIDRS": "10.0.0.0/8"}), \
+                     patch.object(subjson_app, "XUI_DB_PATH", str(xui_db)), \
+                     patch.object(subjson_app, "check_rate_limit", side_effect=spy_rate_limit), \
+                     patch.object(subjson_app, "build_clash_meta_config", return_value="port: 7890\n"), \
+                     patch.object(subjson_app, "build_streisand_bundle", return_value="dmxlc3M6Ly90ZXN0"), \
+                     patch.object(subjson_app, "happ_subscription_userinfo", side_effect=RuntimeError("db temporary fail")), \
+                     self.assertLogs("subjson-service", level="WARNING") as warn_logs:
+                    conn = http.client.HTTPConnection("127.0.0.1", sub_port, timeout=5)
+                    # Untrusted peer 127.0.0.1 (since TRUSTED_PROXY_CIDRS=10.0.0.0/8) sends spoofed X-Forwarded-For
+                    conn.request(
+                        "GET",
+                        f"/{subjson_app.SECRET_SEGMENT}/clash/{sub_id}",
+                        headers={"Host": "sub.example.com", "X-Forwarded-For": "198.51.100.77"},
+                    )
+                    r_yaml = conn.getresponse()
+                    r_yaml.read()
+                    self.assertEqual(r_yaml.status, 200)
+                    self.assertIsNone(r_yaml.getheader("Subscription-Userinfo"))
+
+                    conn.request(
+                        "GET",
+                        f"/{subjson_app.SECRET_SEGMENT}/streisand/{sub_id}",
+                        headers={"Host": "sub.example.com", "X-Forwarded-For": "203.0.113.88"},
+                    )
+                    r_st = conn.getresponse()
+                    r_st.read()
+                    self.assertEqual(r_st.status, 200)
+                    self.assertIsNone(r_st.getheader("Subscription-Userinfo"))
+                    conn.close()
+
+                joined_warns = "\n".join(warn_logs.output)
+                self.assertNotIn(sub_id, joined_warns)
+                self.assertIn(f"{sub_id[:4]}", joined_warns)
+                self.assertEqual(captured_ips, ["127.0.0.1", "127.0.0.1"])
+            finally:
+                sub_srv.shutdown()
+                sub_srv.server_close()
+
+    def test_v21_app_js_openflux_recovery_and_zero_timer_in_node_v8(self) -> None:
+        """Execute real subjson-service/v2.1/app.js in Node V8 to verify OpenFlux recovery, 429 handling, and rem=0 loop break."""
+        import shutil
+        import subprocess
+
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("node binary not available")
+
+        js_path = (SUBJSON_DIR / "v2.1" / "app.js").resolve().as_posix()
+        script = f'''
+const assert = require('assert');
+const fs = require('fs');
+const vm = require('vm');
+
+const code = fs.readFileSync({json.dumps(js_path)}, 'utf8');
+
+function makeEl(id) {{
+  return {{
+    id,
+    tagName: String(id || 'DIV').toUpperCase(),
+    value: '',
+    href: '',
+    textContent: '',
+    innerHTML: '',
+    disabled: false,
+    checked: id === 'checked_nl',
+    style: {{ setProperty() {{}} }},
+    dataset: {{}},
+    children: [],
+    parentNode: null,
+    classList: {{ add() {{}}, remove() {{}}, toggle() {{}}, contains() {{ return false; }} }},
+    addEventListener() {{}},
+    removeEventListener() {{}},
+    querySelector() {{ return null; }},
+    querySelectorAll() {{ return []; }},
+    closest() {{ return null; }},
+    appendChild(child) {{ return child; }},
+    removeChild(child) {{ return child; }},
+    insertBefore(child) {{ return child; }},
+    focus() {{}},
+    scrollIntoView() {{}},
+    setAttribute() {{}},
+    getAttribute() {{ return ''; }},
+    getBoundingClientRect() {{ return {{ top: 0, left: 0, right: 100, bottom: 100, width: 100, height: 100 }}; }},
+    contains() {{ return false; }},
+  }};
+}}
+
+let fetchCalls = [];
+let mockFetchImpl = async () => ({{ ok: true, status: 200, json: async () => ({{ ok: true }}) }});
+let scheduledTimeouts = [];
+let fakeTimeouts = 0;
+
+const context = {{
+  console,
+  Math,
+  Number,
+  String,
+  Boolean,
+  Object,
+  Array,
+  JSON,
+  Promise,
+  Error,
+  Date,
+  Intl,
+  URL,
+  URLSearchParams,
+  setTimeout: (fn, ms) => {{
+    fakeTimeouts += 1;
+    scheduledTimeouts.push({{ id: fakeTimeouts, fn, ms }});
+    return fakeTimeouts;
+  }},
+  clearTimeout: (id) => {{
+    scheduledTimeouts = scheduledTimeouts.filter(t => t.id !== id);
+  }},
+  setInterval: () => 1,
+  clearInterval: () => {{}},
+  requestAnimationFrame: () => 1,
+  cancelAnimationFrame: () => {{}},
+  fetch: (url, opts) => {{
+    fetchCalls.push({{ url: String(url), method: (opts && opts.method) || 'GET' }});
+    return mockFetchImpl(String(url), opts || {{}});
+  }},
+  IntersectionObserver: class {{ observe() {{}} disconnect() {{}} }},
+  localStorage: {{ getItem() {{ return null; }}, setItem() {{}}, removeItem() {{}} }},
+  sessionStorage: {{ getItem() {{ return null; }}, setItem() {{}}, removeItem() {{}} }},
+  location: {{ pathname: '/', search: '', hash: '', reload() {{}} }},
+  navigator: {{ clipboard: {{ writeText: async () => {{}} }}, userAgent: 'node-test' }},
+  matchMedia: () => ({{ matches: false, addListener() {{}}, removeListener() {{}}, addEventListener() {{}}, removeEventListener() {{}} }}),
+  getComputedStyle: () => ({{ getPropertyValue: () => '' }}),
+  scrollTo() {{}},
+  addEventListener() {{}},
+  removeEventListener() {{}},
+  innerWidth: 1280,
+  innerHeight: 800,
+  devicePixelRatio: 1,
+  performance: {{ now: () => Date.now() }},
+  orderForm: makeEl('orderForm'),
+  document: {{
+    documentElement: {{ style: {{ setProperty() {{}} }}, dataset: {{}}, classList: {{ add() {{}}, remove() {{}} }} }},
+    body: makeEl('body'),
+    readyState: 'complete',
+    createElement: (tag) => makeEl(tag),
+    createTextNode: (t) => ({{ textContent: String(t || '') }}),
+    querySelector: () => makeEl('q'),
+    querySelectorAll: () => [],
+    getElementById: () => makeEl('g'),
+    addEventListener() {{}},
+  }},
+  window: null,
+}};
+context.window = context;
+context.SC_PROD = {{
+  view: 'sub',
+  sub: {{
+    subId: 'sub_node_test',
+    openflux: {{
+      apiBase: '/api/sub/openflux/sub_node_test',
+      state: 'migrating',
+      country: 'nl',
+      targetCountry: 'de',
+      remainingSeconds: 0,
+    }}
+  }}
+}};
+
+vm.createContext(context);
+vm.runInContext(code, context);
+
+(async () => {{
+  const flushMicrotasks = async () => {{
+    for (let k = 0; k < 10; k++) await Promise.resolve();
+  }};
+  await flushMicrotasks();
+
+  const internals = context.window.__scOfInternals;
+  assert.ok(internals, '__scOfInternals exported');
+  // Initial hydration with remainingSeconds === 0 keeps 0 (never falls back to 288/300)
+  assert.strictEqual(internals.getOfTimeRemaining(), 0, 'initial hydration rem=0 preserved');
+
+  // 1. applyOfSlotPayload preserves pending_remaining_seconds === 0 (never snaps to 300)
+  mockFetchImpl = async () => ({{
+    ok: true,
+    status: 200,
+    json: async () => ({{ ok: true, status: 'migrating', active_server: 'nl', pending_server: 'de', pending_remaining_seconds: 0 }})
+  }});
+  internals.applyOfSlotPayload({{
+    ok: true,
+    status: 'migrating',
+    active_server: 'nl',
+    pending_server: 'de',
+    pending_remaining_seconds: 0
+  }});
+  await flushMicrotasks();
+  assert.strictEqual(internals.getOfTimeRemaining(), 0, 'rem=0 must not snap to 300');
+
+  // 2. Bounded timer retry on repeated migrating + rem=0 (max 3 5s retries)
+  fetchCalls = [];
+  scheduledTimeouts = [];
+  internals.resetZeroPollRetries();
+  internals.startOfHandoverTimer();
+  await flushMicrotasks();
+  assert.strictEqual(fetchCalls.length, 1);
+  assert.strictEqual(scheduledTimeouts.length, 1);
+  assert.strictEqual(scheduledTimeouts[0].ms, 5000);
+  for (let i = 0; i < 6 && scheduledTimeouts.length > 0; i++) {{
+    const next = scheduledTimeouts.shift();
+    next.fn();
+    await flushMicrotasks();
+  }}
+  assert.strictEqual(fetchCalls.length, 4, 'Initial poll + max 3 bounded 5s retries');
+
+  // 3. HTTP 429 cooldown -> zero POST retries and zero /state poll
+  fetchCalls = [];
+  mockFetchImpl = async () => ({{
+    ok: false,
+    status: 429,
+    json: async () => ({{ ok: false, error: 'Wait 15s' }})
+  }});
+  const r429 = await internals.executeOfAction('/api/sub/openflux/sub_node_test', 'switch_prepare', '/api/sub/openflux/sub_node_test/switch/prepare', {{ target: 'de' }}, {{ targetCountry: 'de', prevCountry: 'nl' }});
+  assert.strictEqual(r429.ok, false);
+  assert.strictEqual(r429.status, 429);
+  assert.strictEqual(fetchCalls.length, 1);
+  assert.strictEqual(fetchCalls[0].method, 'POST');
+
+  // 4. Dropped network response on switch_prepare + /state shows committed migrating to de -> recovered once without 2nd POST
+  fetchCalls = [];
+  mockFetchImpl = async (url, opts) => {{
+    if ((opts.method || 'GET') === 'POST') {{
+      throw new Error('network reset');
+    }}
+    return {{
+      ok: true,
+      status: 200,
+      json: async () => ({{ ok: true, status: 'migrating', active_server: 'nl', pending_server: 'de', pending_remaining_seconds: 295 }})
+    }};
+  }};
+  const rRec = await internals.executeOfAction('/api/sub/openflux/sub_node_test', 'switch_prepare', '/api/sub/openflux/sub_node_test/switch/prepare', {{ target: 'de' }}, {{ targetCountry: 'de', prevCountry: 'nl' }});
+  assert.strictEqual(rRec.ok, true);
+  assert.strictEqual(rRec.recovered, true);
+  assert.strictEqual(fetchCalls.length, 2);
+  assert.strictEqual(fetchCalls[0].method, 'POST');
+  assert.strictEqual(fetchCalls[1].method, 'GET');
+
+  // 5. HTTP 502 on switch_confirm + /state still active on old 'nl' -> must report failure, never fake success
+  fetchCalls = [];
+  mockFetchImpl = async (url, opts) => {{
+    if ((opts.method || 'GET') === 'POST') {{
+      return {{ ok: false, status: 502, json: async () => ({{}}) }};
+    }}
+    return {{
+      ok: true,
+      status: 200,
+      json: async () => ({{ ok: true, status: 'active', active_server: 'nl', pending_server: null, active_link: 'openflux://v1/old' }})
+    }};
+  }};
+  const rFail = await internals.executeOfAction('/api/sub/openflux/sub_node_test', 'switch_confirm', '/api/sub/openflux/sub_node_test/switch/confirm', {{}}, {{ targetCountry: 'de', prevCountry: 'nl' }});
+  assert.strictEqual(rFail.ok, false);
+  assert.strictEqual(rFail.recovered, false);
+  assert.strictEqual(fetchCalls.length, 2);
+  console.log('NODE_V8_OPENFLUX_OK');
+}})().catch(err => {{
+  console.error(err);
+  process.exit(1);
+}});
+'''
+        proc = subprocess.run([node_bin, "-e", script], capture_output=True, text=True, timeout=15)
+        self.assertEqual(proc.returncode, 0, msg=f"Node failed:\nSTDOUT:{proc.stdout}\nSTDERR:{proc.stderr}")
+        self.assertIn("NODE_V8_OPENFLUX_OK", proc.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

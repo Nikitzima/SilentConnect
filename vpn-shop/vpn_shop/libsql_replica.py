@@ -91,6 +91,14 @@ class LibsqlCursorWrapper:
         return iter(self.fetchall())
 
 
+_STREAM_LOST_KEYWORDS = ("stream not found", "broken pipe", "connection reset", "closed stream")
+
+
+def _is_stream_lost_error(exc: Exception) -> bool:
+    err_str = str(exc).lower()
+    return any(k in err_str for k in _STREAM_LOST_KEYWORDS)
+
+
 class LibsqlReplicaManager:
     """
     Потокобезопасный менеджер Embedded Replica для store.py.
@@ -144,22 +152,29 @@ class LibsqlReplicaManager:
             else:
                 raise
 
+    def _drain_ro_pool(self) -> None:
+        while not self._ro_pool.empty():
+            try:
+                c = self._ro_pool.get_nowait()
+                c.close()
+            except Exception:
+                pass
+
+    def _reconnect_locked(self) -> None:
+        """Close current primary replica handle, reopen it, and drain RO pool (caller holds _sync_lock)."""
+        try:
+            if hasattr(self, "_conn") and self._conn is not None:
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+        finally:
+            self._connect_replica()
+            self._drain_ro_pool()
+
     def reconnect(self) -> None:
         with self._sync_lock:
-            try:
-                if hasattr(self, "_conn") and self._conn is not None:
-                    try:
-                        self._conn.close()
-                    except Exception:
-                        pass
-            finally:
-                self._connect_replica()
-                while not self._ro_pool.empty():
-                    try:
-                        c = self._ro_pool.get_nowait()
-                        c.close()
-                    except Exception:
-                        pass
+            self._reconnect_locked()
 
     def _create_ro_conn(self) -> sqlite3.Connection | None:
         if not self._path or not os.path.exists(self._path):
@@ -226,6 +241,22 @@ class LibsqlReplicaManager:
             self._ro_local.conn = conn
         return conn
 
+    def verify_sync(self) -> None:
+        """Strictly synchronize the embedded replica with Turso primary, raising on failure."""
+        with self._sync_lock:
+            for attempt in range(2):
+                try:
+                    with self._exec_lock:
+                        self._conn.sync()
+                    self._last_sync_at = time.monotonic()
+                    return
+                except Exception as exc:
+                    if attempt == 0 and _is_stream_lost_error(exc):
+                        LOGGER.warning("Turso verify_sync stream lost (%s). Reconnecting...", exc)
+                        self._reconnect_locked()
+                        continue
+                    raise
+
     def force_sync(self, min_interval: float = 0.0) -> None:
         """Синхронизация локальной реплики с облаком Turso под выделенным _sync_lock."""
         now = time.monotonic()
@@ -240,10 +271,9 @@ class LibsqlReplicaManager:
                     self._conn.sync()
                 self._last_sync_at = time.monotonic()
             except Exception as exc:
-                err_str = str(exc).lower()
-                if any(k in err_str for k in ("stream not found", "broken pipe", "connection reset", "closed stream")):
+                if _is_stream_lost_error(exc):
                     LOGGER.warning("Turso force_sync stream lost (%s). Reconnecting replica connection...", exc)
-                    self._connect_replica()
+                    self._reconnect_locked()
                 else:
                     LOGGER.warning("Turso force_sync failed: %s", exc)
                 self._last_sync_at = time.monotonic() - max(self._sync_interval - 300.0, 0.0)
@@ -261,10 +291,9 @@ class LibsqlReplicaManager:
                                 self._conn.sync()
                             self._last_sync_at = time.monotonic()
                     except Exception as exc:
-                        err_str = str(exc).lower()
-                        if any(k in err_str for k in ("stream not found", "broken pipe", "connection reset", "closed stream")):
+                        if _is_stream_lost_error(exc):
                             LOGGER.warning("Turso bg_sync stream lost (%s). Reconnecting replica connection...", exc)
-                            self._connect_replica()
+                            self._reconnect_locked()
                         else:
                             LOGGER.warning("Turso sync_if_stale background sync failed: %s", exc)
                         self._last_sync_at = time.monotonic() - max(self._sync_interval - 300.0, 0.0)
@@ -354,13 +383,21 @@ class LibsqlConnectionProxy:
 
         # Обработка BEGIN транзакций
         if stmt_upper.startswith("BEGIN"):
-            self._acquire_tx_lock()
-            self._in_transaction = True
-            try:
-                cur = self._mgr._conn.execute(sql)
-                return LibsqlCursorWrapper(cur)
-            except Exception:
-                return LibsqlCursorWrapper(type("EmptyCur", (), {"description": None, "rowcount": 0, "lastrowid": None, "fetchone": lambda: None, "fetchall": lambda: []})())
+            for attempt in range(2):
+                self._acquire_tx_lock()
+                try:
+                    cur = self._mgr._conn.execute(sql)
+                    self._in_transaction = True
+                    return LibsqlCursorWrapper(cur)
+                except Exception as exc:
+                    self._in_transaction = False
+                    # Release tx lock before reconnect() to preserve _sync_lock -> _exec_lock ordering.
+                    self._release_tx_lock()
+                    if attempt == 0 and _is_stream_lost_error(exc):
+                        LOGGER.warning("Hrana stream lost on BEGIN (%s). Reconnecting to Turso and retrying...", exc)
+                        self._mgr.reconnect()
+                        continue
+                    raise self._wrap_error(exc) from exc
 
         # Обработка явного COMMIT
         if stmt_upper.startswith("COMMIT"):
@@ -387,9 +424,7 @@ class LibsqlConnectionProxy:
                     cur = self._mgr._conn.execute(sql, tuple(parameters))
                     return LibsqlCursorWrapper(cur)
             except Exception as exc:
-                err_str = str(exc).lower()
-                is_stream_err = any(k in err_str for k in ("stream not found", "broken pipe", "connection reset", "closed stream"))
-                if is_stream_err and attempt == 0:
+                if attempt == 0 and not self._tx_lock_held and _is_stream_lost_error(exc):
                     LOGGER.warning("Hrana stream lost on execute (%s). Reconnecting to Turso and retrying...", exc)
                     self._mgr.reconnect()
                     continue
@@ -427,9 +462,7 @@ class LibsqlConnectionProxy:
                     self._in_transaction = False
                     break
                 except Exception as exc:
-                    err_str = str(exc).lower()
-                    is_stream_err = any(k in err_str for k in ("stream not found", "broken pipe", "connection reset", "closed stream"))
-                    if is_stream_err and attempt == 0:
+                    if attempt == 0 and not self._tx_lock_held and _is_stream_lost_error(exc):
                         LOGGER.warning("Hrana stream lost on commit (%s). Reconnecting to Turso and retrying...", exc)
                         self._mgr.reconnect()
                         continue

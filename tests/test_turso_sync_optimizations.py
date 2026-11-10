@@ -66,6 +66,7 @@ class TestTursoSyncOptimizations(unittest.TestCase):
         # Baseline
         tracker.calculate_monotonic_deltas(
             {pubkey: (100, 200)},
+            baseline_only=True,
             min_flush_bytes=10 * 1024 * 1024,
             max_flush_interval_sec=1800,
             collected_at=now,

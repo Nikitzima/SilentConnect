@@ -207,8 +207,8 @@ class CounterStateTracker:
 
             if pubkey not in self.previous_counters:
                 # Первый замер для данного пира.
-                self.previous_counters[pubkey] = (curr_rx, curr_tx, ts)
                 if (curr_rx + curr_tx) > MAX_UNSEEN_PEER_FIRST_TICK_BYTES:
+                    self.previous_counters[pubkey] = (curr_rx, curr_tx, ts)
                     LOGGER.warning(
                         "Peer %s unseen in state tracker with large cumulative counter (%d bytes); baselining to 0 delta",
                         pubkey,
@@ -220,34 +220,36 @@ class CounterStateTracker:
                     delta_rx = curr_rx
                     delta_tx = curr_tx
                     if min_flush_bytes > 0 and (delta_rx + delta_tx) < min_flush_bytes:
+                        # Держим baseline в (0, 0, ts), пока накопленный трафик не достигнет порога/интервала,
+                        # чтобы не потерять первый пакет после рестарта/появления пира.
+                        self.previous_counters[pubkey] = (0, 0, ts)
                         continue
+                    self.previous_counters[pubkey] = (curr_rx, curr_tx, ts)
             else:
-                prev_rx, prev_tx, prev_ts = self.previous_counters[pubkey]
+                orig_rx, orig_tx, prev_ts = self.previous_counters[pubkey]
 
-                # Защита от сброса ядра/интерфейса: если curr < prev, счетчик сбросился
-                if curr_rx >= prev_rx:
-                    delta_rx = curr_rx - prev_rx
-                else:
-                    delta_rx = curr_rx
-                    prev_rx = 0
-
-                if curr_tx >= prev_tx:
-                    delta_tx = curr_tx - prev_tx
-                else:
-                    delta_tx = curr_tx
-                    prev_tx = 0
+                # Защита от сброса ядра/интерфейса: если curr < orig, счетчик сбросился независимо для RX и TX.
+                reset_rx = curr_rx < orig_rx
+                reset_tx = curr_tx < orig_tx
+                delta_rx = curr_rx if reset_rx else (curr_rx - orig_rx)
+                delta_tx = curr_tx if reset_tx else (curr_tx - orig_tx)
 
                 delta_rx = max(0, delta_rx)
                 delta_tx = max(0, delta_tx)
                 total_delta = delta_rx + delta_tx
 
+                held_base_rx = 0 if reset_rx else orig_rx
+                held_base_tx = 0 if reset_tx else orig_tx
+
                 if total_delta == 0:
+                    if reset_rx or reset_tx:
+                        self.previous_counters[pubkey] = (held_base_rx, held_base_tx, prev_ts)
                     continue
 
                 if min_flush_bytes > 0 and total_delta < min_flush_bytes and (ts - prev_ts) < max_flush_interval_sec:
-                    # Буферизуем keepalive-пакеты локально, не создавая лишних записей в Turso.
-                    if curr_rx < prev_rx or curr_tx < prev_tx:
-                        self.previous_counters[pubkey] = (0, 0, prev_ts)
+                    # Буферизуем keepalive-пакеты локально; сбрасываем baseline только по тем счетчикам, где был reset.
+                    if reset_rx or reset_tx:
+                        self.previous_counters[pubkey] = (held_base_rx, held_base_tx, prev_ts)
                     continue
 
                 # Порог превышен или прошло 30 минут: обновляем baseline
