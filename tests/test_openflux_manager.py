@@ -394,6 +394,145 @@ class TestOpenFluxManager(unittest.TestCase):
         self.assertEqual(repaired["status"], "active")
         self.assertEqual(repaired["active_server"], "nl")
 
+    def test_overlapping_start_switch_orphan_cleanup_and_concurrent_outbox_claim_cas(self):
+        import tempfile
+        import threading
+        import time
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "of_overlap.db"
+            c0 = sqlite3.connect(db_path)
+            c0.row_factory = sqlite3.Row
+            c0.execute(
+                """
+                CREATE TABLE profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    public_id TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    expires_at INTEGER NOT NULL DEFAULT 0
+                );
+                """
+            )
+            c0.execute("INSERT INTO profiles (public_id) VALUES ('prf_race_1')")
+            c0.execute(
+                """
+                CREATE TABLE IF NOT EXISTS openflux_slots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    profile_public_id TEXT NOT NULL UNIQUE,
+                    slot_label TEXT NOT NULL DEFAULT 'Белые списки (OpenFlux)',
+                    status TEXT NOT NULL DEFAULT 'uninitialized',
+                    active_server TEXT DEFAULT NULL,
+                    active_doc_name TEXT DEFAULT NULL,
+                    active_doc_url TEXT DEFAULT NULL,
+                    active_container_name TEXT DEFAULT NULL,
+                    pending_server TEXT DEFAULT NULL,
+                    pending_doc_name TEXT DEFAULT NULL,
+                    pending_doc_url TEXT DEFAULT NULL,
+                    pending_container_name TEXT DEFAULT NULL,
+                    pending_started_at INTEGER DEFAULT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                """
+            )
+            openflux_manager.init_openflux_db(c0)
+            now = int(time.time())
+            c0.execute(
+                """
+                INSERT INTO openflux_slots (
+                    profile_public_id, slot_label, status,
+                    active_server, active_doc_name, active_doc_url, active_container_name,
+                    created_at, updated_at
+                ) VALUES (
+                    'prf_race_1', 'Белые списки (OpenFlux)', 'active',
+                    'nl', 'cups_act_r1', 'https://interview.cups.online/live-coding/?room=act_r1', 'openflux-worker-prf_race_1',
+                    ?, ?
+                )
+                """,
+                (now - 100, now - 100),
+            )
+            c0.commit()
+
+            # 1. Overlapping start_server_switch: during slow start_openflux_worker, another request commits first
+            stopped_orphans = []
+
+            def racing_start(srv, cname, url):
+                c_win = sqlite3.connect(db_path)
+                c_win.execute(
+                    """
+                    UPDATE openflux_slots
+                    SET status = 'migrating',
+                        pending_server = 'de',
+                        pending_doc_name = 'cups_winner_99',
+                        pending_doc_url = 'https://interview.cups.online/live-coding/?room=winner_99',
+                        pending_container_name = 'openflux-worker-prf_race_1-pend-win',
+                        pending_started_at = ?
+                    WHERE profile_public_id = 'prf_race_1'
+                    """,
+                    (now,),
+                )
+                c_win.commit()
+                c_win.close()
+                return True
+
+            with patch("vpn_shop.openflux_manager.create_cups_room", return_value=("bbbbbbbb-1111-2222-3333-444444444444", "https://interview.cups.online/live-coding/?room=bbbbbbbb-1111-2222-3333-444444444444")), \
+                 patch("vpn_shop.openflux_manager.start_openflux_worker", side_effect=racing_start), \
+                 patch("vpn_shop.openflux_manager.stop_openflux_worker", side_effect=lambda s, cn: stopped_orphans.append((s, cn)) or True):
+                res_loser = openflux_manager.start_server_switch(c0, "prf_race_1", "de")
+
+            self.assertEqual(res_loser["pending_container_name"], "openflux-worker-prf_race_1-pend-win")
+            self.assertEqual(len(stopped_orphans), 1)
+            self.assertNotEqual(stopped_orphans[0][1], "openflux-worker-prf_race_1-pend-win")
+            self.assertIn("-pend-", stopped_orphans[0][1])
+
+            # 2. run_cleanup_now=False transitions slot to 'active' immediately without invoking stop_openflux_worker
+            c0.execute(
+                "UPDATE openflux_slots SET pending_started_at = ? WHERE profile_public_id = 'prf_race_1'",
+                (now - (openflux_manager.MIGRATION_TIMEOUT_SECONDS + 10),),
+            )
+            c0.commit()
+            with patch("vpn_shop.openflux_manager.stop_openflux_worker") as spy_stop_lazy:
+                won_fast, slot_fast = openflux_manager.cancel_expired_migration_if_due(c0, "prf_race_1", run_cleanup_now=False)
+            self.assertTrue(won_fast)
+            self.assertEqual(slot_fast["status"], "active")
+            spy_stop_lazy.assert_not_called()
+            self.assertEqual(c0.execute("SELECT COUNT(*) FROM openflux_cleanup_queue").fetchone()[0], 1)
+
+            # 3. Two concurrent watchdogs claim a queued row at attempts=9 -> only ONE executes stop & caps at attempts=10
+            c0.execute("UPDATE openflux_cleanup_queue SET attempts = 9")
+            c0.commit()
+            c0.close()
+
+            barrier = threading.Barrier(2)
+            ssh_calls = []
+
+            def fail_ssh(srv, cn):
+                ssh_calls.append((srv, cn))
+                return False
+
+            def watchdog_worker():
+                conn = sqlite3.connect(db_path, timeout=10.0)
+                conn.row_factory = sqlite3.Row
+                try:
+                    barrier.wait(timeout=5.0)
+                    openflux_manager.process_pending_openflux_cleanups(conn, max_attempts=10)
+                finally:
+                    conn.close()
+
+            with patch("vpn_shop.openflux_manager.stop_openflux_worker", side_effect=fail_ssh):
+                t_a = threading.Thread(target=watchdog_worker)
+                t_b = threading.Thread(target=watchdog_worker)
+                t_a.start()
+                t_b.start()
+                t_a.join(timeout=10.0)
+                t_b.join(timeout=10.0)
+
+            self.assertEqual(len(ssh_calls), 1, "CAS claim must prevent duplicate concurrent retries")
+            c_check = sqlite3.connect(db_path)
+            attempts_val = c_check.execute("SELECT attempts FROM openflux_cleanup_queue").fetchone()[0]
+            c_check.close()
+            self.assertEqual(attempts_val, 10)
+
 
 if __name__ == "__main__":
     unittest.main()

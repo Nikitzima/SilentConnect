@@ -357,6 +357,57 @@ class StoreReplicaReadRetryTests(unittest.TestCase):
         old_conn.close.assert_called_once()
         new_conn.sync.assert_called_once()
 
+    def test_implicit_write_holds_tx_lock_until_commit_preventing_nested_begin_error(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            db_file = Path(td) / "shared_deferred.db"
+            raw_conn = sqlite3.connect(db_file, isolation_level="DEFERRED", check_same_thread=False)
+            raw_conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, val TEXT)")
+            raw_conn.commit()
+
+            mgr = MagicMock()
+            mgr._exec_lock = threading.Lock()
+            mgr._lock = mgr._exec_lock
+            mgr._conn = raw_conn
+
+            errors = []
+            t1_wrote = threading.Event()
+
+            def thread1():
+                p1 = LibsqlConnectionProxy(mgr)
+                try:
+                    p1.execute("INSERT INTO items (val) VALUES (?)", ("from_implicit",))
+                    t1_wrote.set()
+                    time.sleep(0.06)
+                    p1.commit()
+                except Exception as exc:
+                    errors.append(exc)
+                finally:
+                    p1.close()
+
+            def thread2():
+                t1_wrote.wait(timeout=2.0)
+                p2 = LibsqlConnectionProxy(mgr)
+                try:
+                    p2.execute("BEGIN IMMEDIATE")
+                    p2.execute("INSERT INTO items (val) VALUES (?)", ("from_begin",))
+                    p2.commit()
+                except Exception as exc:
+                    errors.append(exc)
+                finally:
+                    p2.close()
+
+            t1 = threading.Thread(target=thread1)
+            t2 = threading.Thread(target=thread2)
+            t1.start()
+            t2.start()
+            t1.join(timeout=5.0)
+            t2.join(timeout=5.0)
+
+            self.assertEqual(errors, [])
+            rows = [r[0] for r in raw_conn.execute("SELECT val FROM items ORDER BY id").fetchall()]
+            self.assertEqual(rows, ["from_implicit", "from_begin"])
+            raw_conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

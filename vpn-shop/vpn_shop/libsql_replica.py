@@ -409,22 +409,28 @@ class LibsqlConnectionProxy:
             self.rollback()
             return LibsqlCursorWrapper(type("EmptyCur", (), {"description": None, "rowcount": 0, "lastrowid": None, "fetchone": lambda: None, "fetchall": lambda: []})())
 
-        # Отслеживаем модифицирующие операции
-        if any(stmt_upper.startswith(w) for w in ("INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "ALTER", "DROP")):
-            self._wrote = True
+        # Отслеживаем модифицирующие операции и защищаем shared _conn от незакоммиченных неявных транзакций
+        is_write = any(stmt_upper.startswith(w) for w in ("INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "ALTER", "DROP"))
 
         lock = self._get_lock()
         for attempt in range(2):
+            acquired_implicit = False
+            if is_write and not self._tx_lock_held:
+                self._acquire_tx_lock()
+                acquired_implicit = True
             try:
                 if lock is not None and not self._tx_lock_held:
                     with lock:
                         cur = self._mgr._conn.execute(sql, tuple(parameters))
-                        return LibsqlCursorWrapper(cur)
                 else:
                     cur = self._mgr._conn.execute(sql, tuple(parameters))
-                    return LibsqlCursorWrapper(cur)
+                if is_write:
+                    self._wrote = True
+                return LibsqlCursorWrapper(cur)
             except Exception as exc:
-                if attempt == 0 and not self._tx_lock_held and _is_stream_lost_error(exc):
+                if acquired_implicit and not self._wrote:
+                    self._release_tx_lock()
+                if attempt == 0 and (acquired_implicit or not self._tx_lock_held) and _is_stream_lost_error(exc):
                     LOGGER.warning("Hrana stream lost on execute (%s). Reconnecting to Turso and retrying...", exc)
                     self._mgr.reconnect()
                     continue
@@ -444,6 +450,11 @@ class LibsqlConnectionProxy:
                         self._mgr._conn.execute(s)
                         self._wrote = True
                     except Exception as exc:
+                        try:
+                            self._mgr._conn.rollback()
+                        except Exception:
+                            pass
+                        self._wrote = False
                         raise self._wrap_error(exc) from exc
         self.commit()
 
@@ -498,10 +509,12 @@ class LibsqlConnectionProxy:
     def close(self) -> None:
         if not self._closed:
             try:
-                if self._in_transaction or self._tx_lock_held:
+                if self._in_transaction:
                     self.rollback()
                 elif self._wrote:
                     self.commit()
+                elif self._tx_lock_held:
+                    self._release_tx_lock()
             finally:
                 self._closed = True
 

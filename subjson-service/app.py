@@ -954,7 +954,7 @@ def get_openflux_slot_state_dict(sub_id: str) -> dict[str, Any]:
                 try:
                     rw_conn = get_store_db()
                     try:
-                        _, slot = openflux_manager.cancel_expired_migration_if_due(rw_conn, pid)
+                        _, slot = openflux_manager.cancel_expired_migration_if_due(rw_conn, pid, run_cleanup_now=False)
                     finally:
                         rw_conn.close()
                     status = slot.get("status") or "active"
